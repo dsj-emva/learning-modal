@@ -214,3 +214,34 @@ A brief edit changes `brief_hash`, so every lead is a cache miss: `--dry-run` re
 cached brief hashes without calling; the real run then produces a new judgments file, and the context
 weights are refit by the next `python -m emva --context` (weights are never carried across stamps).
 
+
+## 8. Hosted app (`app/`, Phase 8)
+
+Keel, the internal Streamlit tool (`streamlit run app/main.py`; `make app` locally, `scripts/serve.sh` in the
+image). It reuses the pipeline; it never re-implements a label, feature, metric or score. Pure modules import
+without Streamlit; UI modules are thin.
+
+```mermaid
+flowchart LR
+    UP["Upload & train page"] --> VAL["app.validation.validate_files"] --> STORE["app.storage.save_dataset<br/>DATA_DIR/datasets/NAME"]
+    UP --> PRE["app.training.pre_training_summary<br/>pipeline.build + labels.split_masks"]
+    UP --> START["app.training.start_training"] --> JOB["python -m app.job"]
+    JOB --> CLI["python -m emva --data --out<br/>scores, weights, model.joblib"]
+    JOB --> REP["python -m emva.eval.report<br/>report.txt"]
+    JOB --> REG["app.training.finish_run<br/>registry.json"]
+    RES["Model results page"] --> FR["app.results<br/>report.frozen_test_labels, eval.metrics,<br/>eval.bootstrap, value_report.scale_stats"]
+    SC["Score a lead page"] --> AD["app.scoring.score_form"] --> ES["emva.scoring<br/>lead_from_form, score_leads, points_breakdown"]
+```
+
+| module | owns |
+|---|---|
+| `app/storage.py` | Data root layout (`datasets/<name>/`, `runs/<run_id>/`, `registry.json`), `Dataset` / `Run`, slug names, the training-file allow-list (a `ground_truth*` name is refused by name, never opened), atomic JSON writes under an `fcntl` lock, the read-only bundled sample (`data/v1`, training files only) |
+| `app/validation.py` | `validate_files` -> `ValidationReport(errors, warnings, summary)` of `Issue(file, column, message, rows)`; required columns derived from `emva.scoring.submit_time_fields` and what `emva.io` / `emva.eval.status_quo` read; never raises on user input |
+| `app/training.py`, `app/job.py` | `TrainingConfig` (label mode, feature set), the CLI and report argv, `pre_training_summary`, `start_training` (spawns the job, output to `train.log`), `finish_run` (parses the printed summary), `reconcile` (a vanished job becomes `failed`). The job runs the CLI, then the report when the dataset has rules, then records the outcome itself, so a run completes with no browser open |
+| `app/results.py` | Results-page frames from `scores.csv` / `weights.csv` + the dataset: `evaluate` (frozen mature or legacy test set), `headline`, `calibration`, `auc_month` (bootstrap CI per month), `scorecard` (plain feature names), `value_distribution`, `training_base_rate`. Nothing is scraped from `report.txt` |
+| `app/scoring.py` | Form sections, labels and defaults over `submit_time_fields` (session fields default to a typical visit, because a blank one sets `session_missing`), `values_from_lead`, `score_form`, `describe_transform` |
+| `app/auth.py` | `expected_password` (`APP_PASSWORD`; unset or blank = refuse), `check_password` (`hmac.compare_digest`) |
+| `app/main.py`, `app/ui.py`, `app/views/` | Entrypoint (gate, sidebar, `st.navigation`), cached loaders (`st.cache_data` for evaluation frames, `st.cache_resource` for bundles), the three pages |
+| `app/theme.py`, `app/components.py`, `app/charts.py`, `.streamlit/config.toml` | Identity: palette, fonts, the one stylesheet; escaped HTML components (KPI cards, pills, file cards, result card, tables); the shared Plotly template |
+
+Ground truth: `grep -rn "ground_truth" app/` returns only `storage.FORBIDDEN_PREFIX`, the name check.
