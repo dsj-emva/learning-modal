@@ -83,18 +83,23 @@ wins and this file is wrong: fix it in the same PR. State: `main` 92168cf, 2026-
 
 ### Context layer and generator
 
-- **Context agent**: `emva/context/agent.py`, one Haiku call per lead card (free text, title, typed
-  company, email domain, country, some answers and, today, enrichment bands), returning a 0-1
-  `context_score`; the pipeline appends `context_logit` as a feature with `--context`. Rewritten in
-  Phase 6 (named enum judgments, no enrichment in the card). It has not been run on real LLM output yet.
+- **Context agent** (Phase 6, ADR 0014): `emva/context/agent.py`, one Haiku call per **lead card** (free
+  text, typed company, job title, email domain; nothing the formula uses) against the business brief,
+  returning five enum **judgments** (`is_real_business`, `persona`, `problem_specificity`, `urgency`,
+  `brief_fit`) and a short `reason`, never a 0-1 score. `--context` joins them as `ctx_<judgment>=<level>`
+  dummies. Run on 1,000 v2 leads (`data/v2/context/`).
+- **Stamp**: `(brief_hash, prompt_version, model_id)` on every judgments row; one stamp per file. A new
+  `brief_hash` means new judgments and a refit of the context weights.
+- **Parse error vs transport error**: the API answered but the reply broke the contract (recorded, cached,
+  not retried) vs no usable response after every retry (not cached).
 - **Persona**: in generator v2 (5.7), a hidden `context_persona` (job seeker, agency, nonprofit,
   competitor) on about 8% of genuine-human leads, planted effect −1.0 on close log-odds, readable only
   from the meaning of the free text (invisible to the regex; ADR 0008). In Phase 6, `persona` is also the
   name of one of the context agent's enum judgments.
 - **Paraphrase cache**: `scripts/paraphrase_cache.json` (v2 branch, committed): Haiku paraphrases of
   each free-text template, 5 per template, keyed by sha256 of (template, model id, prompt version). The
-  generator only reads it. The context agent keeps its own cache (`<out>.cache.json`, keyed by sha256 of
-  system prompt + lead card).
+  generator only reads it. The context agent keeps its own cache (`data/v2/context/cache.json`, keyed by
+  sha256 of (card hash, brief hash, prompt version, model id)).
 - **Generator v1**: `scripts/generate_data_v1.py`, the seeded rewrite of the lost original; reproduces v1
   distributions, not rows (ADR 0003). Its close model is additive logistic, which is why a correctly
   specified LR and the exact regex match it perfectly.
@@ -131,7 +136,7 @@ it with the paired bootstrap.
 | 5.2-5.8 generator v2 | merged (01c56f4) | `phase5-generator-v2` | `reports/phase5.md` |
 | 3 value layer and platform contract | pending (needs 2) | | |
 | 4 evaluation hardening | pending (needs 2) | | |
-| 6 context agent v2 | pending (needs 2 and 5) | | |
+| 6 context agent v2 | ready for review | `phase6-context-agent` | `reports/phase6.md` |
 | 7 production readiness document | pending (needs all) | | |
 
 Open question carried from Phase 1 (not yet ruled): should young `crm_lost` leads be 0 rather than NaN?

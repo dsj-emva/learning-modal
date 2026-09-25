@@ -39,3 +39,4 @@ To change a decision, write a new ADR that supersedes the old one and set the ol
 | [0009](0009-fixed-design-schema-missingness-indicators.md) | Fixed design schema: `session_missing` / `enrichment_missing` indicators, declared level lists, strict collinearity check (report `--strict`) | Accepted, implementation in progress | `phase2-features` |
 | [0010](0010-llm-api-access.md) | API access: `.env`, workspace header, Haiku 4.5, committed caches, no fake LLM output | Accepted | Phase 5 v2, `.gitignore` |
 | [0011](0011-phase2-acceptance-on-v2-data.md) | Phase 2 tie/collinearity criteria judged on data/v2; boilerplate recall gap to Phase 6; v2 residual sd as 2.4 evidence (R5-R7) | Accepted | `phase2-features` |
+| [0014](0014-context-contract.md) | Context contract: five enum judgments + reason, four-field lead card, parse vs transport errors, stamped rows, cache keyed by card/brief/prompt/model | Proposed | `phase6-context-agent` |
