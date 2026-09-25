@@ -79,7 +79,7 @@ In a worktree there is no `.venv`: pass the main checkout's interpreter, quoted,
 `make PY="<main checkout>/.venv/bin/python" baseline`. `DATA=data/v2` points make targets at v2.
 
 **Pipeline CLI** (`python -m emva --data data/v1 --out DIR [--context FILE] [--margin 1.0]`, writes
-`weights.csv` and `scores.csv`):
+`weights.csv` and `scores.csv`, and now also `model.joblib`, the `emva.persist.ModelBundle` that `emva.scoring` loads):
 
 | flag | meaning |
 |---|---|

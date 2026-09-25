@@ -28,7 +28,7 @@ flowchart TD
 | step | owner | notes |
 |---|---|---|
 | constants | `emva/constants.py` | `AS_OF` 2026-09-24 UTC, `TEST_FROM` 2026-05-01, `STALLED_DAYS`/`GHOSTED_DAYS` 90, `HORIZON_DAYS` 120, `CATS` (feature → reference level, also design column order), `LR_C` 0.5, `POINTS_TO_DOUBLE_ODDS` 20, `TOP_FRACTION` 0.2 |
-| load | `emva/io.py::load` | Raises on a lead with two Won rows. Enrichment columns are NaN when the domain is not in `companies.csv` |
+| load | `emva/io.py::load` | `read_leads` + `add_crm_outcomes` + `enrich` (the submit-time half: answers, domain and name enrichment, no CRM history; reused by `emva.scoring`). Raises on a lead with two Won rows. Enrichment columns are NaN when the domain is not in `companies.csv` |
 | clean | `emva/io.py::clean` | Bots and duplicates are dropped before labelling; 9,311 of 10,000 v1 leads remain |
 | labels | `emva/labels.py` | Two definitions side by side; see section 2 |
 | features | `emva/features.py` | `FeatureSet` switch (section 2). Legacy `add_features`: `text_cat` (regex + three copy-paste prefixes + `VAGUE` list), `seniority` (title regex), `channel` (UTM rules). v2 `add_features_v2`: `session_absent` / `session_missing`, `enrichment_missing`, `text_cat_v2`; `V2_DROPPED` (plan 2.6) |
@@ -41,6 +41,8 @@ flowchart TD
 | tROAS | `emva/troas.py` | `python -m emva.troas`: conversions per campaign per 30 days / week at submit and close stage vs Google (30 / 30 days) and Meta (50 / week) thresholds (verify) |
 | orchestration | `emva/pipeline.py` | `PipelineResult` (X, masks, design, weights, summary, labels, messages); `scores()` adds horizon label columns only in horizon mode (ADR 0007) |
 | CLI | `emva/__main__.py`, `emva/cli.py` | `cli.py` holds the label flags and `--feature-set`, shared with the report and `eval.collinearity` |
+| persist | `emva/persist.py` | Phase 8, ADR 0018 (Proposed). `ModelBundle` (feature set, `LabelConfig`, margin, design and value columns, allowed levels, fitted LR, `DealValueModel`, `FittedValueTransform` or None, scorecard, raw lead schema, provenance); `save_bundle` / `load_bundle` (joblib; refuses another `format_version`, warns on library version drift). `python -m emva --out DIR` writes `DIR/model.joblib` |
+| scoring | `emva/scoring.py` | Phase 8, ADR 0018. `score_leads(bundle, leads, data)` scores new leads through the training functions (needs `data/.../companies.csv`); `points_breakdown` (intercept + active design columns, sums to logit p); `submit_time_fields()` (`FieldSpec` per form input, allowed values from `constants`/`features`); `lead_from_form(fields)`. Unknown level raises `UnknownLevelError`; bots/duplicates flagged within the batch, not dropped |
 | context | `emva/context/` | Phase 6 (ADR 0014), see section 7. `card.py` (the only lead facts the agent sees), `contract.py` (enum judgments + reason, JSON schema, `validate`), `agent.py` (SDK runtime), `cache.py` (reply cache), `features.py` (`ctx_<judgment>` fixed-schema dummies; legacy `context_logit` kept for baseline byte identity) |
 
 `emva/pipeline.py` imports `emva.eval.metrics.summary`; `metrics.py` is kept apart from `report.py` to
