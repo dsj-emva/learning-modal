@@ -126,17 +126,18 @@ def _check_field(f: FieldSpec, v: object) -> None:
 def lead_from_form(fields: dict[str, object]) -> pd.DataFrame:
     """A one-row ``historical_leads`` frame (``lead_id`` column) from form fields, ready for ``score_leads``.
 
-    Keys are ``submit_time_fields`` names; None, absent or ``""`` means blank (a blank answer is kept as ``""`` in
-    the JSON, like the historical forms). Answer fields are JSON-encoded into ``answers``; ``lead_id`` is a new ``form-<uuid>``; ``created_at`` is now (UTC). Raises ``ValueError`` for an
-    unknown key, a missing ``email``, a value of the wrong type or outside a field's allowed values.
+    Keys are ``submit_time_fields`` names; None, NaN, absent or ``""`` means blank (a blank answer is kept as
+    ``""`` in the JSON, like the historical forms). Answer fields are JSON-encoded into ``answers``; ``lead_id`` is
+    a new ``form-<uuid>``; ``created_at`` is now (UTC). Raises ``ValueError`` for an unknown key, a missing
+    ``email``, a value of the wrong type or outside a field's allowed values.
     """
     spec = {f.name: f for f in submit_time_fields()}
     unknown = sorted(set(fields) - set(spec))
     if unknown:
         raise ValueError(f"unknown form field(s) {unknown}; valid fields: {list(spec)}")
     # a blank column reads as NaN from historical_leads.csv; a blank answer stays "" in the JSON, as forms send it
-    given = {k: v for k, v in fields.items()
-             if v is not None and not (v == "" and k in spec and spec[k].source == "column")}
+    given = {k: v for k, v in fields.items() if not (v is None or (isinstance(v, float) and np.isnan(v))
+                                                     or (v == "" and spec[k].source == "column"))}
     for name, f in spec.items():
         if f.required and not (isinstance(given.get(name), str) and given[name].strip()):
             raise ValueError(f"form field {name!r} is required")

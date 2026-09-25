@@ -259,6 +259,7 @@ def test_lead_from_form_validates():
     form = lead_from_form({**ok, "what_to_solve": "£5k budget", "company_size": "", "utm_source": ""})
     assert json.loads(form.answers[0]) == {"what_to_solve": "£5k budget", "company_size": ""}
     assert "utm_source" not in form
+    assert "time_on_page_s" not in lead_from_form({**ok, "time_on_page_s": float("nan")})
 
 
 def test_submit_time_fields(trained):
