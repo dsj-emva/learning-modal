@@ -114,8 +114,10 @@ V2_LEVELS: dict[str, tuple[str, ...]] = {
 }
 
 # Company-name enrichment (plan 2.3): trailing tokens stripped after normalisation. The plan's list plus
-# "sas", a legal form companies.csv uses that the plan's list does not name.
-LEGAL_SUFFIXES: frozenset[str] = frozenset({"ltd", "limited", "inc", "llc", "gmbh", "bv", "sa", "plc", "co", "sas"})
+# "sas" (a legal form companies.csv uses) and the long forms incorporated / corporation / corp / company
+# (typed on data/v2; review of Phase 2).
+LEGAL_SUFFIXES: frozenset[str] = frozenset({"ltd", "limited", "inc", "llc", "gmbh", "bv", "sa", "plc", "co", "sas",
+                                            "incorporated", "corporation", "corp", "company"})
 
 # Boilerplate detector (plan 2.5): token-set Jaccard similarity to any snippet in ``emva/boilerplate.py``
 # at or above this makes the free text "copy_paste".

@@ -73,6 +73,13 @@ def test_cli_legacy_mode_reproduces_baseline_byte_for_byte(tmp_path, data_v1):
         assert filecmp.cmp(b_out / name, e_out / name, shallow=False), name
 
 
+def test_cli_creates_a_missing_out_directory(tmp_path, data_v1):
+    out = tmp_path / "new" / "dir"
+    subprocess.run([sys.executable, "-m", "emva", "--data", str(data_v1), "--out", str(out)],
+                   cwd=REPO, capture_output=True, text=True, check=True)
+    assert (out / "weights.csv").exists() and (out / "scores.csv").exists()
+
+
 def test_cli_default_is_horizon_and_writes_label_columns(tmp_path, data_v1):
     subprocess.run([sys.executable, "-m", "emva", "--data", str(data_v1), "--out", str(tmp_path)],
                    cwd=REPO, capture_output=True, text=True, check=True)

@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from emva.eval.collinearity import CollinearityError, assert_no_collinearity, check_collinearity
+from emva.eval.collinearity import CollinearityError, assert_no_collinearity, check_collinearity, summary_row
 
 from conftest import REPO
 
@@ -39,6 +39,13 @@ def test_fails_on_a_complementary_column_and_respects_the_threshold():
     D2["mostly_c"] = D2.c
     D2.loc[D2.index[:40], "mostly_c"] = 1 - D2.c[:40]  # corr about 0.84
     assert check_collinearity(D2).passed and not check_collinearity(D2, threshold=0.8).passed
+
+
+def test_summary_row_handles_a_design_without_pairs():
+    res = check_collinearity(pd.DataFrame({"a": [0.0, 1.0, 0.0]}))
+    assert res.max_pair is None
+    assert summary_row(res) == {"max |corr|": "n/a", "check": "pass", "pairs above threshold": "none"}
+    assert summary_row(check_collinearity(_random_design()))["check"] == "pass"
 
 
 def test_constant_columns_are_skipped():

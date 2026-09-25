@@ -6,7 +6,6 @@ from collections.abc import Mapping
 import pandas as pd
 
 from emva.constants import CATS, V2_LEVELS
-from emva.features import FeatureSet, feature_cats
 
 
 def design(X: pd.DataFrame, extra: pd.Series | pd.DataFrame | None = None,
@@ -58,10 +57,3 @@ def fixed_design(X: pd.DataFrame, cats: Mapping[str, str],
             if lvl != ref:
                 data[f"{c}={lvl}"] = values.eq(lvl).astype(float)
     return pd.DataFrame(data, index=X.index, columns=cols)
-
-
-def feature_design(X: pd.DataFrame, feature_set: FeatureSet) -> pd.DataFrame:
-    """The model design: ``design(X)`` for legacy (exactly the baseline), ``fixed_design`` over ``CATS_V2`` for v2."""
-    if FeatureSet(feature_set) is FeatureSet.LEGACY:
-        return design(X)
-    return fixed_design(X, feature_cats(feature_set))

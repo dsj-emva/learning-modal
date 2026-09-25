@@ -75,6 +75,8 @@ def test_load_rejects_two_won_rows(tmp_path):
     ("Larkspur Haulage GmbH", "larkspur haulage"), ("Smith & Co", "smith"), ("Acme Holdings Co Ltd", "acme holdings"),
     ("Nimbus Market, Inc.", "nimbus market"), ("O'Brien Partners PLC", "obrien partners"),
     ("Co-operative Bank", "co operative bank"),  # only trailing suffixes are stripped
+    ("Lindenwood Digital Incorporated", "lindenwood digital"), ("Brightwater Industries, Incorporated", "brightwater industries"),
+    ("Acme Corp.", "acme"), ("Acme Corporation", "acme"), ("Acme Trading Company", "acme trading"),
     ("Ltd", None), ("", None), ("   ", None), (None, None), (float("nan"), None),
 ])
 def test_normalise_company_name(name, expected):

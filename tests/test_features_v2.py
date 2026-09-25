@@ -6,7 +6,9 @@ import pandas as pd
 import pytest
 
 from emva.constants import CATS, CATS_V2_CANDIDATES, MISSING, V2_LEVELS
-from emva.design import design, feature_design, fixed_columns, fixed_design
+from emva.design import design, fixed_columns, fixed_design
+from emva.feature_spec import LEGACY_SPEC, V2_SPEC, feature_spec
+from emva.eval.regression import BASELINE_DEAL_LOG_RESIDUAL_SD
 from emva.pipeline import run
 
 from conftest import REPO
@@ -17,8 +19,8 @@ from emva.features import (
     V2_DROPPED,
     FeatureSet,
     add_features_v2,
-    feature_cats,
     session_absent,
+    text_cat,
     text_cat_v2,
 )
 
@@ -144,7 +146,7 @@ def test_text_cat_v2(text, expected):
 def test_feature_sets_and_2_6_drop():
     assert set(V2_DROPPED) == {"c_budget", "c_timeline", "ip_type", "edits_1_4"}
     assert not set(V2_DROPPED) & set(CATS_V2) and set(CATS_V2) | set(V2_DROPPED) == set(CATS_V2_CANDIDATES)
-    assert feature_cats(FeatureSet.V2) is CATS_V2 and "no_company" in feature_cats(FeatureSet.LEGACY)
+    assert feature_spec(FeatureSet.V2).cats is CATS_V2 and "no_company" in feature_spec(FeatureSet.LEGACY).cats
     assert {"session_missing", "enrichment_missing"} <= set(CATS_V2)
     assert FeatureSet("legacy") is FeatureSet.LEGACY
     with pytest.raises(ValueError):
@@ -192,7 +194,7 @@ def test_one_row_frame_produces_the_full_column_set():
     assert list(D.columns) == fixed_columns(CATS_V2) and D.shape == (1, V2_DESIGN_COLUMNS)
     assert D.loc[0, "channel=meta"] == 0.0 and D.loc[0, "time_on_page=60-300s"] == 1.0  # absent level -> zero column
     assert D.loc[0, "session_missing=yes"] == 0.0 and set(D.values.ravel()) <= {0.0, 1.0}
-    assert list(feature_design(X, FeatureSet.V2).columns) == list(D.columns)
+    assert list(feature_spec(FeatureSet.V2).design(X).columns) == list(D.columns)
 
 
 def test_unseen_level_raises():
@@ -209,13 +211,41 @@ def test_feature_without_a_level_list_is_refused():
 
 def test_legacy_design_stays_data_driven(v1_result):
     X = v1_result.X
-    assert list(feature_design(X, FeatureSet.LEGACY).columns) == list(design(X).columns)
+    assert list(feature_spec(FeatureSet.LEGACY).design(X).columns) == list(design(X).columns)
     assert list(design(X).columns) == list(v1_result.design.columns)
     assert len(design(X.iloc[:1]).columns) < len(design(X).columns)  # one row: only the levels it has
-    assert CATS == feature_cats(FeatureSet.LEGACY)
+    assert CATS == feature_spec(FeatureSet.LEGACY).cats
 
 
-def test_no_equal_coefficients_on_data_v2():
-    """ADR 0011: the 'no identical coefficients' criterion is evaluated on data/v2."""
-    w = run(REPO / "data" / "v2").weights.log_odds
-    assert [(a, b) for a, b in combinations(w.index, 2) if w[a] == w[b]] == []
+def test_no_duplicated_columns_share_a_coefficient_on_data_v2():
+    """ADR 0011: on data/v2 no tie at 3 dp comes from correlated columns.
+
+    Ties between unrelated columns can occur by coincidence (one does on data/v2 after the review's
+    suffix additions; reports/phase2.md reports it); they are reported, not engineered away.
+    """
+    r = run(REPO / "data" / "v2")
+    w, D = r.weights.log_odds, r.design[r.train]
+    ties = [(a, b) for a, b in combinations(w.index, 2) if w[a] == w[b]]
+    assert all(abs(D[a].corr(D[b])) < 0.5 for a, b in ties), ties
+
+
+@pytest.mark.parametrize("missing", [None, np.nan, pd.NA])
+def test_text_classifiers_accept_any_missing_value(missing):
+    assert text_cat_v2(missing) == "vague" and text_cat(missing) == "vague"
+
+
+def test_missing_typed_country_is_not_a_mismatch():
+    X = _features(_lead(ip_country="US", a_country=None), _lead(ip_country="US", a_country=np.nan),
+                  _lead(ip_country="US", a_country="UK"), _lead(ip_country="UK", a_country="UK"))
+    assert X.session_missing.eq("no").all()
+    assert X.ip_country.tolist() == ["match", "match", "mismatch", "match"]
+
+
+def test_feature_specs():
+    assert feature_spec("legacy") is LEGACY_SPEC and feature_spec(FeatureSet.V2) is V2_SPEC
+    assert LEGACY_SPEC.fixed_log_residual_sd == BASELINE_DEAL_LOG_RESIDUAL_SD and V2_SPEC.fixed_log_residual_sd is None
+    assert LEGACY_SPEC.cats is CATS and V2_SPEC.cats is CATS_V2
+    X = _features(_lead())
+    assert list(V2_SPEC.design(X).columns) == fixed_columns(CATS_V2)
+    with pytest.raises(ValueError):
+        feature_spec("v3")

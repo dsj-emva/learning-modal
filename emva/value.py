@@ -36,15 +36,19 @@ class DealValueModel:
         return np.exp(self.log_residual_sd ** 2 / 2)
 
 
-def residual_sd(residuals: np.ndarray | pd.Series, ddof: int = 1) -> float:
-    """Sample standard deviation of ``residuals`` (``ddof`` degrees of freedom removed).
+def residual_sd(residuals: np.ndarray | pd.Series) -> float:
+    """Sample standard deviation of ``residuals`` with one degree of freedom removed (ddof = 1).
 
-    Raises ``ValueError`` when there are not more residuals than ``ddof``.
+    ddof = 1 is a deliberate choice: the residuals are in-sample residuals of a ridge fit on dummy
+    columns, whose shrinkage makes them larger than least-squares residuals and roughly offsets the
+    fit's effective degrees of freedom, so no further correction is applied (slightly conservative;
+    with hundreds of training deals the difference is small). Raises ``ValueError`` for fewer than two
+    residuals.
     """
     r = np.asarray(residuals, dtype=float)
-    if len(r) <= ddof:
-        raise ValueError(f"need more than {ddof} residuals to estimate an sd, got {len(r)}")
-    return float(np.std(r, ddof=ddof))
+    if len(r) < 2:
+        raise ValueError(f"need at least 2 residuals to estimate an sd, got {len(r)}")
+    return float(np.std(r, ddof=1))
 
 
 def deal_value_design(X: pd.DataFrame) -> pd.DataFrame:

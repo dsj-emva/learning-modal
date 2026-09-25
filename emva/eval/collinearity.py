@@ -92,9 +92,16 @@ def format_result(res: CollinearityResult) -> list[str]:
     return lines
 
 
+def summary_row(res: CollinearityResult) -> dict[str, str]:
+    """Table cells for one design: max |corr| (``n/a`` with fewer than two usable columns), verdict, offending pairs."""
+    return {"max |corr|": "n/a" if res.max_pair is None else f"{abs(res.max_pair[2]):.3f}",
+            "check": "pass" if res.passed else "FAIL",
+            "pairs above threshold": "; ".join(f"{a} ~ {b} ({r:+.3f})" for a, b, r in res.pairs) or "none"}
+
+
 def main(argv: list[str] | None = None) -> None:
     """CLI entry point: run the pipeline, print the check, exit 1 on failure."""
-    ap =argparse.ArgumentParser(prog="python -m emva.eval.collinearity")
+    ap = argparse.ArgumentParser(prog="python -m emva.eval.collinearity")
     ap.add_argument("--data", default="data/v1")
     ap.add_argument("--threshold", type=float, default=MAX_ABS_DESIGN_CORR)
     add_label_arguments(ap)

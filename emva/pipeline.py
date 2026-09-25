@@ -17,10 +17,9 @@ from sklearn.linear_model import LogisticRegression
 
 from emva.constants import TEST_FROM
 from emva.context.features import context_logit
-from emva.design import feature_design
 from emva.eval.metrics import summary
-from emva.eval.regression import BASELINE_DEAL_LOG_RESIDUAL_SD  # legacy feature set only: baseline byte identity
-from emva.features import FeatureSet, featurise
+from emva.feature_spec import feature_spec
+from emva.features import FeatureSet
 from emva.io import clean, load
 from emva.labels import HORIZON, LabelConfig, assign_labels, split_masks
 from emva.model import fit_lr, predict, scorecard
@@ -69,7 +68,7 @@ def build(L: pd.DataFrame, labels: LabelConfig = HORIZON, features: FeatureSet =
     """Clean, label and featurise loaded leads (``baseline/emva_score.py::build`` with both legacy options)."""
     X = clean(L)
     assign_labels(X, labels)
-    return featurise(X, features)
+    return feature_spec(features).featurise(X)
 
 
 def run(data: str | Path, margin: float = 1.0, context: str | Path | None = None,
@@ -83,17 +82,17 @@ def run(data: str | Path, margin: float = 1.0, context: str | Path | None = None
     ``context`` (an agent output CSV), also fit formula-only, context-only and formula+context
     models on the rows that have a context score and summarise all three.
     """
-    features = FeatureSet(features)
+    spec = feature_spec(features)
+    features = spec.feature_set
     X = build(load(data), labels, features)
     tr, te = split_masks(X, test_from, labels.eligible(X))
-    D = feature_design(X, features)
+    D = spec.design(X)
     lr = fit_lr(D, X.y, tr)
     X["p_formula"] = predict(lr, D)
 
     # expected deal value (fit on train wins)
     M = deal_value_design(X)
-    fixed_sd = BASELINE_DEAL_LOG_RESIDUAL_SD if features is FeatureSet.LEGACY else None
-    dv = fit_deal_value(M, X.deal_value, tr, log_residual_sd=fixed_sd)
+    dv = fit_deal_value(M, X.deal_value, tr, log_residual_sd=spec.fixed_log_residual_sd)
     X["deal_value_hat"] = predict_deal_value(dv, M)
     X["value_formula"] = expected_value(X.p_formula, X.deal_value_hat, margin)
 
@@ -135,7 +134,8 @@ def run(data: str | Path, margin: float = 1.0, context: str | Path | None = None
 
 
 def write_outputs(result: PipelineResult, out: str | Path) -> None:
-    """Write ``weights.csv`` and ``scores.csv`` into ``out`` (same format as the baseline)."""
+    """Write ``weights.csv`` and ``scores.csv`` into ``out`` (created if missing; same format as the baseline)."""
+    Path(out).mkdir(parents=True, exist_ok=True)
     result.weights.to_csv(f"{out}/weights.csv")
     result.scores().to_csv(f"{out}/scores.csv")
 

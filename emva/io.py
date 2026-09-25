@@ -23,7 +23,9 @@ def normalise_company_name(name: object) -> str | None:
     Lower-case; drop dots and apostrophes (so "B.V." becomes "bv"); turn any other
     non-alphanumeric character into a space; collapse whitespace; then strip trailing
     ``LEGAL_SUFFIXES`` tokens repeatedly ("Acme Holdings Co Ltd" becomes "acme holdings").
-    A name that is only a suffix ("Ltd") normalises to None.
+    A name that is only a suffix ("Ltd") normalises to None. Case folding is ``str.lower()`` only, with
+    no unicode normalisation or accent folding, so "Müller GmbH" and "Muller GmbH" do not match: this
+    fails safe (a missed match, never a wrong one).
     """
     if not isinstance(name, str):
         return None

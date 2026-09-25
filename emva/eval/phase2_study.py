@@ -26,9 +26,9 @@ import numpy as np
 import pandas as pd
 
 from emva.boilerplate import boilerplate_similarity
-from emva.constants import BOILERPLATE_SIMILARITY_THRESHOLD, MISSING
+from emva.constants import BOILERPLATE_SIMILARITY_THRESHOLD, MAX_ABS_DESIGN_CORR, MISSING
 from emva.eval.bootstrap import N_RESAMPLES, SEED, paired_auc
-from emva.eval.collinearity import check_collinearity
+from emva.eval.collinearity import check_collinearity, summary_row
 from emva.eval.metrics import top_share
 from emva.eval.regression import BASELINE_DEAL_LOG_RESIDUAL_SD, FROZEN_WEIGHTS, read_weights
 from emva.eval.report import frozen_test_labels, md_table
@@ -170,14 +170,10 @@ def weights_section(results: dict[str, PipelineResult], baseline_run: PipelineRe
 
 def collinearity_section(results: dict[str, PipelineResult]) -> list[str]:
     """2.7: max |corr| and the verdict for each model's design on its training rows."""
-    rows = []
-    for name, r in results.items():
-        res = check_collinearity(r.design[r.train])
-        a, b, c = res.max_pair
-        rows.append({"model": name, "design columns": r.design.shape[1], "training rows": int(r.train.sum()),
-                     "max |corr|": f"{abs(c):.3f}", "check": "pass" if res.passed else "FAIL",
-                     "pairs above threshold": "; ".join(f"{p} ~ {q} ({v:+.3f})" for p, q, v in res.pairs) or "none"})
-    return ["## 2.7 Collinearity", "", "Threshold |corr| > 0.95 on the training rows of each model's design.", "",
+    rows = [{"model": name, "design columns": r.design.shape[1], "training rows": int(r.train.sum()),
+             **summary_row(check_collinearity(r.design[r.train]))} for name, r in results.items()]
+    return ["## 2.7 Collinearity", "",
+            f"Threshold |corr| > {MAX_ABS_DESIGN_CORR} on the training rows of each model's design.", "",
             md_table(pd.DataFrame(rows)), ""]
 
 
@@ -206,7 +202,7 @@ def value_section(data: str | Path, results: dict[str, PipelineResult]) -> list[
     _, _, y_a, y_b = frozen_test_labels(L)
     rows = []
     for name, r in results.items():
-        if r.features is FeatureSet.LEGACY:
+        if not r.deal_value.estimated:  # only models that estimate the sd are compared with the fixed one
             continue
         X = r.X
         M = deal_value_design(X)

@@ -35,8 +35,6 @@ import pandas as pd
 
 from emva.boilerplate import is_boilerplate
 from emva.constants import (
-    BOILERPLATE_SIMILARITY_THRESHOLD,
-    CATS,
     CATS_V2_CANDIDATES,
     COPY_PASTE_PREFIXES,
     FREE,
@@ -57,7 +55,8 @@ class FeatureSet(str, Enum):
 
 # Plan 2.6: v2 candidates dropped because no level's 95% coefficient-bootstrap CI excludes zero on v1
 # (python -m emva.eval.feature_selection, 1000 refits, horizon labels; same decision with legacy labels).
-# Evidence: reports/phase2.md, section "2.6 Feature selection". Re-run the evaluation on new data.
+# Evidence: reports/phase2.md, section "Plan 2.6: feature selection by coefficient bootstrap". Re-run the
+# evaluation on new data.
 V2_DROPPED: tuple[str, ...] = ("c_budget", "c_timeline", "ip_type", "edits_1_4")
 CATS_V2: dict[str, str] = {k: v for k, v in CATS_V2_CANDIDATES.items() if k not in V2_DROPPED}
 
@@ -69,33 +68,33 @@ SESSION_INPUTS: tuple[str, ...] = ("time_on_page_s", "hesitation_ms", "sessions_
                                    "ip_country", "is_datacenter_ip", "submitted_weekday", "local_submit_hour")
 
 
-def feature_cats(feature_set: FeatureSet) -> dict[str, str]:
-    """Feature -> reference level for the model design of ``feature_set``."""
-    return CATS if FeatureSet(feature_set) is FeatureSet.LEGACY else CATS_V2
+def _normalise_text(s: object) -> str:
+    """Stripped, lower-cased text; ``""`` for anything that is not a string (None, NaN, ``pd.NA``)."""
+    return s.strip().lower() if isinstance(s, str) else ""
 
 
-def text_cat(s: str | None) -> str:
+def _vague_specific_or_neutral(s: str) -> str:
+    """The rules after the copy-paste test, shared by both text classifiers; ``s`` is normalised."""
+    if s in VAGUE:
+        return "vague"
+    if re.search(SPECIFIC_TEXT_PATTERN, s):
+        return "specific"
+    return "neutral"
+
+
+def text_cat(s: object) -> str:
     """Legacy: classify the free-text answer as ``copy_paste``, ``vague``, ``specific`` or ``neutral``."""
-    s = (s or "").strip().lower()
+    s = _normalise_text(s)
     if s.startswith(COPY_PASTE_PREFIXES):
         return "copy_paste"
-    if s in VAGUE:
-        return "vague"
-    if re.search(SPECIFIC_TEXT_PATTERN, s):
-        return "specific"
-    return "neutral"
+    return _vague_specific_or_neutral(s)
 
 
-def text_cat_v2(s: str | None, threshold: float = BOILERPLATE_SIMILARITY_THRESHOLD) -> str:
+def text_cat_v2(s: object) -> str:
     """v2: like ``text_cat`` but ``copy_paste`` means similar to a boilerplate snippet (``emva.boilerplate``)."""
-    if is_boilerplate(s, threshold):
+    if is_boilerplate(s):
         return "copy_paste"
-    s = (s or "").strip().lower()
-    if s in VAGUE:
-        return "vague"
-    if re.search(SPECIFIC_TEXT_PATTERN, s):
-        return "specific"
-    return "neutral"
+    return _vague_specific_or_neutral(_normalise_text(s))
 
 
 def seniority(t: object) -> str:
@@ -190,13 +189,14 @@ def _or_reference(absent: pd.Series, feature: str, values: np.ndarray | pd.Serie
     return np.where(absent, CATS_V2_CANDIDATES[feature], values)
 
 
-def add_features_v2(X: pd.DataFrame, text_threshold: float = BOILERPLATE_SIMILARITY_THRESHOLD) -> pd.DataFrame:
+def add_features_v2(X: pd.DataFrame) -> pd.DataFrame:
     """v2 feature set (module docstring): add every bucketed feature column to ``X`` in place and return it.
 
     Needs the columns produced by ``emva.io.load`` (including ``en_<column>`` and
     ``enrichment_source``) and ``emva.io.clean``. ``viewed_pricing`` and ``ip_country`` are
     overwritten with their bucketed values (read from the raw columns first), as in the legacy set.
-    ``text_threshold`` is the boilerplate similarity threshold.
+    ``ip_country`` is ``mismatch`` only when both the IP country and the typed country are present
+    and differ.
     """
     X["channel"] = channel(X.utm_medium, X.utm_source)
     no_session = session_absent(X)
@@ -205,7 +205,7 @@ def add_features_v2(X: pd.DataFrame, text_threshold: float = BOILERPLATE_SIMILAR
     X["enrichment_missing"] = np.where(no_enrichment, "yes", "no")
     X["band"] = X.en_employee_band.fillna(X.a_company_size.replace("", np.nan)).fillna(MISSING)
     X["email"] = email_type(X.email_l)
-    X["text"] = X.a_what_to_solve.apply(text_cat_v2, threshold=text_threshold)
+    X["text"] = X.a_what_to_solve.apply(text_cat_v2)
     X["seniority"] = X.a_job_title.apply(seniority)
     X["spend"] = _or_reference(no_enrichment, "spend", X.en_monthly_ad_spend_band)
     X["crm"] = _or_reference(no_enrichment, "crm",
@@ -224,7 +224,8 @@ def add_features_v2(X: pd.DataFrame, text_threshold: float = BOILERPLATE_SIMILAR
     wk = ~X.submitted_weekday.isin(["Saturday", "Sunday"]) & X.local_submit_hour.between(9, 17)
     X["business_hours"] = _or_reference(no_session, "business_hours", np.where(wk, "wkday_9-18", "outside"))
     X["ip_country"] = _or_reference(no_session, "ip_country",
-                                    np.where(X.ip_country != X.a_country, "mismatch", "match"))
+                                    np.where(X.ip_country.notna() & X.a_country.notna()
+                                             & (X.ip_country != X.a_country), "mismatch", "match"))
     X["ip_type"] = _or_reference(no_session, "ip_type",
                                  np.where(X.is_datacenter_ip == True, "dc", "residential"))  # noqa: E712
     X["c_budget"] = X.a_budget.fillna("not_asked")
@@ -232,8 +233,3 @@ def add_features_v2(X: pd.DataFrame, text_threshold: float = BOILERPLATE_SIMILAR
     X["edits_1_4"] = np.where(X.field_edit_count.between(1, 4), "yes", "no")
     X["sector"] = X.en_sector.fillna(MISSING)
     return X
-
-
-def featurise(X: pd.DataFrame, feature_set: FeatureSet) -> pd.DataFrame:
-    """Add ``feature_set``'s feature columns to ``X`` in place and return it."""
-    return add_features(X) if FeatureSet(feature_set) is FeatureSet.LEGACY else add_features_v2(X)
