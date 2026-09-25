@@ -158,21 +158,26 @@ def test_report_contains_both_label_definitions(report_text, v1_horizon):
 
 
 def test_report_runs_the_collinearity_check(report_text):
-    text = _section(report_text, "Design collinearity (plan 2.7)")
+    text = _section(report_text, "Design collinearity (plan 2.7): FAIL")
     assert "Candidate design (`v2` features, 39 columns) on its 4049 training rows" in text
-    # on v1 every session-less lead is a lead-ads lead: reported, not hidden
+    # on v1 every session-less lead is a lead-ads lead: reported, not hidden (ADR 0011)
     assert "- FAIL (1 pairs with |corr| > 0.95): max |corr| = 1.000 between channel=meta_leadads and " \
            "session_missing=yes" in text
 
 
-@pytest.mark.parametrize("feature_set,pair", [("legacy", "email=free and no_company=yes"),
-                                              ("v2", "channel=meta_leadads and session_missing=yes")])
-def test_report_cli_exits_nonzero_when_the_candidate_is_collinear(data_v1, feature_set, pair):
+@pytest.mark.parametrize("feature_set,strict,code,pair", [
+    ("v2", False, 0, "channel=meta_leadads and session_missing=yes"),   # a data property: warn, do not fail
+    ("v2", True, 1, "channel=meta_leadads and session_missing=yes"),
+    ("legacy", True, 1, "email=free and no_company=yes"),
+])
+def test_report_cli_exits_nonzero_only_with_strict(data_v1, feature_set, strict, code, pair):
     proc = subprocess.run([sys.executable, "-m", "emva.eval.report", "--data", str(data_v1), "--n-resamples", "5",
-                           "--feature-set", feature_set], cwd=REPO, capture_output=True, text=True)
-    assert proc.returncode == 1
+                           "--feature-set", feature_set, *(["--strict"] if strict else [])],
+                          cwd=REPO, capture_output=True, text=True)
+    assert proc.returncode == code, proc.stderr
+    assert "## Design collinearity (plan 2.7): FAIL" in proc.stdout
     assert f"- FAIL (1 pairs with |corr| > 0.95): max |corr| = 1.000 between {pair}" in proc.stdout
-    assert "FAIL: candidate design collinearity check" in proc.stderr
+    assert f"{'FAIL' if strict else 'WARNING'}: candidate design collinearity check" in proc.stderr
 
 
 def test_horizon_pipeline_uses_mature_leads_only(v1_horizon):

@@ -8,8 +8,9 @@ markdown report:
   options and feature set given (default: horizon labels, ``emva.labels.HORIZON``; v2 features)
 - status quo = ``status_quo_rules.json`` reconstructed by ``emva.eval.status_quo``
 
-It ends with the candidate's design collinearity check (plan 2.7, ``emva.eval.collinearity``);
-the command exits 1 after printing if that check fails.
+It ends with the candidate's design collinearity check (plan 2.7, ``emva.eval.collinearity``) as a
+PASS/FAIL section; with ``--strict`` the command exits 1 after printing if that check fails (on
+data/v1 the v2 design fails it because of a data property, ADR 0011, so the default does not).
 
 Every model is scored on the same rows under two frozen test definitions (plan 1.6, reported
 side by side for one release):
@@ -281,10 +282,11 @@ def frozen_test_labels(L: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series, pd.Ser
 def collinearity_section(result: PipelineResult) -> tuple[list[str], CollinearityResult]:
     """The candidate's design collinearity check (plan 2.7) on its training rows, as markdown lines."""
     res = check_collinearity(result.design[result.train])
-    return (["## Design collinearity (plan 2.7)", "",
+    return ([f"## Design collinearity (plan 2.7): {'PASS' if res.passed else 'FAIL'}", "",
              f"Candidate design (`{result.features.value}` features, {result.design.shape[1]} columns) on its "
-             f"{int(result.train.sum())} training rows; fails when two columns have |corr| > {res.threshold}.", "",
-             *format_result(res), ""], res)
+             f"{int(result.train.sum())} training rows; fails when two columns have |corr| > {res.threshold}. "
+             "The report exits 1 on a failure only with `--strict`; `python -m emva.eval.collinearity` always does.",
+             "", *format_result(res), ""], res)
 
 
 def build_report(data: str | Path, n_resamples: int = N_RESAMPLES, seed: int = SEED,
@@ -355,19 +357,22 @@ def build_report_with_check(data: str | Path, n_resamples: int = N_RESAMPLES, se
 
 
 def main(argv: list[str] | None = None) -> None:
-    """CLI entry point: print the standard report; exit 1 if the candidate fails the collinearity check."""
+    """CLI entry point: print the standard report; with ``--strict``, exit 1 if the collinearity check fails."""
     ap = argparse.ArgumentParser(prog="python -m emva.eval.report")
     ap.add_argument("--data", default="data/v1")
     ap.add_argument("--n-resamples", type=int, default=N_RESAMPLES)
     ap.add_argument("--seed", type=int, default=SEED)
+    ap.add_argument("--strict", action="store_true", help="exit 1 if the candidate design fails the collinearity check")
     add_label_arguments(ap)
     add_feature_arguments(ap)
     a = ap.parse_args(argv)
     text, collinearity = build_report_with_check(a.data, a.n_resamples, a.seed, label_config(ap, a), feature_set(a))
     print(text)
     if not collinearity.passed:
-        print(f"\nFAIL: candidate design collinearity check: {collinearity.describe()}", file=sys.stderr)
-        raise SystemExit(1)
+        print(f"\n{'FAIL' if a.strict else 'WARNING'}: candidate design collinearity check: {collinearity.describe()}",
+              file=sys.stderr)
+        if a.strict:
+            raise SystemExit(1)
 
 
 if __name__ == "__main__":

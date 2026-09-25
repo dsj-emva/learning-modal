@@ -53,10 +53,13 @@ The default `--feature-set v2` (plan Phase 2, `emva/features.py`): `session_miss
 features stay at their reference level), `band=missing`, company-name matching when the email
 domain misses companies.csv, similarity-based boilerplate detection, c_budget / c_timeline /
 ip_type / edits_1_4 dropped (2.6), and the deal-value residual sd estimated from training. The
-design's columns are fixed by the spec. `--feature-set legacy` is the baseline's. Evidence and
-checks: `python -m emva.eval.phase2_study`, `python -m emva.eval.feature_selection`,
-`python -m emva.eval.collinearity` (exits 1 on |corr| > 0.95; `make report` runs it too and exits 1
-on data/v1, where `session_missing` equals `channel=meta_leadads`; see reports/phase2.md).
+design's columns are fixed by declared level lists (`emva.constants.V2_LEVELS`, 39 columns; an
+undeclared value raises), so one row scores with the full schema. `--feature-set legacy` is the
+baseline's. Evidence and checks: `python -m emva.eval.phase2_study`,
+`python -m emva.eval.feature_selection`, `python -m emva.eval.collinearity` (exits 1 on
+|corr| > 0.95). `make report` prints the same check as a PASS/FAIL section and exits 1 on a failure
+only with `--strict` (on data/v1 the v2 design fails it: `session_missing` equals
+`channel=meta_leadads` there; ADR 0011).
 
 ## Synthetic data v2
 
