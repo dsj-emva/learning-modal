@@ -25,7 +25,6 @@ import argparse
 import hashlib
 import json
 import logging
-import os
 import threading
 import time
 from collections.abc import Callable
@@ -49,6 +48,7 @@ from emva.context.contract import (
     ContractError,
     validate,
 )
+from emva.env import load_env_var
 from emva.io import clean, load
 
 log = logging.getLogger(__name__)
@@ -93,32 +93,6 @@ def system_prompt(brief_text: str) -> str:
 
 
 # --- credentials and client -------------------------------------------------------------------------
-
-def find_dotenv(start: str | Path) -> Path | None:
-    """The first ``.env`` file found walking up from ``start`` to the filesystem root, else None."""
-    d = Path(start).resolve()
-    for cand_dir in (d, *d.parents):
-        cand = cand_dir / ".env"
-        if cand.is_file():
-            return cand
-    return None
-
-
-def load_env_var(name: str, start: str | Path | None = None) -> str | None:
-    """``name`` from the environment, else from the nearest ``.env`` above ``start`` (default: this file), else None."""
-    value = os.environ.get(name)
-    if value:
-        return value
-    path = find_dotenv(start or Path(__file__).parent)
-    if path is None:
-        return None
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip().removeprefix("export ")
-        key, sep, val = line.partition("=")
-        if sep and key.strip() == name:
-            return val.strip().strip('"').strip("'") or None
-    return None
-
 
 def make_client() -> anthropic.Anthropic:
     """SDK client with the workspace header and SDK retries off (``judge`` does its own, logged, retries).

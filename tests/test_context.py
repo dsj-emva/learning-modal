@@ -271,17 +271,31 @@ def test_client_sends_the_workspace_header_and_does_its_own_retries(monkeypatch)
 def test_client_refuses_to_run_without_a_workspace(monkeypatch, tmp_path):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.delenv("ANTHROPIC_WORKSPACE_ID", raising=False)
-    monkeypatch.setattr(agent, "find_dotenv", lambda start: None)
+    monkeypatch.setattr(agent, "load_env_var", lambda name: "test-key" if name == "ANTHROPIC_API_KEY" else None)
     with pytest.raises(SystemExit, match="WORKSPACE"):
         make_client()
 
 
 def test_load_env_var_reads_a_dotenv_above_the_start(tmp_path, monkeypatch):
+    from emva.env import find_dotenv, load_env_var
     monkeypatch.delenv("EMVA_TEST_VAR", raising=False)
     (tmp_path / ".env").write_text("export EMVA_TEST_VAR='abc'\nOTHER=1\n")
     (tmp_path / "sub").mkdir()
-    assert agent.load_env_var("EMVA_TEST_VAR", tmp_path / "sub") == "abc"
-    assert agent.load_env_var("MISSING_VAR", tmp_path / "sub") is None
+    assert find_dotenv(tmp_path / "sub") == tmp_path / ".env"
+    assert load_env_var("EMVA_TEST_VAR", tmp_path / "sub") == "abc"
+    assert load_env_var("MISSING_VAR", tmp_path / "sub") is None
+    monkeypatch.setenv("EMVA_TEST_VAR", "from-env")
+    assert load_env_var("EMVA_TEST_VAR", tmp_path / "sub") == "from-env"
+
+
+def test_paraphrase_script_and_agent_share_the_loader():
+    import sys
+    sys.path.insert(0, str(REPO / "scripts"))
+    import paraphrase_templates
+
+    from emva import env
+    assert paraphrase_templates.load_env_var is env.load_env_var is agent.load_env_var
+    assert not hasattr(paraphrase_templates, "find_dotenv") and not hasattr(agent, "find_dotenv")
 
 
 def test_bots_and_duplicates_are_dropped_before_calling(data_v1):
