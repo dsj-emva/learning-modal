@@ -1,0 +1,8 @@
+# Python 3.11. Exact versions the Phase 0 baseline was verified with (make baseline).
+numpy==2.4.6
+pandas==3.0.6
+scikit-learn==1.9.1
+scipy==1.17.1          # LogisticRegression's lbfgs solver; pinned because it affects coefficients
+anthropic==1.8.0       # Phase 6 context agent (the Phase 0 agent still uses requests)
+requests==2.34.2       # emva/context/agent.py, moved unchanged from baseline/context_agent.py
+pytest==9.1.1
