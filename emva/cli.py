@@ -1,10 +1,23 @@
-"""Command-line options shared by ``python -m emva`` and ``python -m emva.eval.report``."""
+"""Command-line options shared by ``python -m emva``, ``python -m emva.eval.report`` and other eval scripts."""
 from __future__ import annotations
 
 import argparse
 
 from emva.constants import HORIZON_DAYS
+from emva.features import FeatureSet
 from emva.labels import LabelConfig, LabelMode
+
+
+def add_feature_arguments(ap: argparse.ArgumentParser) -> None:
+    """Add ``--feature-set``."""
+    ap.add_argument("--feature-set", choices=[f.value for f in FeatureSet], default=FeatureSet.V2.value,
+                    help="legacy = baseline features and fixed deal-value residual sd (with --label-mode legacy: "
+                         "byte-identical outputs); v2 = plan Phase 2 features, residual sd estimated (default)")
+
+
+def feature_set(a: argparse.Namespace) -> FeatureSet:
+    """The ``FeatureSet`` chosen by ``--feature-set``."""
+    return FeatureSet(a.feature_set)
 
 
 def add_label_arguments(ap: argparse.ArgumentParser) -> None:

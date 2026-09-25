@@ -1,31 +1,89 @@
-"""Bucketed model features (the "features" block of ``baseline/emva_score.py::build``).
+"""Bucketed model features: the legacy set (the baseline's) and the v2 set (plan Phase 2).
 
-No behaviour change in Phase 0: missing values still fall into reference levels
-(for example a missing ``time_on_page`` becomes "15-60s"). Phase 2 adds explicit
-``missing`` levels.
+``--feature-set legacy`` (``add_features``) is the "features" block of
+``baseline/emva_score.py::build`` unchanged: missing values fall into reference levels (for
+example a missing ``time_on_page`` becomes "15-60s") and enrichment comes from the email-domain
+join only.
+
+``--feature-set v2`` (``add_features_v2``, the default):
+
+- 2.1: ``time_on_page``, ``hesitation_90s``, ``sessions_3plus``, ``viewed_pricing``,
+  ``ip_country``, ``ip_type`` and ``business_hours`` get a ``missing`` level when their input is
+  absent. ``business_hours`` has no channel special case: it is ``missing`` when the submit
+  weekday or hour is absent or the lead has no on-site session (blank ``landing_url``), which is
+  the case for Meta lead-ads leads.
+- 2.2: ``enrichment_missing`` (no companies.csv row by domain or by name) replaces
+  ``no_company``; ``band`` is enrichment, else the typed ``company_size`` answer, else
+  ``missing``; ``spend``, ``crm``, ``hiring`` (and ``sector``, used by the value model) are
+  ``missing`` without enrichment.
+- 2.3: enrichment is ``en_<column>`` from ``emva.io.load``: the domain row, else an exact
+  normalised company-name match.
+- 2.5: ``text`` detects boilerplate by similarity (``emva.boilerplate``), not by prefix.
+- 2.6: the features in ``V2_DROPPED`` are computed but not used by the model.
 """
 from __future__ import annotations
 
 import re
+from enum import Enum
 
 import numpy as np
 import pandas as pd
 
+from emva.boilerplate import is_boilerplate
 from emva.constants import (
+    BOILERPLATE_SIMILARITY_THRESHOLD,
+    CATS,
+    CATS_V2_CANDIDATES,
     COPY_PASTE_PREFIXES,
     FREE,
     MID_TITLE_PATTERN,
+    MISSING,
     SENIOR_TITLE_PATTERN,
     SPECIFIC_TEXT_PATTERN,
     VAGUE,
 )
 
 
+class FeatureSet(str, Enum):
+    """``--feature-set``: ``legacy`` = the baseline's features, ``v2`` = plan Phase 2 (default)."""
+
+    LEGACY = "legacy"
+    V2 = "v2"
+
+
+# Plan 2.6: v2 candidates dropped because no level's 95% coefficient-bootstrap CI excludes zero on v1
+# (python -m emva.eval.feature_selection, 1000 refits, horizon labels; same decision with legacy labels).
+# Evidence: reports/phase2.md, section "2.6 Feature selection". Re-run the evaluation on new data.
+V2_DROPPED: tuple[str, ...] = ("c_budget", "c_timeline", "ip_type", "edits_1_4")
+CATS_V2: dict[str, str] = {k: v for k, v in CATS_V2_CANDIDATES.items() if k not in V2_DROPPED}
+
+# Behavioural (on-site telemetry) features that have a missing level in v2 (plan 2.1).
+BEHAVIOURAL_FEATURES: tuple[str, ...] = ("time_on_page", "hesitation_90s", "sessions_3plus", "viewed_pricing",
+                                         "ip_country", "ip_type", "business_hours")
+
+
+def feature_cats(feature_set: FeatureSet) -> dict[str, str]:
+    """Feature -> reference level for the model design of ``feature_set``."""
+    return CATS if FeatureSet(feature_set) is FeatureSet.LEGACY else CATS_V2
+
+
 def text_cat(s: str | None) -> str:
-    """Classify the free-text answer as ``copy_paste``, ``vague``, ``specific`` or ``neutral``."""
+    """Legacy: classify the free-text answer as ``copy_paste``, ``vague``, ``specific`` or ``neutral``."""
     s = (s or "").strip().lower()
     if s.startswith(COPY_PASTE_PREFIXES):
         return "copy_paste"
+    if s in VAGUE:
+        return "vague"
+    if re.search(SPECIFIC_TEXT_PATTERN, s):
+        return "specific"
+    return "neutral"
+
+
+def text_cat_v2(s: str | None, threshold: float = BOILERPLATE_SIMILARITY_THRESHOLD) -> str:
+    """v2: like ``text_cat`` but ``copy_paste`` means similar to a boilerplate snippet (``emva.boilerplate``)."""
+    if is_boilerplate(s, threshold):
+        return "copy_paste"
+    s = (s or "").strip().lower()
     if s in VAGUE:
         return "vague"
     if re.search(SPECIFIC_TEXT_PATTERN, s):
@@ -64,8 +122,19 @@ def channel(utm_medium: pd.Series, utm_source: pd.Series) -> np.ndarray:
     )
 
 
+def email_type(email_l: pd.Series) -> np.ndarray:
+    """``free`` when the normalised email's domain is in ``FREE``, else ``business``."""
+    return np.where(email_l.str.split("@").str[1].isin(FREE), "free", "business")
+
+
+def search_term(ch: pd.Series, utm_term: pd.Series) -> np.ndarray:
+    """``not_google`` off Google; on Google ``brand`` if the term mentions northstar, else ``generic``."""
+    return np.where(ch != "google", "not_google",
+                    np.where(utm_term.fillna("").str.lower().str.contains("northstar"), "brand", "generic"))
+
+
 def add_features(X: pd.DataFrame) -> pd.DataFrame:
-    """Add every bucketed feature column to ``X`` in place and return it.
+    """Legacy feature set: add every bucketed feature column to ``X`` in place and return it.
 
     Needs the columns produced by ``emva.io.load`` and ``emva.io.clean`` (``email_l``).
     Note: ``viewed_pricing`` and ``ip_country`` are overwritten with their bucketed values,
@@ -76,7 +145,7 @@ def add_features(X: pd.DataFrame) -> pd.DataFrame:
     has_co = X.co_employee_band.notna()
     X["no_company"] = np.where(has_co, "no", "yes")
     X["band"] = X.co_employee_band.fillna(X.a_company_size.replace("", np.nan)).fillna("1-10")
-    X["email"] = np.where(X.email_l.str.split("@").str[1].isin(FREE), "free", "business")
+    X["email"] = email_type(X.email_l)
     X["text"] = X.a_what_to_solve.apply(text_cat)
     X["seniority"] = X.a_job_title.apply(seniority)
     X["spend"] = X.co_monthly_ad_spend_band.fillna("under £5k")
@@ -88,8 +157,7 @@ def add_features(X: pd.DataFrame) -> pd.DataFrame:
     X["hesitation_90s"] = np.where(X.hesitation_ms > 90000, "yes", "no")
     X["sessions_3plus"] = np.where(X.sessions_before_convert >= 3, "yes", "no")
     X["viewed_pricing"] = np.where(X.viewed_pricing == True, "yes", "no")  # noqa: E712
-    X["search_term"] = np.where(X.channel != "google", "not_google",
-                                np.where(X.utm_term.fillna("").str.lower().str.contains("northstar"), "brand", "generic"))
+    X["search_term"] = search_term(X.channel, X.utm_term)
     wk = ~X.submitted_weekday.isin(["Saturday", "Sunday"]) & X.local_submit_hour.between(9, 17)
     X["business_hours"] = np.where(wk & ~lead_ads, "wkday_9-18", "outside")
     X["ip_country"] = np.where(X.ip_country.notna() & (X.ip_country != X.a_country), "mismatch", "match")
@@ -99,3 +167,55 @@ def add_features(X: pd.DataFrame) -> pd.DataFrame:
     X["edits_1_4"] = np.where(X.field_edit_count.between(1, 4), "yes", "no")
     X["sector"] = X.co_sector.fillna("none")
     return X
+
+
+def _or_missing(absent: pd.Series, values: np.ndarray | pd.Series) -> np.ndarray:
+    """``values`` with ``MISSING`` wherever ``absent`` is True."""
+    return np.where(absent, MISSING, values)
+
+
+def add_features_v2(X: pd.DataFrame, text_threshold: float = BOILERPLATE_SIMILARITY_THRESHOLD) -> pd.DataFrame:
+    """v2 feature set (module docstring): add every bucketed feature column to ``X`` in place and return it.
+
+    Needs the columns produced by ``emva.io.load`` (including ``en_<column>`` and
+    ``enrichment_source``) and ``emva.io.clean``. ``viewed_pricing`` and ``ip_country`` are
+    overwritten with their bucketed values (read from the raw columns first), as in the legacy set.
+    ``text_threshold`` is the boilerplate similarity threshold.
+    """
+    X["channel"] = channel(X.utm_medium, X.utm_source)
+    no_enrichment = X.enrichment_source.isna()
+    X["enrichment_missing"] = np.where(no_enrichment, "yes", "no")
+    X["band"] = X.en_employee_band.fillna(X.a_company_size.replace("", np.nan)).fillna(MISSING)
+    X["email"] = email_type(X.email_l)
+    X["text"] = X.a_what_to_solve.apply(text_cat_v2, threshold=text_threshold)
+    X["seniority"] = X.a_job_title.apply(seniority)
+    X["spend"] = X.en_monthly_ad_spend_band.fillna(MISSING)
+    X["crm"] = _or_missing(X.en_crm_platform.isna(),
+                           np.where(X.en_crm_platform.isin(["HubSpot", "Salesforce"]), "hubspot_sf", "other"))
+    X["hiring"] = _or_missing(X.en_is_hiring.isna(),
+                              np.where(X.en_is_hiring == True, "hiring", "not_hiring"))  # noqa: E712
+    top = X.time_on_page_s
+    X["time_on_page"] = np.select([top.isna(), top < 60, top < 300, top < 600],
+                                  [MISSING, "15-60s", "60-300s", "300-600s"], ">600s")
+    X["hesitation_90s"] = _or_missing(X.hesitation_ms.isna(), np.where(X.hesitation_ms > 90000, "yes", "no"))
+    X["sessions_3plus"] = _or_missing(X.sessions_before_convert.isna(),
+                                      np.where(X.sessions_before_convert >= 3, "yes", "no"))
+    X["viewed_pricing"] = _or_missing(X.viewed_pricing.isna(),
+                                      np.where(X.viewed_pricing == True, "yes", "no"))  # noqa: E712
+    X["search_term"] = search_term(X.channel, X.utm_term)
+    no_session = X.landing_url.isna() | X.submitted_weekday.isna() | X.local_submit_hour.isna()
+    wk = ~X.submitted_weekday.isin(["Saturday", "Sunday"]) & X.local_submit_hour.between(9, 17)
+    X["business_hours"] = _or_missing(no_session, np.where(wk, "wkday_9-18", "outside"))
+    X["ip_country"] = _or_missing(X.ip_country.isna(), np.where(X.ip_country != X.a_country, "mismatch", "match"))
+    X["ip_type"] = _or_missing(X.is_datacenter_ip.isna(),
+                               np.where(X.is_datacenter_ip == True, "dc", "residential"))  # noqa: E712
+    X["c_budget"] = X.a_budget.fillna("not_asked")
+    X["c_timeline"] = X.a_timeline.fillna("not_asked")
+    X["edits_1_4"] = np.where(X.field_edit_count.between(1, 4), "yes", "no")
+    X["sector"] = X.en_sector.fillna(MISSING)
+    return X
+
+
+def featurise(X: pd.DataFrame, feature_set: FeatureSet) -> pd.DataFrame:
+    """Add ``feature_set``'s feature columns to ``X`` in place and return it."""
+    return add_features(X) if FeatureSet(feature_set) is FeatureSet.LEGACY else add_features_v2(X)

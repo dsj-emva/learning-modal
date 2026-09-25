@@ -1,7 +1,9 @@
 """Every constant the pipeline uses, in one place.
 
 Phase 0 values are copied verbatim from ``baseline/emva_score.py``; Phase 1 added the label
-horizon and label modes. Changing any of them changes model behaviour, so each change belongs to a numbered plan task with its own report.
+horizon and label modes; Phase 2 added the v2 feature set (``CATS_V2_CANDIDATES``, the missing level,
+company-name matching, the boilerplate threshold and the collinearity limit). Changing any of them
+changes model behaviour, so each change belongs to a numbered plan task with its own report.
 """
 from __future__ import annotations
 
@@ -52,11 +54,13 @@ SENIOR_TITLE_PATTERN: str = r"ceo|founder|chief|vp|director|head|owner|partner|p
 MID_TITLE_PATTERN: str = r"manager|lead"
 
 # Form answers extracted from the ``answers`` JSON into ``a_<key>`` columns.
-ANSWER_KEYS: tuple[str, ...] = ("country", "what_to_solve", "job_title", "company_size", "budget", "timeline")
+ANSWER_KEYS: tuple[str, ...] = ("country", "what_to_solve", "job_title", "company_size", "budget", "timeline",
+                                 "company")
 # companies.csv columns joined onto leads as ``co_<column>``.
 ENRICHMENT_COLUMNS: tuple[str, ...] = ("sector", "employee_band", "monthly_ad_spend_band", "crm_platform", "is_hiring")
 
-# feature -> reference level (weights are relative to this level). Order defines design columns.
+# Legacy feature set (``--feature-set legacy``): feature -> reference level (weights are relative to
+# this level). Order defines design columns. Missing inputs fall into reference levels (baseline behaviour).
 CATS: dict[str, str] = {
     "channel": "google", "form_variant": "A", "band": "1-10", "email": "business", "text": "neutral",
     "seniority": "junior/ic", "spend": "under £5k", "crm": "other", "hiring": "not_hiring",
@@ -65,11 +69,37 @@ CATS: dict[str, str] = {
     "c_budget": "not_asked", "c_timeline": "not_asked", "edits_1_4": "no", "no_company": "no",
 }
 
+# Level meaning "the input needed to bucket this feature is absent" (v2 feature set, plan 2.1 and 2.2).
+MISSING: str = "missing"
+
+# v2 feature set before the plan 2.6 selection (``emva.features.V2_DROPPED`` removes some of them).
+# Order matters twice: it defines the design columns, and when two design columns are identical on the
+# training rows the later one is dropped as an alias of the earlier (``emva.design.drop_aliased_columns``).
+# So enrichment_missing comes before band/spend/crm/hiring, whose "missing" levels it can alias.
+CATS_V2_CANDIDATES: dict[str, str] = {
+    "channel": "google", "form_variant": "A", "enrichment_missing": "no", "band": "1-10", "email": "business",
+    "text": "neutral", "seniority": "junior/ic", "spend": "under £5k", "crm": "other", "hiring": "not_hiring",
+    "time_on_page": "15-60s", "hesitation_90s": "no", "sessions_3plus": "no", "viewed_pricing": "no",
+    "search_term": "generic", "business_hours": "outside", "ip_country": "match", "ip_type": "residential",
+    "c_budget": "not_asked", "c_timeline": "not_asked", "edits_1_4": "no",
+}
+
+# Company-name enrichment (plan 2.3): trailing tokens stripped after normalisation. The plan's list plus
+# "sas", a legal form companies.csv uses that the plan's list does not name.
+LEGAL_SUFFIXES: frozenset[str] = frozenset({"ltd", "limited", "inc", "llc", "gmbh", "bv", "sa", "plc", "co", "sas"})
+
+# Boilerplate detector (plan 2.5): token-set Jaccard similarity to any snippet in ``emva/boilerplate.py``
+# at or above this makes the free text "copy_paste".
+BOILERPLATE_SIMILARITY_THRESHOLD: float = 0.6
+
+# Collinearity check (plan 2.7): the largest |correlation| allowed between two design columns.
+MAX_ABS_DESIGN_CORR: float = 0.95
+
 # Formula model.
 LR_C: float = 0.5
 LR_MAX_ITER: int = 5000
 
-# Deal-value model (the residual-variance constant lives in emva/value.py, see plan 2.4).
+# Deal-value model. Its lognormal mean correction uses the residual sd estimated on training (plan 2.4).
 DEAL_VALUE_FEATURES: tuple[str, ...] = ("band", "sector", "channel", "spend")
 DEAL_VALUE_RIDGE_ALPHA: float = 3.0
 
