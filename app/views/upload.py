@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import sys
-from html import escape
 from pathlib import Path
 
 import pandas as pd
@@ -40,7 +39,7 @@ def _collect() -> tuple[dict[str, bytes], list[str]]:
             if up.name.lower().startswith(storage.FORBIDDEN_PREFIX):
                 refused.append(up.name)
             elif up.name in storage.TRAINING_FILES and up.name != name:
-                ui.html(C.callout(f"<b>{escape(up.name)}</b> belongs in its own slot, not here.", "warn"))
+                ui.html(C.callout("belongs in its own slot, not here.", "warn", lead=up.name))
             else:
                 files[name] = up.getvalue()
     return files, refused
@@ -84,13 +83,13 @@ def _upload_section() -> None:
     if report is None:
         return
     if st.session_state.get("validated_files") != files:
-        ui.html(C.callout("The files changed since the last check. <b>Validate again</b> before saving.", "warn"))
+        ui.html(C.callout("Validate again before saving.", "warn", lead="The files changed since the last check."))
         return
     ui.html(C.section("Check results", "Errors (red) must be fixed in the export; notes (amber) are worth a look "
                       "but do not block training.", step="02"))
     _render_report(report, provided | set(refused))
     if not report.ok:
-        ui.html(C.callout(f"<b>{len(report.errors)} problem(s) to fix</b> before this can be saved.", "bad"))
+        ui.html(C.callout("before this can be saved.", "bad", lead=f"{len(report.errors)} problem(s) to fix"))
         return
     ui.html(C.section("Save as a dataset", "Give it a short name, e.g. crm-2026-09. Lower-case letters, digits, "
                       "- and _.", step="03"))
@@ -102,7 +101,7 @@ def _upload_section() -> None:
         try:
             ds = storage.save_dataset(ui.data_root(), name.strip(), files)
         except StorageError as e:
-            ui.html(C.callout(str(e).replace("<", "&lt;"), "bad"))
+            ui.html(C.callout(str(e), "bad"))
         else:
             st.session_state["train_dataset"] = ds.name
             st.session_state.pop("validation", None)
@@ -144,7 +143,7 @@ def _train_section() -> None:
     try:
         s = _summary(ds.path, label_mode, feature_set, ds.created_at)
     except ValueError as e:
-        ui.html(C.callout(f"<b>This dataset cannot be trained as it is.</b> {str(e).replace('<', '&lt;')}", "bad"))
+        ui.html(C.callout(str(e), "bad", lead="This dataset cannot be trained as it is."))
         return
     ui.html(C.stats([("Leads after bot/duplicate removal", f"{s['scored']:,}"),
                      ("Training leads (won)", f"{s['train']:,} ({s['train_wins']:,})"),
@@ -162,8 +161,8 @@ def _train_section() -> None:
                    "(left out by horizon labels); ghosted = never contacted within the horizon; open = still "
                    "in progress.")
     if s["train"] == 0 or s["train_wins"] == 0:
-        ui.html(C.callout("<b>No labelled training leads with wins.</b> The model cannot be trained on this "
-                          "dataset with these labels.", "bad"))
+        ui.html(C.callout("The model cannot be trained on this dataset with these labels.", "bad",
+                          lead="No labelled training leads with wins."))
         return
     if st.button("Train model", type="primary", icon=":material/play_arrow:", key="train"):
         cfg = training.TrainingConfig(label_mode, feature_set)
@@ -192,8 +191,7 @@ def _live(root: Path, run_id: str) -> None:
     proc = st.session_state.get(PROCS_KEY, {}).get(run_id)
     if proc is not None and proc.poll() is not None:
         st.session_state[PROCS_KEY].pop(run_id)
-    ui.html(f'<div style="display:flex;gap:12px;align-items:center;margin:16px 0 8px">{C.status_pill(run.status)}'
-            f'<span style="font-family:var(--mono);font-size:13px;color:var(--muted)">run {run.run_id}</span></div>')
+    ui.html(C.run_header(run.status, run.run_id))
     st.code(_tail(run.log_path) or "Starting…", language="text", height=280, wrap_lines=True)
     if run.is_done:
         st.rerun(scope="app")
@@ -205,17 +203,16 @@ def _progress(root: Path, run_id: str) -> None:
     if not run.is_done:
         _live(root, run_id)
         return
-    ui.html(f'<div style="display:flex;gap:12px;align-items:center;margin:16px 0 8px">{C.status_pill(run.status)}'
-            f'<span style="font-family:var(--mono);font-size:13px;color:var(--muted)">run {run.run_id}</span></div>')
+    ui.html(C.run_header(run.status, run.run_id))
     if run.status == "succeeded":
         auc = run.metrics.get("auc")
-        ui.html(C.callout(f"<b>Model trained.</b> Test AUC {auc:.3f} on this run's own test leads."
-                          if auc is not None else "<b>Model trained.</b>", "info"))
+        ui.html(C.callout(f"Test AUC {auc:.3f} on this run's own test leads." if auc is not None else "", "info",
+                          lead="Model trained."))
         if st.button("Open results", type="primary", icon=":material/insights:", key="open_results"):
             st.session_state[ui.SELECTED_RUN_KEY] = run.run_id
             st.switch_page("views/results.py")
     else:
-        ui.html(C.callout(f"<b>Training failed.</b> {run.error or ''}", "bad"))
+        ui.html(C.callout(run.error or "", "bad", lead="Training failed."))
     with st.expander("Training log"):
         st.code(_tail(run.log_path), language="text", wrap_lines=True)
 

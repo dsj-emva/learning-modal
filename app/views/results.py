@@ -119,18 +119,17 @@ def render() -> None:
     with top[1]:
         test_set = st.segmented_control("Test set", list(TEST_SET_LABELS), default=default_test, required=True,
                                         format_func=TEST_SET_LABELS.get, key=f"test_set_{run.run_id}")
-    ui.html(f'<div style="margin:4px 0 8px">{C.status_pill(run.status)} '
-            f'<span style="color:var(--muted);font-size:13px;margin-left:8px">dataset <b>{run.dataset}</b> · '
-            f'{run.args.get("label_mode")} labels · {run.args.get("feature_set")} features · run {run.run_id}</span></div>')
+    ui.html(C.run_header(run.status, run.run_id, f"dataset {run.dataset} · {run.args.get('label_mode')} labels · "
+                                                 f"{run.args.get('feature_set')} features"))
     if run.status != "succeeded":
         msg = run.error or "This run has not finished yet; its progress is on the Upload & train page."
-        ui.html(C.callout(f"<b>No results for this run.</b> {msg}", "bad" if run.status == "failed" else "info"))
+        ui.html(C.callout(msg, "bad" if run.status == "failed" else "info", lead="No results for this run."))
         return
 
     ev = ui.evaluation(run.run_id, run.out_dir, run.dataset_path, test_set)
     if ev is None:
-        ui.html(C.callout("<b>This test set is empty for this dataset.</b> It needs labelled leads created on or "
-                          f"after {TEST_FROM} with both wins and losses.", "warn"))
+        ui.html(C.callout(f"It needs labelled leads created on or after {TEST_FROM} with both wins and losses.",
+                          "warn", lead="This test set is empty for this dataset."))
     else:
         head = ev["headline"]
         ui.html(C.section("Headline", f"{ev['n']:,} test leads, {ev['wins']:,} won. AUC is the chance the model "

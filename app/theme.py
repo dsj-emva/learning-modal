@@ -159,6 +159,10 @@ hr {{ border-color:var(--hairline) !important; }}
 .k-table .n {{ text-align:right; font-family:var(--mono); font-variant-numeric:tabular-nums; }}
 .k-table td:first-child {{ font-weight:600; }}
 
+.k-runhead {{ display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin:16px 0 8px; }}
+.k-runhead .id {{ font-family:var(--mono); font-size:13px; color:var(--muted); }}
+.k-runhead .detail {{ font-size:13px; color:var(--muted); }}
+
 /* login */
 .k-login {{ max-width:420px; margin:12vh auto 24px; }}
 .k-login .k-title {{ font-size:52px; }}

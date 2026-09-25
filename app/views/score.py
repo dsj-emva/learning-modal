@@ -40,7 +40,7 @@ def _form(defaults: dict[str, object], run_id: str) -> dict[str, object] | None:
     values: dict[str, object] = {}
     with st.form(f"lead_form_{run_id}", border=False):
         for title, fields in scoring.form_sections().items():
-            ui.html(f'<div class="k-section" style="margin-top:24px"><div class="h">{title}</div></div>')
+            ui.html(C.section(title))
             if title == "Session":
                 st.caption("Filled with a typical visit. Leave any of these blank and the model treats the visitor "
                            "as having no on-site session at all, which changes the score.")
@@ -101,13 +101,12 @@ def render() -> None:
                 st.session_state[f"score_{run.run_id}"] = scoring.score_form(bundle, values, run.dataset_path)
             except UnknownLevelError as e:
                 st.session_state.pop(f"score_{run.run_id}", None)
-                ui.html(C.callout("<b>This model has not seen one of these values.</b> "
-                                  f"{str(e).replace('<', '&lt;')}. Choose one of the allowed values, or retrain on "
-                                  "data that contains it.", "bad"))
+                ui.html(C.callout(f"{e}. Choose one of the allowed values, or retrain on data that contains it.",
+                                  "bad", lead="This model has not seen one of these values."))
                 return
             except ValueError as e:
                 st.session_state.pop(f"score_{run.run_id}", None)
-                ui.html(C.callout(f"<b>Check the form.</b> {str(e).replace('<', '&lt;')}", "bad"))
+                ui.html(C.callout(str(e), "bad", lead="Check the form."))
                 return
         res = st.session_state[f"score_{run.run_id}"]
         _result(res, ui.base_rate(run.run_id, run.out_dir, run.dataset_path), scoring.describe_transform(bundle))

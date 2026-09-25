@@ -82,3 +82,17 @@ def test_components_escape_user_text() -> None:
     html = C.file_card("<x>.csv", "Leads", [Issue("f", "<col>", "<script>alert(1)</script>", (1, 2))], [], True)
     assert "<script>" not in html and "&lt;script&gt;" in html and "&lt;col&gt;" in html
     assert C.points(-7.4) == "−7" and C.points(3) == "+3" and C.gbp(12345.6) == "£12,346" and C.pct(0.2345) == "23.4%"
+
+
+def test_run_error_and_names_render_escaped(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A failed run whose error (and header detail) carries markup is shown as text on the results page."""
+    from app import storage
+
+    evil = "<script>alert(1)</script>"
+    run = storage.register_run(tmp_path, storage.new_run(tmp_path, storage.sample_dataset(), {"label_mode": evil}))
+    storage.update_run(tmp_path, run.run_id, status="failed", error=evil)
+    at = _sign_in(_app(monkeypatch, tmp_path), "letmein")
+    assert not at.exception
+    page = _text(at)
+    assert "<script>" not in page and page.count("&lt;script&gt;alert(1)&lt;/script&gt;") >= 2
+    assert "<script>" not in C.run_header("failed", evil, f"dataset {evil}") + C.callout(evil, "bad", lead=evil)
