@@ -4,7 +4,11 @@ The value sent to ad platforms is ``p × E[deal value] × margin``. E[deal value
 ``exp(ridge prediction of log value) × exp(s² / 2)``, the lognormal mean correction, where ``s``
 is the residual sd of the log-value fit estimated from its training residuals (plan 2.4). A
 caller may pass a fixed ``s`` instead (only the legacy feature set does, to reproduce the
-baseline). Phase 3 adds capping, flooring and compression.
+baseline). The transform from expected value to uploaded value is ``emva.value_transform``.
+
+Two-stage upload (plan 3.3, horizon mode): ``value_at_submit`` is the transformed expected value, sent
+when the lead is created; ``value_at_close`` (function ``value_at_close``) is what the lead turned out to be worth,
+sent as an adjustment once known.
 """
 from __future__ import annotations
 
@@ -14,7 +18,8 @@ import numpy as np
 import pandas as pd
 from sklearn.linear_model import Ridge
 
-from emva.constants import DEAL_VALUE_FEATURES, DEAL_VALUE_RIDGE_ALPHA
+from emva.constants import AS_OF, DEAL_VALUE_FEATURES, DEAL_VALUE_LEVELS, DEAL_VALUE_RIDGE_ALPHA, HORIZON_DAYS
+from emva.labels import is_mature, matured_at
 
 
 @dataclass(frozen=True)
@@ -52,8 +57,36 @@ def residual_sd(residuals: np.ndarray | pd.Series) -> float:
 
 
 def deal_value_design(X: pd.DataFrame) -> pd.DataFrame:
-    """One-hot matrix of ``DEAL_VALUE_FEATURES`` (all levels kept, ``_`` separator)."""
+    """Legacy (data-driven) one-hot matrix of ``DEAL_VALUE_FEATURES``: all levels present kept, ``_`` separator.
+
+    The baseline's design, kept for ``--feature-set legacy`` (byte identity); levels absent from ``X``
+    make no column. The v2 feature set uses ``fixed_deal_value_design``.
+    """
     return pd.concat([pd.get_dummies(X[c].astype(str), prefix=c) for c in DEAL_VALUE_FEATURES], axis=1).astype(float)
+
+
+def fixed_deal_value_columns(levels: dict[str, tuple[str, ...]] = DEAL_VALUE_LEVELS) -> list[str]:
+    """The columns ``fixed_deal_value_design`` emits: ``<feature>=<level>`` for every declared level, in order."""
+    return [f"{c}={lvl}" for c in DEAL_VALUE_FEATURES for lvl in levels[c]]
+
+
+def fixed_deal_value_design(X: pd.DataFrame, levels: dict[str, tuple[str, ...]] = DEAL_VALUE_LEVELS) -> pd.DataFrame:
+    """Fixed-schema one-hot matrix of ``DEAL_VALUE_FEATURES`` (ADR 0009 applied to the value model, plan 3.1).
+
+    One column per declared level (all levels kept: the ridge needs no reference level), whatever occurs
+    in ``X``, so a one-row frame gets the full schema. A value outside a feature's declared levels raises
+    ``ValueError`` naming the feature and the values.
+    """
+    data: dict[str, pd.Series] = {}
+    for c in DEAL_VALUE_FEATURES:
+        values = X[c].astype(str)
+        unknown = sorted(set(values) - set(levels[c]))
+        if unknown:
+            raise ValueError(f"deal-value feature {c!r} has values outside its declared levels {list(levels[c])}: "
+                             f"{unknown[:5]}")
+        for lvl in levels[c]:
+            data[f"{c}={lvl}"] = values.eq(lvl).astype(float)
+    return pd.DataFrame(data, index=X.index, columns=fixed_deal_value_columns(levels))
 
 
 def fit_deal_value(M: pd.DataFrame, deal_value: pd.Series, tr: pd.Series,
@@ -79,6 +112,24 @@ def predict_deal_value(model: DealValueModel, M: pd.DataFrame) -> np.ndarray:
 def expected_value(p: pd.Series, deal_value_hat: pd.Series, margin: float) -> pd.Series:
     """Value to send: P(won) × expected deal value × margin."""
     return p * deal_value_hat * margin
+
+
+def value_at_close(X: pd.DataFrame, horizon_days: int = HORIZON_DAYS,
+                   as_of: pd.Timestamp = AS_OF) -> pd.DataFrame:
+    """The close-stage value of each lead and when it became known (plan 3.3); needs ``created_at``, ``won_at``, ``deal_value``.
+
+    Returns ``value_at_close`` and ``value_at_close_ts``:
+
+    - Won at or before ``as_of`` (whenever, also after H or before maturity): the recorded deal value
+      (blank = 0, the ADR 0002 revenue convention), at ``won_at``;
+    - otherwise mature (``created_at + horizon_days <= as_of``): 0 at ``matured_at``;
+    - otherwise (immature, not Won): NaN and NaT, not known yet.
+    """
+    won = X.won_at <= as_of  # NaT compares False
+    mature = is_mature(X, horizon_days, as_of)
+    value = np.where(won, X.deal_value.fillna(0), np.where(mature, 0.0, np.nan))
+    ts = X.won_at.where(won, matured_at(X, horizon_days).where(mature))
+    return pd.DataFrame({"value_at_close": value, "value_at_close_ts": ts}, index=X.index)
 
 
 def realised_revenue(T: pd.DataFrame) -> pd.Series:

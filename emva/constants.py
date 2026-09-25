@@ -133,6 +133,23 @@ LR_MAX_ITER: int = 5000
 # Deal-value model. Its lognormal mean correction uses the residual sd estimated on training (plan 2.4).
 DEAL_VALUE_FEATURES: tuple[str, ...] = ("band", "sector", "channel", "spend")
 DEAL_VALUE_RIDGE_ALPHA: float = 3.0
+# Complete level list of every deal-value feature for the v2 feature set (plan 3.1, the ADR 0009 rule applied
+# to the value model): one ridge column per level listed here, whatever occurs in the data; a value not listed
+# raises. Sectors are the companies.csv sectors; ``sector`` is ``MISSING`` without enrichment.
+DEAL_VALUE_LEVELS: dict[str, tuple[str, ...]] = {
+    "band": V2_LEVELS["band"],
+    "sector": ("Education", "Financial services", "Healthcare", "Logistics", "Manufacturing",
+               "Professional services", "Retail", "Software", MISSING),
+    "channel": V2_LEVELS["channel"],
+    "spend": V2_LEVELS["spend"],
+}
+
+# Value transform defaults (plan 3.1; ADR 0012, proposed): cap the expected value at this percentile of the
+# training leads' values, compress it (``emva.value_transform.Compression``: "none", "log" or "sqrt") and floor it
+# at this many GBP. CLI: --value-cap-percentile, --value-compression, --value-floor.
+VALUE_CAP_PERCENTILE: float = 97.0
+VALUE_COMPRESSION: str = "log"
+VALUE_FLOOR_GBP: float = 25.0
 
 # Scorecard: +20 points = odds of closing double.
 POINTS_TO_DOUBLE_ODDS: float = 20.0

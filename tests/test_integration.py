@@ -84,9 +84,29 @@ def test_cli_default_is_horizon_and_writes_label_columns(tmp_path, data_v1):
     subprocess.run([sys.executable, "-m", "emva", "--data", str(data_v1), "--out", str(tmp_path)],
                    cwd=REPO, capture_output=True, text=True, check=True)
     scores = pd.read_csv(tmp_path / "scores.csv", index_col="lead_id")
-    assert list(scores.columns[-4:]) == ["y", "won_within_h", "label_source", "matured_at"]
+    assert list(scores.columns[-8:]) == ["y", "won_within_h", "label_source", "matured_at", "value_at_submit",
+                                         "value_at_submit_ts", "value_at_close", "value_at_close_ts"]
     assert set(scores.label_source) == {"won", "crm_lost", "stalled", "ghosted", "open"}
     assert (tmp_path / "weights.csv").exists()
+
+
+def test_cli_value_options_reach_value_at_submit(tmp_path, data_v1):
+    subprocess.run([sys.executable, "-m", "emva", "--data", str(data_v1), "--out", str(tmp_path),
+                    "--no-value-cap", "--value-compression", "none", "--value-floor", "0"],
+                   cwd=REPO, capture_output=True, text=True, check=True)
+    scores = pd.read_csv(tmp_path / "scores.csv", index_col="lead_id")
+    assert np.allclose(scores.value_at_submit, scores.value_formula)
+
+
+@pytest.mark.parametrize("flags", [["--label-mode", "legacy", "--value-tiers", "5"],
+                                   ["--label-mode", "legacy", "--no-value-cap"],
+                                   ["--value-tiers", "1"],
+                                   ["--value-compression", "cube"],
+                                   ["--no-value-floor", "--value-floor", "10"]])
+def test_cli_rejects_bad_value_options(tmp_path, data_v1, flags):
+    proc = subprocess.run([sys.executable, "-m", "emva", "--data", str(data_v1), "--out", str(tmp_path), *flags],
+                          cwd=REPO, capture_output=True, text=True)
+    assert proc.returncode == 2 and "error:" in proc.stderr
 
 
 @pytest.mark.parametrize("flags", [["--label-mode", "legacy", "--include-ghosted"],
