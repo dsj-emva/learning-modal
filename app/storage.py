@@ -188,15 +188,15 @@ def sample_dataset() -> Dataset:
     return _dataset_from_dir(SAMPLE_DATASET_NAME, SAMPLE_DATASET_PATH, "2026-09-24T00:00:00+00:00", read_only=True)
 
 
-def list_datasets(root: str | Path, include_sample: bool = True) -> list[Dataset]:
-    """Stored datasets, newest first, then (with ``include_sample``) the bundled sample if it exists."""
+def list_datasets(root: str | Path) -> list[Dataset]:
+    """Stored datasets, newest first, then the bundled sample if it exists."""
     base = Path(root) / "datasets"
     out = []
     for meta in base.glob(f"*/{DATASET_META}") if base.exists() else []:
         d = json.loads(meta.read_text(encoding="utf-8"))
         out.append(Dataset(**{**d, "path": str(meta.parent)}))
     out.sort(key=lambda d: d.created_at, reverse=True)
-    if include_sample and (SAMPLE_DATASET_PATH / LEADS_FILE).exists():
+    if (SAMPLE_DATASET_PATH / LEADS_FILE).exists():
         out.append(sample_dataset())
     return out
 

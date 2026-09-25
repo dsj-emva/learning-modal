@@ -31,7 +31,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--run-id", required=True)
     ap.add_argument("--report-resamples", type=int, default=N_RESAMPLES)
     a = ap.parse_args(argv)
-    run = update_run(a.root, a.run_id, status="running", pid=os.getpid())
+    update_run(a.root, a.run_id, status="running", pid=os.getpid())
     rc = 1
     try:
         rc = _train_and_report(a.root, a.run_id, a.report_resamples)

@@ -96,3 +96,18 @@ def test_run_error_and_names_render_escaped(monkeypatch: pytest.MonkeyPatch, tmp
     page = _text(at)
     assert "<script>" not in page and page.count("&lt;script&gt;alert(1)&lt;/script&gt;") >= 2
     assert "<script>" not in C.run_header("failed", evil, f"dataset {evil}") + C.callout(evil, "bad", lead=evil)
+
+
+def test_score_page_prefills_a_dataset_lead(monkeypatch: pytest.MonkeyPatch, app_trained) -> None:
+    """The prefill (``scoring.values_from_lead``) fills the form with a real lead, and it scores."""
+    root, run = app_trained
+    import pandas as pd
+
+    lead_id = pd.read_csv(Path(run.out_dir) / "scores.csv", usecols=["lead_id"]).lead_id.iloc[0]
+    at = _sign_in(_app(monkeypatch, root), "letmein")
+    at.switch_page("views/score.py").run()
+    at.text_input(key=f"prefill_{run.run_id}").input(lead_id).run()
+    assert not at.exception
+    next(b for b in at.button if b.label == "Score this lead").click()
+    at.run()
+    assert not at.exception and "Chance this lead closes" in _text(at)

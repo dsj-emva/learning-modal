@@ -144,7 +144,7 @@ class LeadScore:
     """One scored lead: ``p`` (P(close)), ``deal_value`` (expected deal value if won, GBP), ``value_formula``
     (p × deal value × margin), ``value_at_submit`` (after the run's value transform; NaN for legacy labels),
     ``is_bot`` / ``is_duplicate``, ``points`` (the intercept row then active features, with plain labels) and
-    ``lead`` (the one-row frame that was scored)."""
+    ``blank_session`` (session fields left blank, each of which makes the model treat the session as missing)."""
 
     p: float
     deal_value: float
@@ -153,7 +153,7 @@ class LeadScore:
     is_bot: bool
     is_duplicate: bool
     points: pd.DataFrame
-    lead: pd.DataFrame
+    blank_session: tuple[str, ...]
 
 
 def score_form(bundle: ModelBundle, values: dict[str, object], data: str | Path) -> LeadScore:
@@ -162,13 +162,15 @@ def score_form(bundle: ModelBundle, values: dict[str, object], data: str | Path)
     Raises ``ValueError`` for bad form input (``lead_from_form``) and ``emva.scoring.UnknownLevelError`` (a
     ``ValueError`` subclass) for a value the model was not trained with.
     """
-    lead = lead_from_form(clean_values(values))
+    cleaned = clean_values(values)
+    lead = lead_from_form(cleaned)
     s = score_leads(bundle, lead, data).iloc[0]
     pts = points_breakdown(bundle, lead, data)
     pts = pts.assign(label=pts.feature.map(feature_label))
     return LeadScore(p=float(s.p_formula), deal_value=float(s.deal_value_hat), value_formula=float(s.value_formula),
                      value_at_submit=float(s.value_at_submit), is_bot=bool(s.is_bot),
-                     is_duplicate=bool(s.is_duplicate), points=pts, lead=lead)
+                     is_duplicate=bool(s.is_duplicate), points=pts,
+                     blank_session=tuple(blank_session_fields(cleaned)))
 
 
 def describe_transform(bundle: ModelBundle) -> str:

@@ -81,11 +81,22 @@ def evaluation(run_id: str, out_dir: str, dataset_path: str, test_set: str) -> d
 
 
 @st.cache_data(show_spinner=False)
+def _raw_leads(dataset_path: str) -> pd.DataFrame:
+    """The dataset's ``historical_leads.csv`` as ``emva.io.read_leads`` reads it (cached per path)."""
+    from emva.io import read_leads
+    return read_leads(Path(dataset_path) / storage.LEADS_FILE)
+
+
+def raw_lead(dataset_path: str, lead_id: str) -> pd.Series | None:
+    """One raw ``historical_leads.csv`` row, or None when the dataset has no such lead."""
+    leads_ = _raw_leads(dataset_path)
+    return leads_.loc[lead_id] if lead_id in leads_.index else None
+
+
+@st.cache_data(show_spinner=False)
 def base_rate(run_id: str, out_dir: str, dataset_path: str) -> float:
     """Win rate of the run's training labels (``results.training_base_rate``)."""
-    from emva.io import read_leads
-    raw = read_leads(Path(dataset_path) / storage.LEADS_FILE)
-    return results.training_base_rate(results.load_scores(out_dir), raw.created_at)
+    return results.training_base_rate(results.load_scores(out_dir), _raw_leads(dataset_path).created_at)
 
 
 def no_runs_state(message: str) -> None:
@@ -94,5 +105,5 @@ def no_runs_state(message: str) -> None:
     st.page_link("views/upload.py", label="Upload data and train a model", icon=":material/arrow_forward:")
 
 
-__all__ = ["bundle", "base_rate", "data_root", "evaluation", "has_bundle", "html", "no_runs_state", "pick_run",
+__all__ = ["bundle", "base_rate", "data_root", "evaluation", "has_bundle", "html", "no_runs_state", "pick_run", "raw_lead",
            "run_label"]

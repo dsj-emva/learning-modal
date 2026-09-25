@@ -122,16 +122,15 @@ def enrich(L: pd.DataFrame, CO: pd.DataFrame) -> pd.DataFrame:
 def load(data: str | Path) -> pd.DataFrame:
     """Load leads indexed by ``lead_id`` with final CRM stage, deal value, answers and enrichment.
 
-    ``read_leads`` + ``add_crm_outcomes`` + ``enrich``. Adds ``final_stage``, ``last_change``, ``deal_value``,
-    ``won_at`` (time of the Won stage
-    change, NaT if never Won), ``first_contact_at`` (time of the first change to a recognised
-    stage other than New, NaT if the lead never left New), ``a_<answer>`` for each of
-    ``ANSWER_KEYS``, ``dom`` (normalised company domain), ``co_<column>`` for each of
-    ``ENRICHMENT_COLUMNS`` (domain join only, NaN when the domain is not in companies.csv; this
-    is what the baseline uses), ``enrichment_source`` (``"domain"``, ``"name"`` when the domain
-    misses but the typed ``company_name`` (if the column exists) or ``company`` answer matches a companies.csv name
-    exactly after ``normalise_company_name``, NaN otherwise) and ``en_<column>`` (the domain row,
-    else the name-matched row).
+    ``read_leads`` + ``add_crm_outcomes`` + ``enrich``. Adds ``final_stage``, ``last_change``,
+    ``deal_value``, ``won_at`` (time of the Won stage change, NaT if never Won), ``first_contact_at``
+    (time of the first change to a recognised stage other than New, NaT if the lead never left New),
+    ``a_<answer>`` for each of ``ANSWER_KEYS``, ``dom`` (normalised company domain), ``co_<column>``
+    for each of ``ENRICHMENT_COLUMNS`` (domain join only, NaN when the domain is not in
+    companies.csv; this is what the baseline uses), ``enrichment_source`` (``"domain"``, ``"name"``
+    when the domain misses but the typed ``company_name`` (if the column exists) or ``company``
+    answer matches a companies.csv name exactly after ``normalise_company_name``, NaN otherwise)
+    and ``en_<column>`` (the domain row, else the name-matched row).
 
     Raises ``ValueError`` if a lead has more than one Won row (``deal_value`` and ``won_at``
     would be ambiguous) or companies.csv has no ``company_name`` column.

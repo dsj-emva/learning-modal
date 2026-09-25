@@ -35,10 +35,11 @@ def _widget(f: FormField, default: object, key: str) -> object:
     return st.text_input(label, value=str(default or ""), key=key, help=f.spec.description)
 
 
-def _form(defaults: dict[str, object], run_id: str) -> dict[str, object] | None:
-    """The lead form, grouped by section; returns the values when submitted."""
+def _form(defaults: dict[str, object], form_key: str) -> dict[str, object] | None:
+    """The lead form, grouped by section; returns the values when submitted. ``form_key`` names the widgets, so a
+    different starting lead gets fresh widgets."""
     values: dict[str, object] = {}
-    with st.form(f"lead_form_{run_id}", border=False):
+    with st.form(f"lead_form_{form_key}", border=False):
         for title, fields in scoring.form_sections().items():
             ui.html(C.section(title))
             if title == "Session":
@@ -48,7 +49,7 @@ def _form(defaults: dict[str, object], run_id: str) -> dict[str, object] | None:
             for i, f in enumerate(fields):
                 target = st.container() if f.name in LONG_TEXT else cols[i % 2]
                 with target:
-                    values[f.name] = _widget(f, defaults.get(f.name, f.default), key=f"f_{run_id}_{f.name}")
+                    values[f.name] = _widget(f, defaults.get(f.name, f.default), key=f"f_{form_key}_{f.name}")
         submitted = st.form_submit_button("Score this lead", type="primary", icon=":material/target:",
                                           width="stretch")
     return values if submitted else None
@@ -60,6 +61,9 @@ def _result(res: scoring.LeadScore, base: float, transform: str) -> None:
     flags.append(C.pill("Scored alone: duplicates are checked in batches", "info"))
     ui.html(C.result_card(res.p, base, res.deal_value, res.value_at_submit, res.value_formula, transform,
                           "".join(flags)))
+    if res.blank_session:
+        ui.html(C.callout(f"Blank: {', '.join(res.blank_session)}. The model scored this lead as having no on-site "
+                          "session (session_missing).", "warn", lead="No session data."))
     if res.is_bot:
         ui.html(C.callout("Under 15 seconds on the page or a headless browser: the batch pipeline would drop this "
                           "lead before training and scoring. It is scored here anyway.", "warn"))
@@ -90,7 +94,18 @@ def render() -> None:
     bundle = ui.bundle(run.run_id, str(Path(run.out_dir) / BUNDLE_FILE))
     left, right = st.columns([3, 2], gap="large")
     with left:
-        values = _form(scoring.defaults_for(run.dataset_path), run.run_id)
+        lead_id = st.text_input("Start from a lead in the training data (optional)", key=f"prefill_{run.run_id}",
+                                placeholder="lead_id, e.g. L00042",
+                                help="Prefills the form with that lead's answers and session, to see how the model "
+                                     "scored a real submission.").strip()
+        defaults = scoring.defaults_for(run.dataset_path)
+        if lead_id:
+            row = ui.raw_lead(run.dataset_path, lead_id)
+            if row is None:
+                ui.html(C.callout("Showing the example lead instead.", "warn", lead=f"No lead {lead_id} in this dataset."))
+            else:
+                defaults = scoring.values_from_lead(row)
+        values = _form(defaults, f"{run.run_id}_{lead_id or 'example'}")
     with right:
         if values is None and f"score_{run.run_id}" not in st.session_state:
             ui.html(C.empty_state("Ready when you are",
