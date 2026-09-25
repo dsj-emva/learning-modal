@@ -266,7 +266,7 @@ def _locked_registry(root: Path) -> Iterator[dict]:
 def new_run(root: str | Path, dataset: Dataset, args: dict[str, str]) -> Run:
     """A queued ``Run`` for ``dataset`` with a fresh id and its directory created (not yet registered)."""
     run_id = new_run_id()
-    out = run_dir(root, run_id)
+    out = run_dir(Path(root).resolve(), run_id)  # absolute, so the job and the UI agree whatever their cwd
     out.mkdir(parents=True)
     return Run(run_id=run_id, dataset=dataset.name, dataset_path=dataset.path, created_at=utc_now(), args=dict(args),
                status="queued", log_path=str(out / LOG_FILE), out_dir=str(out))

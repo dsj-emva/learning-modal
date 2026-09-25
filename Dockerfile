@@ -23,6 +23,8 @@ COPY emva/ emva/
 COPY baseline/ baseline/
 COPY scripts/ scripts/
 COPY app/ app/
+# Streamlit theme (Keel palette and fonts); read from the working directory.
+COPY .streamlit/ .streamlit/
 # Sample dataset for the first-run demo; ground_truth* is excluded by .dockerignore.
 COPY data/v1/ data/v1/
 
