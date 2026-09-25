@@ -1,0 +1,17 @@
+# Keep the build context small and keep evaluation-only files out of the image.
+.git
+.gitignore
+.claude
+.venv
+.env
+.env.*
+runs
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.DS_Store
+tests
+reports/*.png
+data/v2/context
+# Ground truth is evaluation-only (CLAUDE.md ground rule 2); it must never ship in the image.
+data/**/ground_truth*
