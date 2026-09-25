@@ -3,8 +3,8 @@
 With ``labels=LEGACY`` and ``features=FeatureSet.LEGACY`` ``run`` reproduces
 ``baseline/emva_score.py::main`` step for step, byte for byte. The defaults are the fixed-horizon
 label over mature leads (plan 1.2 to 1.5) and the v2 feature set (plan Phase 2): explicit missing
-levels, company-name enrichment, similarity-based boilerplate detection, exact-alias pruning of
-the design, and a deal-value correction estimated from training residuals. ``emva/__main__.py``
+levels and indicators, company-name enrichment, similarity-based boilerplate detection, and a
+deal-value correction estimated from training residuals. ``emva/__main__.py``
 does the printing and file writing.
 """
 from __future__ import annotations
@@ -19,7 +19,7 @@ from emva.constants import TEST_FROM
 from emva.context.features import context_logit
 from emva.design import feature_design
 from emva.eval.metrics import summary
-from emva.eval.regression import BASELINE_DEAL_LOG_RESIDUAL_SD
+from emva.eval.regression import BASELINE_DEAL_LOG_RESIDUAL_SD  # legacy feature set only: baseline byte identity
 from emva.features import FeatureSet, featurise
 from emva.io import clean, load
 from emva.labels import HORIZON, LabelConfig, assign_labels, split_masks
@@ -45,9 +45,7 @@ class PipelineResult:
     ``train``/``test`` are boolean masks over ``X``; ``summary`` is the printed metrics table
     (empty when there are no labelled test leads, with a line in ``messages`` saying so);
     ``messages`` are the context-mode lines printed before it; ``labels`` and ``features`` are
-    the label definition and feature set used; ``aliases`` maps each design column dropped as
-    identical to an earlier one on the training rows to that column (always empty for legacy);
-    ``deal_value`` is the fitted value model.
+    the label definition and feature set used; ``deal_value`` is the fitted value model.
     """
 
     X: pd.DataFrame
@@ -59,7 +57,6 @@ class PipelineResult:
     labels: LabelConfig
     features: FeatureSet
     deal_value: DealValueModel
-    aliases: dict[str, str] = field(default_factory=dict)
     messages: list[str] = field(default_factory=list)
 
     def scores(self) -> pd.DataFrame:
@@ -89,7 +86,7 @@ def run(data: str | Path, margin: float = 1.0, context: str | Path | None = None
     features = FeatureSet(features)
     X = build(load(data), labels, features)
     tr, te = split_masks(X, test_from, labels.eligible(X))
-    D, aliases = feature_design(X, features, tr)
+    D = feature_design(X, features)
     lr = fit_lr(D, X.y, tr)
     X["p_formula"] = predict(lr, D)
 
@@ -134,7 +131,7 @@ def run(data: str | Path, margin: float = 1.0, context: str | Path | None = None
         X["value_combined"] = expected_value(X.p_combined, X.deal_value_hat, margin)
 
     return PipelineResult(X=X, train=tr, test=te, design=D, weights=weights, summary=pd.DataFrame(rows),
-                          labels=labels, features=features, deal_value=dv, aliases=aliases, messages=messages)
+                          labels=labels, features=features, deal_value=dv, messages=messages)
 
 
 def write_outputs(result: PipelineResult, out: str | Path) -> None:

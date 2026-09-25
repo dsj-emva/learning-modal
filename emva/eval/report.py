@@ -284,7 +284,7 @@ def collinearity_section(result: PipelineResult) -> tuple[list[str], Collinearit
     return (["## Design collinearity (plan 2.7)", "",
              f"Candidate design (`{result.features.value}` features, {result.design.shape[1]} columns) on its "
              f"{int(result.train.sum())} training rows; fails when two columns have |corr| > {res.threshold}.", "",
-             *format_result(res, result.aliases), ""], res)
+             *format_result(res), ""], res)
 
 
 def build_report(data: str | Path, n_resamples: int = N_RESAMPLES, seed: int = SEED,

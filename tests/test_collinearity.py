@@ -1,4 +1,4 @@
-"""Design collinearity check (plan 2.7) and exact-alias pruning."""
+"""Design collinearity check (plan 2.7)."""
 import subprocess
 import sys
 
@@ -6,7 +6,6 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from emva.design import drop_aliased_columns
 from emva.eval.collinearity import CollinearityError, assert_no_collinearity, check_collinearity
 
 from conftest import REPO
@@ -50,27 +49,20 @@ def test_constant_columns_are_skipped():
     assert res.passed and res.constant == ["zero", "zero2"]
 
 
-def test_drop_aliased_columns_keeps_the_first_of_identical_columns():
-    D = pd.DataFrame({"a": [1.0, 0, 1, 0], "b": [0.0, 1, 0, 1], "a2": [1.0, 0, 1, 0], "b2": [0.0, 1, 0, 0]})
-    rows = pd.Series([True, True, True, False])
-    P, aliases = drop_aliased_columns(D, rows)
-    assert aliases == {"a2": "a", "b2": "b"}  # b2 equals b on the chosen rows only
-    assert list(P.columns) == ["a", "b"] and len(P) == 4
-    assert drop_aliased_columns(D, pd.Series(True, index=D.index))[1] == {"a2": "a"}
-
-
-def test_legacy_design_fails_and_v2_passes_on_v1(v1_result, v1_horizon, v1_v2_legacy_labels):
+def test_both_feature_sets_fail_on_v1_each_on_one_pair(v1_result, v1_horizon, v1_v2_legacy_labels):
     legacy = check_collinearity(v1_result.design[v1_result.train])
-    assert not legacy.passed
-    assert {p[:2] for p in legacy.pairs} == {("email=free", "no_company=yes")}
+    assert {p[:2] for p in legacy.pairs} == {("email=free", "no_company=yes")}  # feature-design flaw
     for r in (v1_horizon, v1_v2_legacy_labels):
         res = check_collinearity(r.design[r.train])
-        assert res.passed and abs(res.max_pair[2]) < 0.95
+        # a property of v1 (every session-less lead is a lead-ads lead); clears on data/v2
+        assert not res.passed
+        assert [p[:2] for p in res.pairs] == [("channel=meta_leadads", "session_missing=yes")]
 
 
-@pytest.mark.parametrize("feature_set,code", [("v2", 0), ("legacy", 1)])
-def test_cli_exit_code(feature_set, code):
+@pytest.mark.parametrize("feature_set,pair", [("v2", "channel=meta_leadads ~ session_missing=yes"),
+                                              ("legacy", "email=free ~ no_company=yes")])
+def test_cli_exits_nonzero_and_lists_the_pair_on_v1(feature_set, pair):
     proc = subprocess.run([sys.executable, "-m", "emva.eval.collinearity", "--data", str(REPO / "data" / "v1"),
                            "--feature-set", feature_set], cwd=REPO, capture_output=True, text=True)
-    assert proc.returncode == code, proc.stdout + proc.stderr
-    assert ("FAIL" in proc.stdout) == bool(code)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "FAIL (1 pairs" in proc.stdout and f"  - {pair}: +1.000" in proc.stdout

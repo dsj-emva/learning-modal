@@ -8,7 +8,7 @@
    ``text_category`` (ground truth), next to the legacy prefix rule, and the similarity margin.
 3. 2.1 Meta lead-ads leads: bucket distribution of every behavioural feature, legacy vs v2.
 4. Weights before/after for every design column (baseline, v2 with legacy labels, v2 with
-   horizon labels), dropped aliases, and pairs of coefficients equal to three decimals.
+   horizon labels) and pairs of coefficients equal to three decimals.
 5. 2.7 collinearity: max |corr| of each feature set's design.
 6. 2.4 deal-value model: the fixed and the estimated residual sd, their corrections and what
    the change does to value and revenue capture.
@@ -105,8 +105,9 @@ def boilerplate_section(data: str | Path) -> list[str]:
             "`emva/boilerplate.py`.", "",
             md_table(pd.DataFrame(rows)), "",
             f"Similarity margin: lowest similarity among true copy_paste texts {sim[truth].min():.3f}; highest "
-            f"among all other texts {sim[~truth].max():.3f}. Any threshold between the two gives the same result "
-            "on v1.", ""]
+            f"among all other texts {sim[~truth].max():.3f}. "
+            + ("Any threshold between the two gives the same result on this data." if sim[truth].min() > sim[~truth].max()
+               else "The two overlap: no threshold separates boilerplate from other text on this data."), ""]
 
 
 def lead_ads_section(data: str | Path) -> list[str]:
@@ -115,24 +116,26 @@ def lead_ads_section(data: str | Path) -> list[str]:
     legacy, v2 = add_features(base.copy()), add_features_v2(base.copy())
     la = legacy.channel.eq("meta_leadads")
     rows = []
-    for feat in BEHAVIOURAL_FEATURES:
+    for feat in (*BEHAVIOURAL_FEATURES, "session_missing"):
         for name, X in [("legacy", legacy), ("v2", v2)]:
-            counts = X.loc[la, feat].value_counts()
+            counts = X.loc[la, feat].value_counts() if feat in X else pd.Series(dtype=int)
             rows.append({"feature": feat, "feature set": name,
-                         "buckets (lead-ads leads)": ", ".join(f"{k}: {v}" for k, v in counts.items())})
+                         "buckets (lead-ads leads)": ", ".join(f"{k}: {v}" for k, v in counts.items()) or "(no feature)"})
+    other = ~la & v2.session_missing.eq("yes")
     return ["## 2.1 Meta lead-ads leads: behavioural buckets", "",
             f"{int(la.sum())} cleaned Meta lead-ads leads. They have no on-site session, so every behavioural "
-            "input is blank. Legacy puts them in each feature's reference level; v2 puts them in `missing`.", "",
+            "input is blank. Legacy silently puts them in each feature's reference level. v2 also leaves the seven "
+            "behavioural features at their reference level but sets `session_missing=yes`, so the indicator carries "
+            "the effect of the absent session (the intended encoding: the column set is fixed by the spec). "
+            f"Other cleaned leads with `session_missing=yes` in this data: {int(other.sum())}.", "",
             md_table(pd.DataFrame(rows)), ""]
 
 
 def _weight_table(results: dict[str, PipelineResult]) -> pd.DataFrame:
-    """Log-odds per design column for each model (baseline from weights.csv), aliases marked."""
+    """Log-odds per design column for each model (baseline from weights.csv)."""
     cols: dict[str, pd.Series] = {"baseline (weights.csv)": read_weights(FROZEN_WEIGHTS).log_odds}
     for name, r in results.items():
-        w = r.weights.log_odds.map(lambda v: f"{v:.3f}")
-        w = pd.concat([w, pd.Series({d: f"= {k}" for d, k in r.aliases.items()}, dtype=object)])
-        cols[name] = w
+        cols[name] = r.weights.log_odds.map(lambda v: f"{v:.3f}")
     T = pd.DataFrame(cols)
     T["baseline (weights.csv)"] = T["baseline (weights.csv)"].map(lambda v: "" if pd.isna(v) else f"{v:.3f}")
     return T.fillna("").rename_axis("column").reset_index().sort_values("column", kind="stable")
@@ -146,16 +149,16 @@ def _ties(weights: pd.DataFrame, r: PipelineResult) -> list[str]:
 
 
 def weights_section(results: dict[str, PipelineResult], baseline_run: PipelineResult) -> list[str]:
-    """Before/after weights for every design column, aliases and coefficient ties.
+    """Before/after weights for every design column and coefficient ties.
 
     ``baseline_run`` is the legacy/legacy pipeline run (equal to the frozen baseline), used for
     the training correlation of the baseline's tied pairs.
     """
     out = ["## Weights before and after", "",
-           "Log-odds per design column. Empty = the column does not exist in that design; `= X` = dropped as "
-           "identical to column X on the training rows (X carries the shared weight). The baseline has "
-           "`no_company`; v2 has `enrichment_missing` and `missing` levels, and drops c_budget, c_timeline, ip_type "
-           "and edits_1_4 (2.6).", "", md_table(_weight_table(results)), "",
+           "Log-odds per design column. Empty = the column does not exist in that design. The baseline column is "
+           "the frozen `baseline/weights.csv` (fitted on data/v1, whatever `--data` is). The baseline has "
+           "`no_company`; v2 has the `session_missing` and `enrichment_missing` indicators and `band=missing`, and "
+           "drops c_budget, c_timeline, ip_type and edits_1_4 (2.6).", "", md_table(_weight_table(results)), "",
            "### Coefficients equal to three decimals", ""]
     base_ties = _ties(read_weights(FROZEN_WEIGHTS), baseline_run)
     out.append(f"- baseline (weights.csv): {'; '.join(base_ties) if base_ties else 'none'}")
@@ -172,8 +175,8 @@ def collinearity_section(results: dict[str, PipelineResult]) -> list[str]:
         res = check_collinearity(r.design[r.train])
         a, b, c = res.max_pair
         rows.append({"model": name, "design columns": r.design.shape[1], "training rows": int(r.train.sum()),
-                     "max |corr|": f"{abs(c):.3f}", "pair": f"{a} ~ {b}", "check": "pass" if res.passed else "FAIL",
-                     "aliases dropped": len(r.aliases)})
+                     "max |corr|": f"{abs(c):.3f}", "check": "pass" if res.passed else "FAIL",
+                     "pairs above threshold": "; ".join(f"{p} ~ {q} ({v:+.3f})" for p, q, v in res.pairs) or "none"})
     return ["## 2.7 Collinearity", "", "Threshold |corr| > 0.95 on the training rows of each model's design.", "",
             md_table(pd.DataFrame(rows)), ""]
 

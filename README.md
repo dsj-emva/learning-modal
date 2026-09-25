@@ -47,14 +47,15 @@ Definitions: `emva/labels.py`.
 
 ### Features
 
-The default `--feature-set v2` (plan Phase 2, `emva/features.py`): explicit `missing` levels for
-telemetry and enrichment, `enrichment_missing` instead of `no_company`, company-name matching when
-the email domain misses companies.csv, similarity-based boilerplate detection, c_budget /
-c_timeline / ip_type / edits_1_4 dropped (2.6), design columns identical on the training rows
-pruned as aliases, and the deal-value residual sd estimated from training. `--feature-set legacy`
-is the baseline's. Evidence and checks: `python -m emva.eval.phase2_study`,
-`python -m emva.eval.feature_selection`, `python -m emva.eval.collinearity` (exits 1 on
-|corr| > 0.95; `make report` runs it too).
+The default `--feature-set v2` (plan Phase 2, `emva/features.py`): `session_missing` and
+`enrichment_missing` indicators for absent session telemetry and absent enrichment (the affected
+features stay at their reference level), `band=missing`, company-name matching when the email
+domain misses companies.csv, similarity-based boilerplate detection, c_budget / c_timeline /
+ip_type / edits_1_4 dropped (2.6), and the deal-value residual sd estimated from training. The
+design's columns are fixed by the spec. `--feature-set legacy` is the baseline's. Evidence and
+checks: `python -m emva.eval.phase2_study`, `python -m emva.eval.feature_selection`,
+`python -m emva.eval.collinearity` (exits 1 on |corr| > 0.95; `make report` runs it too and exits 1
+on data/v1, where `session_missing` equals `channel=meta_leadads`; see reports/phase2.md).
 
 The context agent (`python -m emva.context.agent`, needs `ANTHROPIC_API_KEY`) writes a CSV that
 `python -m emva --context FILE` uses for the context-layer ablation.

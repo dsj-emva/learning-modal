@@ -159,16 +159,19 @@ def test_report_contains_both_label_definitions(report_text, v1_horizon):
 
 def test_report_runs_the_collinearity_check(report_text):
     text = _section(report_text, "Design collinearity (plan 2.7)")
-    assert "Candidate design (`v2` features, 38 columns) on its 4049 training rows" in text
-    assert "- PASS: max |corr| = 0.772 between enrichment_missing=yes and band=missing" in text
-    assert "  - time_on_page=missing = channel=meta_leadads" in text
+    assert "Candidate design (`v2` features, 39 columns) on its 4049 training rows" in text
+    # on v1 every session-less lead is a lead-ads lead: reported, not hidden
+    assert "- FAIL (1 pairs with |corr| > 0.95): max |corr| = 1.000 between channel=meta_leadads and " \
+           "session_missing=yes" in text
 
 
-def test_report_cli_exits_nonzero_when_the_candidate_is_collinear(data_v1):
+@pytest.mark.parametrize("feature_set,pair", [("legacy", "email=free and no_company=yes"),
+                                              ("v2", "channel=meta_leadads and session_missing=yes")])
+def test_report_cli_exits_nonzero_when_the_candidate_is_collinear(data_v1, feature_set, pair):
     proc = subprocess.run([sys.executable, "-m", "emva.eval.report", "--data", str(data_v1), "--n-resamples", "5",
-                           "--feature-set", "legacy"], cwd=REPO, capture_output=True, text=True)
+                           "--feature-set", feature_set], cwd=REPO, capture_output=True, text=True)
     assert proc.returncode == 1
-    assert "- FAIL (1 pairs with |corr| > 0.95): max |corr| = 1.000 between email=free and no_company=yes" in proc.stdout
+    assert f"- FAIL (1 pairs with |corr| > 0.95): max |corr| = 1.000 between {pair}" in proc.stdout
     assert "FAIL: candidate design collinearity check" in proc.stderr
 
 

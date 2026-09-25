@@ -69,15 +69,16 @@ CATS: dict[str, str] = {
     "c_budget": "not_asked", "c_timeline": "not_asked", "edits_1_4": "no", "no_company": "no",
 }
 
-# Level meaning "the input needed to bucket this feature is absent" (v2 feature set, plan 2.1 and 2.2).
+# Level of ``band`` when neither enrichment nor the typed company size is available (v2, plan 2.2), and of
+# ``sector`` in the deal-value model. Other absent inputs are carried by the two indicators
+# ``session_missing`` and ``enrichment_missing`` (orchestrator ruling on Phase 2, reports/phase2.md).
 MISSING: str = "missing"
 
 # v2 feature set before the plan 2.6 selection (``emva.features.V2_DROPPED`` removes some of them).
-# Order matters twice: it defines the design columns, and when two design columns are identical on the
-# training rows the later one is dropped as an alias of the earlier (``emva.design.drop_aliased_columns``).
-# So enrichment_missing comes before band/spend/crm/hiring, whose "missing" levels it can alias.
+# Order defines the design columns. The column set is fixed by this spec: nothing is dropped per dataset.
 CATS_V2_CANDIDATES: dict[str, str] = {
-    "channel": "google", "form_variant": "A", "enrichment_missing": "no", "band": "1-10", "email": "business",
+    "channel": "google", "form_variant": "A", "session_missing": "no", "enrichment_missing": "no", "band": "1-10",
+    "email": "business",
     "text": "neutral", "seniority": "junior/ic", "spend": "under £5k", "crm": "other", "hiring": "not_hiring",
     "time_on_page": "15-60s", "hesitation_90s": "no", "sessions_3plus": "no", "viewed_pricing": "no",
     "search_term": "generic", "business_hours": "outside", "ip_country": "match", "ip_type": "residential",

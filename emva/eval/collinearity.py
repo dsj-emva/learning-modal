@@ -6,8 +6,10 @@ rows, prints the largest |corr| and every pair above ``MAX_ABS_DESIGN_CORR`` (0.
 if there is any. Columns that are constant on the training rows have no correlation and are
 listed separately (they get a zero weight from the L2 fit and cannot be collinear with anything).
 
-Expected on v1: the legacy feature set fails (``email=free`` and ``no_company=yes`` are the same
-column); v2 passes.
+Expected on v1: both feature sets fail. Legacy: ``email=free`` and ``no_company=yes`` are the same
+column (a feature-design flaw, fixed in v2). v2: ``session_missing=yes`` and ``channel=meta_leadads`` are
+the same column because every session-less v1 lead is a lead-ads lead (a property of the data; on
+data/v2 consent-declined website leads separate them).
 """
 from __future__ import annotations
 
@@ -81,16 +83,12 @@ def assert_no_collinearity(D: pd.DataFrame, threshold: float = MAX_ABS_DESIGN_CO
     return res
 
 
-def format_result(res: CollinearityResult, aliases: dict[str, str]) -> list[str]:
-    """Markdown lines: the verdict, offending pairs, constant columns and exact aliases pruned before the check."""
+def format_result(res: CollinearityResult) -> list[str]:
+    """Markdown lines: the verdict, every offending pair and the constant columns."""
     lines = [f"- {res.describe()}"]
     lines += [f"  - {a} ~ {b}: {r:+.3f}" for a, b, r in res.pairs]
     if res.constant:
         lines.append(f"- Constant on the training rows (skipped): {', '.join(res.constant)}")
-    if aliases:
-        lines.append("- Dropped before the check as identical on the training rows to an earlier column "
-                     "(the earlier column carries the shared weight):")
-        lines += [f"  - {dropped} = {kept}" for dropped, kept in aliases.items()]
     return lines
 
 
@@ -106,7 +104,7 @@ def main(argv: list[str] | None = None) -> None:
     res = check_collinearity(r.design[r.train], a.threshold)
     print(f"feature set {r.features.value}, labels {r.labels.describe()}, {int(r.train.sum())} training rows, "
           f"{r.design.shape[1]} design columns")
-    print("\n".join(format_result(res, r.aliases)))
+    print("\n".join(format_result(res)))
     if not res.passed:
         raise SystemExit(1)
 

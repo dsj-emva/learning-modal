@@ -1,4 +1,4 @@
-"""The v2 feature set (plan 2.1, 2.2, 2.5, 2.6) and its design on v1."""
+"""The v2 feature set (plan 2.1, 2.2, 2.5, 2.6, orchestrator indicator ruling) and its design on v1."""
 from itertools import combinations
 
 import numpy as np
@@ -6,15 +6,20 @@ import pandas as pd
 import pytest
 
 from emva.constants import CATS_V2_CANDIDATES, MISSING
+from emva.design import feature_design
 from emva.features import (
     BEHAVIOURAL_FEATURES,
     CATS_V2,
+    SESSION_INPUTS,
     V2_DROPPED,
     FeatureSet,
     add_features_v2,
     feature_cats,
+    session_absent,
     text_cat_v2,
 )
+
+REFERENCE = {f: CATS_V2_CANDIDATES[f] for f in BEHAVIOURAL_FEATURES}
 
 
 def _lead(**kw) -> dict:
@@ -23,8 +28,8 @@ def _lead(**kw) -> dict:
                 a_job_title=None, a_company_size=None, enrichment_source="domain", en_employee_band="51-200",
                 en_monthly_ad_spend_band="£5k-£25k", en_crm_platform="HubSpot", en_is_hiring=True,
                 en_sector="Software", time_on_page_s=120.0, hesitation_ms=1000.0, sessions_before_convert=1.0,
-                viewed_pricing=False, utm_term=None, landing_url="https://lp.example/", submitted_weekday="Monday",
-                local_submit_hour=10, ip_country="UK", a_country="UK", is_datacenter_ip=False, a_budget=None,
+                viewed_pricing=True, utm_term=None, landing_url="https://lp.example/", submitted_weekday="Monday",
+                local_submit_hour=10, ip_country="US", a_country="UK", is_datacenter_ip=True, a_budget=None,
                 a_timeline=None, field_edit_count=0)
     base.update(kw)
     return base
@@ -36,30 +41,29 @@ def _features(*rows: dict) -> pd.DataFrame:
 
 def test_present_inputs_get_their_buckets():
     r = _features(_lead()).iloc[0]
+    assert r.session_missing == "no" and r.enrichment_missing == "no"
     assert r.time_on_page == "60-300s" and r.hesitation_90s == "no" and r.sessions_3plus == "no"
-    assert r.viewed_pricing == "no" and r.ip_country == "match" and r.ip_type == "residential"
-    assert r.business_hours == "wkday_9-18" and r.enrichment_missing == "no" and r.band == "51-200"
+    assert r.viewed_pricing == "yes" and r.ip_country == "mismatch" and r.ip_type == "dc"
+    assert r.business_hours == "wkday_9-18" and r.band == "51-200"
     assert r.spend == "£5k-£25k" and r.crm == "hubspot_sf" and r.hiring == "hiring" and r.sector == "Software"
 
 
-@pytest.mark.parametrize("raw,feature,reference", [
-    ("time_on_page_s", "time_on_page", "15-60s"),
-    ("hesitation_ms", "hesitation_90s", "no"),
-    ("sessions_before_convert", "sessions_3plus", "no"),
-    ("viewed_pricing", "viewed_pricing", "no"),
-    ("ip_country", "ip_country", "match"),
-    ("is_datacenter_ip", "ip_type", "residential"),
-    ("local_submit_hour", "business_hours", "outside"),
-    ("submitted_weekday", "business_hours", "outside"),
-    ("landing_url", "business_hours", "outside"),
-])
-def test_missing_telemetry_lands_in_missing_not_the_reference(raw, feature, reference):
-    got = _features(_lead(**{raw: np.nan})).iloc[0][feature]
-    assert got == MISSING and got != reference and CATS_V2_CANDIDATES[feature] == reference
+@pytest.mark.parametrize("raw", [*SESSION_INPUTS, "landing_url"])
+def test_absent_session_input_sets_the_indicator_and_reference_levels(raw):
+    """A NaN session input never lands silently in a reference bucket: session_missing=yes carries it."""
+    r = _features(_lead(**{raw: np.nan})).iloc[0]
+    assert r.session_missing == "yes"
+    assert {f: r[f] for f in BEHAVIOURAL_FEATURES} == REFERENCE  # 4 of the 7 are non-reference when present
+    assert not any(r[f] == MISSING for f in BEHAVIOURAL_FEATURES)
+
+
+def test_session_absent():
+    X = pd.DataFrame([_lead(), _lead(time_on_page_s=np.nan), _lead(landing_url=np.nan)])
+    assert session_absent(X).tolist() == [False, True, True]
 
 
 @pytest.mark.parametrize("seconds,bucket", [(15, "15-60s"), (59.9, "15-60s"), (60, "60-300s"), (300, "300-600s"),
-                                            (600, ">600s"), (np.nan, MISSING)])
+                                            (600, ">600s")])
 def test_time_on_page_buckets(seconds, bucket):
     assert _features(_lead(time_on_page_s=seconds)).time_on_page.iloc[0] == bucket
 
@@ -74,20 +78,20 @@ def test_binary_telemetry_thresholds():
     assert X.ip_type.tolist() == ["residential", "dc"]
 
 
-def test_lead_ads_business_hours_is_missing_not_outside():
-    """Lead-ads leads have no on-site session: business_hours is missing from the data, not from the channel."""
+def test_lead_ads_have_no_session_and_business_hours_has_no_channel_rule():
     no_session = dict(landing_url=np.nan, time_on_page_s=np.nan, hesitation_ms=np.nan, sessions_before_convert=np.nan,
                       viewed_pricing=np.nan, ip_country=np.nan, is_datacenter_ip=np.nan, field_edit_count=np.nan)
+    consent_declined = {k: v for k, v in no_session.items() if k != "landing_url"}
     X = _features(
-        _lead(utm_medium="lead_form", utm_source="facebook", **no_session),        # lead ads, weekday 10:00
-        _lead(utm_medium="lead_form", utm_source="facebook", submitted_weekday="Sunday", **no_session),
-        _lead(utm_medium="paid_social", utm_source="facebook"),                     # website lead, weekday 10:00
-        _lead(utm_medium="paid_social", utm_source="facebook", landing_url=np.nan),  # website lead, no session
+        _lead(utm_medium="lead_form", utm_source="facebook", **no_session),       # lead ads, weekday 10:00
+        _lead(utm_medium="paid_social", utm_source="facebook", **consent_declined),  # website, no telemetry
+        _lead(utm_medium="paid_social", utm_source="facebook"),                    # website lead, weekday 10:00
     )
-    assert X.channel.tolist() == ["meta_leadads", "meta_leadads", "meta", "meta"]
-    assert X.business_hours.tolist() == [MISSING, MISSING, "wkday_9-18", MISSING]
+    assert X.channel.tolist() == ["meta_leadads", "meta", "meta"]
+    assert X.session_missing.tolist() == ["yes", "yes", "no"]
+    assert X.business_hours.tolist() == ["outside", "outside", "wkday_9-18"]
     for feat in BEHAVIOURAL_FEATURES:
-        assert (X[feat].iloc[:2] == MISSING).all(), feat
+        assert (X[feat].iloc[:2] == REFERENCE[feat]).all(), feat
 
 
 @pytest.mark.parametrize("hour,weekday,expected", [(9, "Monday", "wkday_9-18"), (17, "Friday", "wkday_9-18"),
@@ -109,8 +113,9 @@ def test_enrichment_missing_and_band_fallback_order():
     )
     assert X.band.tolist() == ["51-200", "201-1000", "1000+", MISSING, MISSING]
     assert X.enrichment_missing.tolist() == ["no", "no", "yes", "yes", "yes"]
-    for feat in ("spend", "crm", "hiring", "sector"):
-        assert X[feat].iloc[2:].eq(MISSING).all() and not X[feat].iloc[:2].eq(MISSING).any(), feat
+    for feat in ("spend", "crm", "hiring"):  # reference level; the indicator carries the effect
+        assert X[feat].iloc[2:].eq(CATS_V2_CANDIDATES[feat]).all() and not X[feat].eq(MISSING).any(), feat
+    assert X.sector.iloc[2:].eq(MISSING).all()  # deal-value model level
     assert "no_company" not in X
 
 
@@ -136,30 +141,33 @@ def test_feature_sets_and_2_6_drop():
     assert set(V2_DROPPED) == {"c_budget", "c_timeline", "ip_type", "edits_1_4"}
     assert not set(V2_DROPPED) & set(CATS_V2) and set(CATS_V2) | set(V2_DROPPED) == set(CATS_V2_CANDIDATES)
     assert feature_cats(FeatureSet.V2) is CATS_V2 and "no_company" in feature_cats(FeatureSet.LEGACY)
+    assert {"session_missing", "enrichment_missing"} <= set(CATS_V2)
     assert FeatureSet("legacy") is FeatureSet.LEGACY
     with pytest.raises(ValueError):
         FeatureSet("v3")
 
 
-def test_v2_design_on_v1(v1_horizon):
+def test_v2_design_columns_come_from_the_spec_not_the_data(v1_horizon):
     X, D, tr = v1_horizon.X, v1_horizon.design, v1_horizon.train
     assert v1_horizon.features is FeatureSet.V2
+    assert list(D.columns) == list(feature_design(X, FeatureSet.V2).columns)  # no per-dataset pruning
+    assert [c for c in D.columns if c.endswith("=missing")] == ["band=missing"]
+    assert "session_missing=yes" in D and "enrichment_missing=yes" in D
     assert not any(c.split("=", 1)[0] in V2_DROPPED or c.startswith("no_company") for c in D.columns)
-    assert "enrichment_missing=yes" in D and "band=missing" in D
-    # on v1 the behavioural missing levels are exactly the lead-ads leads, so they alias the channel column
-    for feat in BEHAVIOURAL_FEATURES:
-        if feat in CATS_V2:
-            assert v1_horizon.aliases[f"{feat}=missing"] == "channel=meta_leadads"
-    for feat in ("spend", "crm", "hiring"):
-        assert v1_horizon.aliases[f"{feat}=missing"] == "enrichment_missing=yes"
+    # a property of v1: every session-less lead is a lead-ads lead, so the two columns coincide
+    assert D.loc[tr, "session_missing=yes"].equals(D.loc[tr, "channel=meta_leadads"])
     lead_ads = X.channel == "meta_leadads"
-    assert lead_ads.any() and (X.loc[lead_ads, list(BEHAVIOURAL_FEATURES)] == MISSING).all().all()
-    assert D[tr].shape[1] == len(set(map(tuple, D[tr].T.values)))  # no two identical training columns left
+    assert (X.loc[lead_ads, "session_missing"] == "yes").all()
+    assert (X.loc[lead_ads, list(BEHAVIOURAL_FEATURES)] == pd.Series(REFERENCE)).all().all()
 
 
-def test_v2_default_model_has_no_equal_coefficients(v1_horizon):
-    w = v1_horizon.weights.log_odds
-    assert [(a, b) for a, b in combinations(w.index, 2) if w[a] == w[b]] == []
+def test_equal_coefficients_on_v1(v1_horizon):
+    """Acceptance 1 on v1: the identical columns session_missing / meta_leadads get equal L2 weights (not hidden)."""
+    w, D = v1_horizon.weights.log_odds, v1_horizon.design[v1_horizon.train]
+    ties = {(a, b) for a, b in combinations(w.index, 2) if w[a] == w[b]}
+    structural = {t for t in ties if abs(D[t[0]].corr(D[t[1]])) > 0.95}
+    assert {frozenset(t) for t in structural} == {frozenset({"channel=meta_leadads", "session_missing=yes"})}
+    assert "email=free" not in {c for t in ties for c in t}  # the baseline's duplicated pair is gone
 
 
 def test_v2_residual_sd_is_estimated(v1_horizon, v1_result):

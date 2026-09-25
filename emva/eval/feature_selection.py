@@ -5,8 +5,7 @@ builds the v2 design with *every* candidate feature (``CATS_V2_CANDIDATES``, bef
 ``emva.features.V2_DROPPED`` is applied), fits the formula model on the training rows, and
 bootstraps each coefficient (``emva.eval.bootstrap.coef_bootstrap``: training rows resampled
 with replacement, model refitted). A feature is kept when at least one of its levels has a 95%
-CI that excludes zero, otherwise dropped. Levels pruned as exact aliases of another column have
-no coefficient of their own and are listed as such. The decision is then hard-coded in
+CI that excludes zero, otherwise dropped. The decision is then hard-coded in
 ``emva.features.V2_DROPPED``; this script is the evidence.
 """
 from __future__ import annotations
@@ -19,7 +18,7 @@ import pandas as pd
 
 from emva.cli import add_label_arguments, label_config
 from emva.constants import CATS_V2_CANDIDATES, TEST_FROM
-from emva.design import design, drop_aliased_columns
+from emva.design import design
 from emva.eval.bootstrap import N_RESAMPLES, SEED, coef_bootstrap
 from emva.eval.report import md_table
 from emva.features import FeatureSet
@@ -48,7 +47,7 @@ def selection_table(data: str | Path, n_refits: int = N_RESAMPLES, seed: int = S
         raise ValueError(f"need at least {MIN_REFITS} refits, got {n_refits}")
     X = build(load(data), labels, FeatureSet.V2)
     tr, _ = split_masks(X, TEST_FROM, labels.eligible(X))
-    D, aliases = drop_aliased_columns(design(X, cats=CATS_V2_CANDIDATES), tr)
+    D = design(X, cats=CATS_V2_CANDIDATES)
     cis = dict(zip(D.columns, coef_bootstrap(D[tr].values, X.y[tr].values, _lr_coef, n_resamples=n_refits, seed=seed),
                    strict=True))
     rows, keep = [], {}
@@ -56,10 +55,6 @@ def selection_table(data: str | Path, n_refits: int = N_RESAMPLES, seed: int = S
         kept_any = False
         for col in design(X, cats={feat: CATS_V2_CANDIDATES[feat]}).columns:
             n_train = int(X.loc[tr, feat].astype(str).eq(col.split("=", 1)[1]).sum())
-            if col in aliases:
-                rows.append({"feature": feat, "level": col, "log-odds [95% CI]": f"alias of {aliases[col]}",
-                             "excludes 0": "n/a", "n train": n_train})
-                continue
             ci = cis[col]
             excludes = ci.lo > 0 or ci.hi < 0
             kept_any |= excludes

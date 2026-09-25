@@ -7,15 +7,19 @@ join only.
 
 ``--feature-set v2`` (``add_features_v2``, the default):
 
-- 2.1: ``time_on_page``, ``hesitation_90s``, ``sessions_3plus``, ``viewed_pricing``,
-  ``ip_country``, ``ip_type`` and ``business_hours`` get a ``missing`` level when their input is
-  absent. ``business_hours`` has no channel special case: it is ``missing`` when the submit
-  weekday or hour is absent or the lead has no on-site session (blank ``landing_url``), which is
-  the case for Meta lead-ads leads.
+Absent inputs use an explicit indicator encoding (orchestrator ruling on Phase 2): the design's
+column set is fixed by this spec, never by the data.
+
+- 2.1: ``session_missing`` = yes when the on-site session is absent (``session_absent``: no
+  landing page visit, or any of the behavioural inputs blank). Then the seven
+  ``BEHAVIOURAL_FEATURES`` take their reference level and the indicator carries the effect.
+  ``business_hours`` has no channel special case; Meta lead-ads leads (no session) and
+  consent-declined website leads (v2 data) both get ``session_missing=yes``.
 - 2.2: ``enrichment_missing`` (no companies.csv row by domain or by name) replaces
-  ``no_company``; ``band`` is enrichment, else the typed ``company_size`` answer, else
-  ``missing``; ``spend``, ``crm``, ``hiring`` (and ``sector``, used by the value model) are
-  ``missing`` without enrichment.
+  ``no_company``; ``spend``, ``crm``, ``hiring`` take their reference level without enrichment and
+  the indicator carries the effect. ``band`` is enrichment, else the typed ``company_size``
+  answer, else its own ``missing`` level (distinct from the indicator because of the typed
+  fallback). ``sector`` (deal-value model only) is ``missing`` without enrichment.
 - 2.3: enrichment is ``en_<column>`` from ``emva.io.load``: the domain row, else an exact
   normalised company-name match.
 - 2.5: ``text`` detects boilerplate by similarity (``emva.boilerplate``), not by prefix.
@@ -57,9 +61,12 @@ class FeatureSet(str, Enum):
 V2_DROPPED: tuple[str, ...] = ("c_budget", "c_timeline", "ip_type", "edits_1_4")
 CATS_V2: dict[str, str] = {k: v for k, v in CATS_V2_CANDIDATES.items() if k not in V2_DROPPED}
 
-# Behavioural (on-site telemetry) features that have a missing level in v2 (plan 2.1).
+# Behavioural (on-site session) features whose absence session_missing carries in v2 (plan 2.1).
 BEHAVIOURAL_FEATURES: tuple[str, ...] = ("time_on_page", "hesitation_90s", "sessions_3plus", "viewed_pricing",
                                          "ip_country", "ip_type", "business_hours")
+# Raw inputs of those features; any of them blank (or no landing_url) means the session is absent.
+SESSION_INPUTS: tuple[str, ...] = ("time_on_page_s", "hesitation_ms", "sessions_before_convert", "viewed_pricing",
+                                   "ip_country", "is_datacenter_ip", "submitted_weekday", "local_submit_hour")
 
 
 def feature_cats(feature_set: FeatureSet) -> dict[str, str]:
@@ -169,9 +176,18 @@ def add_features(X: pd.DataFrame) -> pd.DataFrame:
     return X
 
 
-def _or_missing(absent: pd.Series, values: np.ndarray | pd.Series) -> np.ndarray:
-    """``values`` with ``MISSING`` wherever ``absent`` is True."""
-    return np.where(absent, MISSING, values)
+def session_absent(X: pd.DataFrame) -> pd.Series:
+    """True where the lead has no usable on-site session: blank ``landing_url`` or any ``SESSION_INPUTS`` blank.
+
+    Meta lead-ads leads never visit the page; consent-declined website leads visit it but send no
+    telemetry. Either way the behavioural features cannot be bucketed.
+    """
+    return X.landing_url.isna() | X[list(SESSION_INPUTS)].isna().any(axis=1)
+
+
+def _or_reference(absent: pd.Series, feature: str, values: np.ndarray | pd.Series) -> np.ndarray:
+    """``values`` with ``feature``'s v2 reference level wherever ``absent`` is True (the indicator carries it)."""
+    return np.where(absent, CATS_V2_CANDIDATES[feature], values)
 
 
 def add_features_v2(X: pd.DataFrame, text_threshold: float = BOILERPLATE_SIMILARITY_THRESHOLD) -> pd.DataFrame:
@@ -183,32 +199,34 @@ def add_features_v2(X: pd.DataFrame, text_threshold: float = BOILERPLATE_SIMILAR
     ``text_threshold`` is the boilerplate similarity threshold.
     """
     X["channel"] = channel(X.utm_medium, X.utm_source)
+    no_session = session_absent(X)
+    X["session_missing"] = np.where(no_session, "yes", "no")
     no_enrichment = X.enrichment_source.isna()
     X["enrichment_missing"] = np.where(no_enrichment, "yes", "no")
     X["band"] = X.en_employee_band.fillna(X.a_company_size.replace("", np.nan)).fillna(MISSING)
     X["email"] = email_type(X.email_l)
     X["text"] = X.a_what_to_solve.apply(text_cat_v2, threshold=text_threshold)
     X["seniority"] = X.a_job_title.apply(seniority)
-    X["spend"] = X.en_monthly_ad_spend_band.fillna(MISSING)
-    X["crm"] = _or_missing(X.en_crm_platform.isna(),
-                           np.where(X.en_crm_platform.isin(["HubSpot", "Salesforce"]), "hubspot_sf", "other"))
-    X["hiring"] = _or_missing(X.en_is_hiring.isna(),
-                              np.where(X.en_is_hiring == True, "hiring", "not_hiring"))  # noqa: E712
+    X["spend"] = _or_reference(no_enrichment, "spend", X.en_monthly_ad_spend_band)
+    X["crm"] = _or_reference(no_enrichment, "crm",
+                             np.where(X.en_crm_platform.isin(["HubSpot", "Salesforce"]), "hubspot_sf", "other"))
+    X["hiring"] = _or_reference(no_enrichment, "hiring",
+                                np.where(X.en_is_hiring == True, "hiring", "not_hiring"))  # noqa: E712
     top = X.time_on_page_s
-    X["time_on_page"] = np.select([top.isna(), top < 60, top < 300, top < 600],
-                                  [MISSING, "15-60s", "60-300s", "300-600s"], ">600s")
-    X["hesitation_90s"] = _or_missing(X.hesitation_ms.isna(), np.where(X.hesitation_ms > 90000, "yes", "no"))
-    X["sessions_3plus"] = _or_missing(X.sessions_before_convert.isna(),
-                                      np.where(X.sessions_before_convert >= 3, "yes", "no"))
-    X["viewed_pricing"] = _or_missing(X.viewed_pricing.isna(),
-                                      np.where(X.viewed_pricing == True, "yes", "no"))  # noqa: E712
+    X["time_on_page"] = _or_reference(no_session, "time_on_page", np.select(
+        [top < 60, top < 300, top < 600], ["15-60s", "60-300s", "300-600s"], ">600s"))
+    X["hesitation_90s"] = _or_reference(no_session, "hesitation_90s", np.where(X.hesitation_ms > 90000, "yes", "no"))
+    X["sessions_3plus"] = _or_reference(no_session, "sessions_3plus",
+                                        np.where(X.sessions_before_convert >= 3, "yes", "no"))
+    X["viewed_pricing"] = _or_reference(no_session, "viewed_pricing",
+                                        np.where(X.viewed_pricing == True, "yes", "no"))  # noqa: E712
     X["search_term"] = search_term(X.channel, X.utm_term)
-    no_session = X.landing_url.isna() | X.submitted_weekday.isna() | X.local_submit_hour.isna()
     wk = ~X.submitted_weekday.isin(["Saturday", "Sunday"]) & X.local_submit_hour.between(9, 17)
-    X["business_hours"] = _or_missing(no_session, np.where(wk, "wkday_9-18", "outside"))
-    X["ip_country"] = _or_missing(X.ip_country.isna(), np.where(X.ip_country != X.a_country, "mismatch", "match"))
-    X["ip_type"] = _or_missing(X.is_datacenter_ip.isna(),
-                               np.where(X.is_datacenter_ip == True, "dc", "residential"))  # noqa: E712
+    X["business_hours"] = _or_reference(no_session, "business_hours", np.where(wk, "wkday_9-18", "outside"))
+    X["ip_country"] = _or_reference(no_session, "ip_country",
+                                    np.where(X.ip_country != X.a_country, "mismatch", "match"))
+    X["ip_type"] = _or_reference(no_session, "ip_type",
+                                 np.where(X.is_datacenter_ip == True, "dc", "residential"))  # noqa: E712
     X["c_budget"] = X.a_budget.fillna("not_asked")
     X["c_timeline"] = X.a_timeline.fillna("not_asked")
     X["edits_1_4"] = np.where(X.field_edit_count.between(1, 4), "yes", "no")
