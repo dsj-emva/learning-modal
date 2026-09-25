@@ -1,0 +1,14 @@
+# Railway service config for the `app` service (Streamlit). Mirrors the Dockerfile CMD and HEALTHCHECK.
+# Railway has deprecated Config as Code: new services do not read this file, so the same settings were
+# applied to the service directly (docs/deploy.md). Kept as the in-repo record of the intended config.
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+startCommand = "sh /app/scripts/serve.sh"
+healthcheckPath = "/_stcore/health"
+healthcheckTimeout = 120
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
+numReplicas = 1
