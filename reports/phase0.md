@@ -147,9 +147,18 @@ Two things were needed to hit 0.454, and both are now report conventions:
    which doesn't depend on sort order, is 0.397 / 0.454. The report prints this footnote
    automatically for any score with ties at the cut.
 
+## Orchestrator decisions (review of Phase 0)
+
+- Accepted as the report standard: revenue = recorded deal value (blank = 0), and the
+  tie footnote. The status quo's unstable-sort top-20% wins (0.392) appears in the table and
+  its footnote only. Tests assert the sort-independent tie-averaged values (wins 0.397,
+  revenue 0.454) and AUC 0.639, so they pass on any CPU.
+- Accepted: the canonical `weights.csv` comparison replaces "byte-identical" in plan 0.2.
+- Confirmed: the status-quo `country` rule reads the typed answer (`a_country`).
+
 ## Tests
 
-`make test`: **111 passed** (about 14 s), then `python -m compileall -q emva scripts baseline tests`
+`make test`: **115 passed** (about 14 s), then `python -m compileall -q emva scripts baseline tests`
 is clean. Every commit on the branch passes its own tests.
 
 | file | covers |
@@ -163,7 +172,7 @@ is clean. Every commit on the branch passes its own tests.
 | `test_status_quo.py` | keyword order, page points, six hand-built leads across all tiers and rules |
 | `test_metrics_regression.py` | top-k and tie averaging, calibration, month AUC, value scale, weights compare |
 | `test_context.py` | lead card, cache hit without network, logged retries, contract, context logit |
-| `test_integration.py` | emva on v1 = baseline metrics and weights, `--context` byte-equal, CLI, status-quo targets, report |
+| `test_integration.py` | emva on v1 = baseline metrics and weights, `--context` byte-equal, CLI, status-quo targets (AUC 0.639, tie-averaged wins 0.397 and revenue 0.454, which don't depend on sort order), report |
 
 ## Pandas pin decision and the `weights.csv` check
 
@@ -184,8 +193,6 @@ the baseline run on the same machine.
 
 ```
 $ grep -rn "0.45\|ground_truth" emva/
-emva/value.py:14:# Lognormal mean correction exp(sd**2 / 2) uses a residual sd of 0.45 on log deal value.
-emva/value.py:15:# This number is the generator's planted noise sd (data/v1/ground_truth.md), not something
 emva/value.py:19:DEAL_LOG_RESIDUAL_SD_FROM_GENERATOR = 0.45
 ```
 
