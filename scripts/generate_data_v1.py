@@ -62,8 +62,15 @@ SPEND = ["none", "under £5k", "£5k-£25k", "£25k-£100k", "£100k+"]
 CRMS = ["HubSpot", "Salesforce", "Pipedrive", "Spreadsheet", "No CRM"]
 
 
+REPLY_TIER_LOG_SHIFT: dict[str, float] = {"A": 0.0, "B": 1.03, "C": 1.89}   # log-hours added to the first-reply median
+
+
 @dataclass
 class Config:
+    """Every planted effect, distribution constant and v2 option of the generator.
+
+    Coupling to know about: ``company_name_variation_share`` only takes effect when ``enrichment_dropout`` > 0
+    (both belong to 5.3), and the ``ghost_*`` / ``stall_by_tier`` parameters only with ``ghosting_follows_tier``."""
     seed: int = 20260924
     as_of: str = "2026-09-24"
     n: int = 10000
@@ -145,8 +152,8 @@ class Config:
     linkedin_51plus_eff: float = 0.8          # 5.5: LinkedIn lead from a company with 51+ employees
     senior_guide_eff: float = -0.8            # 5.5: senior title on form D (guide download)
     ghost_intercept: float = -5.3             # 5.6: never-contacted log-odds = intercept + tier term only
-    ghost_tier_eff: dict = field(default_factory=lambda: {"A": 0.0, "B": 2.8, "C": 4.4})
-    stall_by_tier: dict = field(default_factory=lambda: {"A": 0.05, "B": 0.10, "C": 0.17})
+    ghost_tier_eff: dict[str, float] = field(default_factory=lambda: {"A": 0.0, "B": 2.8, "C": 4.4})
+    stall_by_tier: dict[str, float] = field(default_factory=lambda: {"A": 0.05, "B": 0.10, "C": 0.17})
     persona_share: float = 0.08               # 5.7: share of genuine-human original leads with a persona
     persona_eff: float = -1.0                 # 5.7: persona effect on close log-odds
 
@@ -820,21 +827,25 @@ def observe_session(cfg: Config, b: dict[str, Any], lead_ads: bool, bot: bool, c
 
     Adds ``consent_declined``, ``fast_human`` and ``true_behaviour`` (the TRUE_BEHAVIOUR values before any change,
     None when nothing changed). Consent is drawn for every website session (bots included: a script that never
-    runs the analytics tag looks the same); fast humans are drawn among genuine humans whose telemetry was
-    recorded. Fast humans get 5-14.9s on the page and a pause share of at most 25% of it, but keep the close
+    runs the analytics tag looks the same); the fast-human draw is made for every genuine-human session and
+    applied only where telemetry was recorded, so each option's stream is independent of the other. Fast humans get 5-14.9s on the page and a pause share of at most 25% of it, but keep the close
     odds of their real session, so the bot rule's under-15s cut is wrong for them."""
     b["consent_declined"], b["fast_human"], b["true_behaviour"] = False, False, None
     if lead_ads:
         return
     truth = {c: b[c] for c in TRUE_BEHAVIOUR}
-    if cfg.consent_missing_share > 0 and crng.random() < cfg.consent_missing_share:
+    declined = cfg.consent_missing_share > 0 and crng.random() < cfg.consent_missing_share
+    fast = None
+    if not bot and cfg.fast_human_share > 0:     # three draws for every human session, used or not
+        fast = (frng.random() < cfg.fast_human_share, frng.uniform(5.0, 14.9), frng.uniform(0.0, 0.25))
+    if declined:
         for c in CONSENT_COLUMNS:
             b[c] = None
         b["consent_declined"] = True
-    elif not bot and cfg.fast_human_share > 0 and frng.random() < cfg.fast_human_share:
-        top = round(float(frng.uniform(5.0, 14.9)), 1)
+    elif fast is not None and fast[0]:
+        top = round(float(fast[1]), 1)
         b["time_on_page_s"] = top
-        b["hesitation_ms"] = int(frng.uniform(0.0, 0.25) * top * 1000)
+        b["hesitation_ms"] = int(fast[2] * top * 1000)
         b["fast_human"] = True
     if b["consent_declined"] or b["fast_human"]:
         b["true_behaviour"] = truth
@@ -953,20 +964,40 @@ def persona_safe(paraphrases: dict[str, list[str]]) -> dict[str, list[str]]:
     return {t: [q for q in ps if text_cat(q) == "neutral"] if t in persona else ps for t, ps in paraphrases.items()}
 
 
+PERSONA_TEXT_CATEGORIES = ("neutral", "specific")   # answers long enough to carry a persona sentence
+
+
 def assign_personas(cfg: Config, leads: pd.DataFrame, people: pd.DataFrame) -> pd.DataFrame:
-    """5.7: give ``persona_share`` of genuine-human leads a hidden persona (and which persona sentence they write)."""
+    """5.7: hidden persona (and the persona sentence they write) for ``persona_share`` of all original leads.
+
+    Only genuine humans whose answer is neutral or specific are eligible, so every persona lead's text carries its
+    persona sentence (a vague one-word answer or pasted boilerplate cannot). The per-lead probability is scaled
+    up by the eligible share so the overall share stays ``persona_share``. Three draws per lead, always."""
     leads["context_persona"] = None
     leads["persona_sentence"] = None
     if not cfg.context_only_signal:
         return leads
     rng = rng_for(cfg, "v2_persona")
-    for i, l in leads.iterrows():
-        if people.at[l.person, "is_bot"] or rng.random() >= cfg.persona_share:
+    is_bot = people.is_bot.reindex(leads.person).to_numpy(dtype=bool)
+    eligible = ~is_bot & leads.text_category.isin(PERSONA_TEXT_CATEGORIES).to_numpy()
+    q = min(1.0, cfg.persona_share * len(leads) / max(1, int(eligible.sum())))
+    for j, i in enumerate(leads.index):
+        u, k_persona, k_sentence = rng.random(), rng.random(), rng.random()
+        if not eligible[j] or u >= q:
             continue
-        persona = pick(rng, v2_text.PERSONAS)
+        persona = v2_text.PERSONAS[int(k_persona * len(v2_text.PERSONAS))]
+        sentences = v2_text.PERSONA_SENTENCES[persona]
         leads.at[i, "context_persona"] = persona
-        leads.at[i, "persona_sentence"] = pick(rng, v2_text.PERSONA_SENTENCES[persona])
+        leads.at[i, "persona_sentence"] = sentences[int(k_sentence * len(sentences))]
     return leads
+
+
+def _child(stream: np.random.Generator) -> np.random.Generator:
+    """A per-lead generator seeded by exactly one draw from ``stream``.
+
+    Using one draw per lead per stream, whatever the lead needs, keeps every other lead's draws fixed when an
+    option changes how much randomness one lead consumes (text length, number of snippets, ...)."""
+    return np.random.default_rng(int(stream.integers(0, 2 ** 62)))
 
 
 def _variant(rng: np.random.Generator | None, template: str, paraphrases: dict[str, list[str]]) -> str:
@@ -1000,29 +1031,31 @@ def native_text(rng: np.random.Generator, country: str, cat: str, team: int) -> 
 def rewrite_texts(cfg: Config, leads: pd.DataFrame, people: pd.DataFrame) -> pd.DataFrame:
     """v2 free text: paraphrase, boilerplate pool, persona sentence, language mixing, typos (in that order).
 
-    Each step has its own RNG stream and runs only when its option is on; the true ``text_category`` never
-    changes, only the words. Persona sentences are appended to non-vague answers (a one-word answer such as
-    "pricing" cannot carry a persona), so the persona never changes which regex category a text falls in."""
+    Each step has its own RNG stream (paraphrases of the base answer, of boilerplate and of the persona sentence
+    are three separate streams) and takes exactly one draw per lead from it (``_child``), so one text option
+    never changes another option's draws. The true ``text_category`` never changes, only the words. Persona
+    sentences stay in English even when the answer is replaced by a native DE/FR/NL one (code-switching)."""
     text_opts = [cfg.text_paraphrase, cfg.text_boilerplate_pool, cfg.text_language_mix_share > 0,
                  cfg.text_typo_share > 0, cfg.context_only_signal]
     if not any(text_opts):
         return leads
     paraphrases = persona_safe(paraphrase_templates.lookup(all_text_templates())) if cfg.text_paraphrase else {}
-    prng = rng_for(cfg, "v2_paraphrase") if cfg.text_paraphrase else None
-    brng, lrng, trng = rng_for(cfg, "v2_boilerplate"), rng_for(cfg, "v2_language"), rng_for(cfg, "v2_typos")
+    streams = {k: rng_for(cfg, f"v2_{k}") for k in
+               ["paraphrase_base", "paraphrase_boilerplate", "paraphrase_persona", "boilerplate", "language", "typos"]}
     lang_mode = []
     for i, l in leads.iterrows():
+        r = {k: _child(st) for k, st in streams.items()}
+        para = {k: (r[f"paraphrase_{k}"] if cfg.text_paraphrase else None) for k in ["base", "boilerplate", "persona"]}
         p = people.loc[l.person]
         cat = l.text_category
         if cat == "copy_paste" and cfg.text_boilerplate_pool:
-            base = boilerplate_text(brng, prng, paraphrases)
+            base = boilerplate_text(r["boilerplate"], para["boilerplate"], paraphrases)
         else:
-            tpl = _variant(prng, l.text_template, paraphrases)
+            tpl = _variant(para["base"], l.text_template, paraphrases)
             base = tpl.format(**l.text_params) if l.text_params else tpl
-        persona = ""
-        if _present(l.persona_sentence) and cat != "vague":
-            persona = _variant(prng, l.persona_sentence, paraphrases)
+        persona = _variant(para["persona"], l.persona_sentence, paraphrases) if _present(l.persona_sentence) else ""
         mode, closer = None, ""
+        lrng = r["language"]
         if cfg.text_language_mix_share > 0 and p.country in v2_text.LANG_BANK and \
                 lrng.random() < cfg.text_language_mix_share:
             bank = v2_text.LANG_BANK[p.country]
@@ -1037,8 +1070,8 @@ def rewrite_texts(cfg: Config, leads: pd.DataFrame, people: pd.DataFrame) -> pd.
         txt = " ".join(x for x in (base, persona) if x) + closer
         if mode:
             txt = txt.strip()
-        if cfg.text_typo_share > 0 and trng.random() < cfg.text_typo_share:
-            txt = v2_text.add_typos(trng, txt, cfg.typo_char_rate)
+        if cfg.text_typo_share > 0 and r["typos"].random() < cfg.text_typo_share:
+            txt = v2_text.add_typos(r["typos"], txt, cfg.typo_char_rate)
         ans = dict(l.answers)
         ans["what_to_solve"] = txt
         leads.at[i, "answers"] = ans
@@ -1122,7 +1155,7 @@ def hidden_log_odds(cfg: Config, leads: pd.DataFrame, people: pd.DataFrame, comp
         free_or_vague = [p.is_free_email, l.text_category in ("vague", "copy_paste")]
         z_nc = -4.2 + 1.7 * (tier == "B") + 2.7 * (tier == "C") + 0.5 * free_or_vague[0] + 0.45 * free_or_vague[1]
         never = never_v1 = bool(rng.random() < 1 / (1 + np.exp(-z_nc)))
-        mu = np.log(1.5) + {"A": 0.0, "B": 1.03, "C": 1.89}[tier]
+        mu = np.log(1.5) + REPLY_TIER_LOG_SHIFT[tier]
         reply = None
         if not never:
             reply = round(float(np.clip(np.exp(rng.normal(mu, 1.2)), 0.05, 240.0)), 2)

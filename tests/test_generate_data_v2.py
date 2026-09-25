@@ -27,8 +27,8 @@ from emva.features import text_cat  # noqa: E402
 from emva.io import load  # noqa: E402
 from emva.pipeline import build  # noqa: E402
 
-N_OPT = 1200      # per-option comparisons (in memory)
-N_V2 = 3000       # full v2 sample (written to disk)
+N_OPT = 800       # per-option comparisons (in memory), run with paraphrase off and on
+N_V2 = 2500       # full v2 sample (written to disk)
 V1_PIN_N = 600
 V1_PIN = {        # sha256 of the v1 output for seed 20260924, n = 600, with every v2 option off
     "companies.csv": "4cb4a9c794f75ae1ddf900ad24c32ecb6933bdc8b77964a4db2ac7e8d58b573d",
@@ -84,13 +84,33 @@ def test_v2_schema(v2_dir):
 
 # ---------------------------------------------------------------- each option changes only what it should
 
+def fixture_cache_entries():
+    """Placeholder-preserving dummy rewrites of every template (a test fixture, not LLM output)."""
+    return {pt.cache_key(t): {"template": t, "model": pt.MODEL_ID, "prompt_version": pt.PROMPT_VERSION,
+                              "paraphrases": [f"[p{i}] {t}" for i in range(pt.N_PARAPHRASES)]}
+            for t in gen.all_text_templates()}
+
+
 @pytest.fixture(scope="module")
-def base():
-    return gen.generate(gen.Config(n=N_OPT))
+def fixture_cache(tmp_path_factory):
+    """Point the generator at the fixture cache for the whole module."""
+    path = str(tmp_path_factory.mktemp("cache") / "cache.json")
+    pt.save_cache(fixture_cache_entries(), path)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(pt, "CACHE_PATH", path)
+        yield path
 
 
-def run_opt(**kw):
-    return gen.generate(gen.Config(n=N_OPT, **kw))
+@pytest.fixture(scope="module", params=[False, True], ids=["plain", "paraphrase"])
+def base(request, fixture_cache):
+    """v1 settings, optionally with paraphrase on; each option test switches one more option on top."""
+    out = gen.generate(gen.Config(n=N_OPT, text_paraphrase=request.param))
+    out["paraphrase"] = request.param
+    return out
+
+
+def run_opt(base, **kw):
+    return gen.generate(gen.Config(n=N_OPT, text_paraphrase=base["paraphrase"], **kw))
 
 
 def what(df):
@@ -109,13 +129,13 @@ def answers_without(df, key):
 @pytest.mark.parametrize("opt", [{"text_typo_share": 0.3}, {"text_language_mix_share": 0.35},
                                  {"text_boilerplate_pool": True}])
 def test_text_options_change_only_the_free_text(base, opt):
-    out = run_opt(**opt)
+    out = run_opt(base, **opt)
     L0, L1 = base["historical_leads"], out["historical_leads"]
     assert_same_except(L0, L1, ["answers"])
     assert (answers_without(L0, "what_to_solve") == answers_without(L1, "what_to_solve")).all()
     for name in ["crm_history", "companies", "people"]:
         pd.testing.assert_frame_equal(base[name], out[name])
-    pd.testing.assert_frame_equal(base["ground_truth_labels"], out["ground_truth_labels"][gen.LABEL_COLUMNS])
+    pd.testing.assert_frame_equal(base["ground_truth_labels"][gen.LABEL_COLUMNS], out["ground_truth_labels"][gen.LABEL_COLUMNS])
     changed = what(L0) != what(L1)
     G = out["ground_truth_labels"]
     if "text_typo_share" in opt:
@@ -130,7 +150,7 @@ def test_text_options_change_only_the_free_text(base, opt):
 
 
 def test_enrichment_dropout(base):
-    out = run_opt(enrichment_dropout=0.3)
+    out = run_opt(base, enrichment_dropout=0.3)
     C0, C1, H = base["companies"], out["companies"], out["ground_truth_companies"]
     assert_same_except(C0, C1, ["domain"])
     pd.testing.assert_frame_equal(C0, H[C0.columns])                       # hidden truth keeps every domain
@@ -141,7 +161,7 @@ def test_enrichment_dropout(base):
     assert len(missing) == round(0.3 * len(used))
     assert not set(C1.domain) & (set(C0.domain) - set(C1.domain))         # legacy domains are new strings
     assert (G.domain_in_companies[G.company_domain.isin(missing)] == False).all()  # noqa: E712
-    pd.testing.assert_frame_equal(base["ground_truth_labels"], G[gen.LABEL_COLUMNS])
+    pd.testing.assert_frame_equal(base["ground_truth_labels"][gen.LABEL_COLUMNS], G[gen.LABEL_COLUMNS])
     L0, L1 = base["historical_leads"], out["historical_leads"]
     assert_same_except(L0, L1, ["answers", "company_name"])
     assert (answers_without(L0, "company") == answers_without(L1, "company")).all()
@@ -153,7 +173,7 @@ def test_enrichment_dropout(base):
 
 
 def test_consent_missingness(base):
-    out = run_opt(consent_missing_share=0.15)
+    out = run_opt(base, consent_missing_share=0.15)
     L0, L1, G = base["historical_leads"], out["historical_leads"], out["ground_truth_labels"]
     assert_same_except(L0, L1, gen.CONSENT_COLUMNS)
     cd = G.consent_declined.astype(bool)
@@ -165,7 +185,7 @@ def test_consent_missingness(base):
 
 
 def test_fast_humans_change_only_time_and_hesitation(base):
-    out = run_opt(fast_human_share=0.02)
+    out = run_opt(base, fast_human_share=0.02)
     L0, L1, G = base["historical_leads"], out["historical_leads"], out["ground_truth_labels"]
     assert_same_except(L0, L1, ["time_on_page_s", "hesitation_ms"])
     fast = G.fast_human.astype(bool)
@@ -173,11 +193,11 @@ def test_fast_humans_change_only_time_and_hesitation(base):
     assert (L1.time_on_page_s[fast] < 15).all() and not G.is_bot[fast].any()
     eligible = L1.utm_medium.ne("lead_form") & ~G.is_bot
     assert 0.008 < fast[eligible].mean() < 0.035
-    pd.testing.assert_frame_equal(base["ground_truth_labels"], G[gen.LABEL_COLUMNS])   # close odds unchanged
+    pd.testing.assert_frame_equal(base["ground_truth_labels"][gen.LABEL_COLUMNS], G[gen.LABEL_COLUMNS])   # close odds unchanged
 
 
 def test_interactions_change_only_the_two_cells(base):
-    out = run_opt(interactions=True)
+    out = run_opt(base, interactions=True)
     pd.testing.assert_frame_equal(base["historical_leads"], out["historical_leads"])
     G0, G1 = base["ground_truth_labels"], out["ground_truth_labels"]
     L = base["historical_leads"]
@@ -188,11 +208,11 @@ def test_interactions_change_only_the_two_cells(base):
     assert (G0.p_close_true[same] == G1.p_close_true[same]).all()
     assert (G1.p_close_true[orig & li & ~sd] >= G0.p_close_true[orig & li & ~sd]).all()
     assert (G1.p_close_true[orig & sd & ~li] <= G0.p_close_true[orig & sd & ~li]).all()
-    assert (orig & li).sum() > 30 and (orig & sd).sum() > 30
+    assert (orig & li).sum() > 20 and (orig & sd).sum() > 20
 
 
 def test_ghosting_follows_tier_changes_contact_not_behaviour(base):
-    out = run_opt(ghosting_follows_tier=True)
+    out = run_opt(base, ghosting_follows_tier=True)
     pd.testing.assert_frame_equal(base["historical_leads"], out["historical_leads"])
     G0, G1 = base["ground_truth_labels"], out["ground_truth_labels"]
     orig = G0.duplicate_of.isna()
@@ -203,12 +223,13 @@ def test_ghosting_follows_tier_changes_contact_not_behaviour(base):
 
 
 def test_persona_changes_text_and_odds_of_persona_leads_only(base):
-    out = run_opt(context_only_signal=True)
+    out = run_opt(base, context_only_signal=True)
     L0, L1, G = base["historical_leads"], out["historical_leads"], out["ground_truth_labels"]
     assert_same_except(L0, L1, ["answers"])
     persona = G.context_persona.notna()
     changed = what(L0) != what(L1)
-    assert (changed == (persona & (G.text_category != "vague"))).all()
+    assert (changed == persona).all()                                  # D1: every persona lead's text carries it
+    assert set(G.text_category[persona]) <= set(gen.PERSONA_TEXT_CATEGORIES)
     assert 0.05 < persona[G.duplicate_of.isna()].mean() < 0.11
     assert set(G.context_persona.dropna()) == set(v2_text.PERSONAS)
     G0 = base["ground_truth_labels"]
@@ -237,20 +258,17 @@ def test_paraphrase_fails_loudly_without_cache(monkeypatch, tmp_path):
         gen.generate(gen.Config(n=200, text_paraphrase=True))
 
 
-def test_paraphrase_uses_cache_entries(monkeypatch, tmp_path, base):
+def test_paraphrase_uses_cache_entries(monkeypatch, tmp_path):
     """Test fixture cache (placeholder-preserving dummy rewrites, not LLM output) drives the substitution."""
     path = str(tmp_path / "cache.json")
-    entries = {pt.cache_key(t): {"template": t, "model": pt.MODEL_ID, "prompt_version": pt.PROMPT_VERSION,
-                                 "paraphrases": [f"[p{i}] {t}" for i in range(pt.N_PARAPHRASES)]}
-               for t in gen.all_text_templates()}
-    pt.save_cache(entries, path)
+    pt.save_cache(fixture_cache_entries(), path)
     monkeypatch.setattr(pt, "CACHE_PATH", path)
     out = gen.generate(gen.Config(n=N_OPT, text_paraphrase=True))
     w = what(out["historical_leads"])
     share = w.str.startswith("[p").mean()
     assert 0.6 < share < 0.9                                     # 5 of 6 variants, minus empty and "?" answers
     stripped = w.str.replace(r"^\[p\d\] ", "", regex=True)
-    assert (stripped == what(base["historical_leads"])).all()    # placeholders were filled with the same values
+    assert (stripped == what(gen.generate(gen.Config(n=N_OPT))["historical_leads"])).all()   # same filled values
 
 
 def test_committed_cache_covers_every_template():
@@ -295,7 +313,8 @@ def test_bot_rule_precision_below_100(v2m):
 
 
 def test_v2_planted_shares(v2m):
-    assert 0.05 < v2m["persona"]["share_all_leads"] < 0.11
+    assert 0.05 < v2m["persona"]["share_originals"] < 0.11
+    assert v2m["persona"]["persona_without_text_trace"] == 0
     assert v2m["persona"]["regex_dist_max_gap"] < 0.07
     assert 0.008 < v2m["fast_humans"]["share"] < 0.035
     assert 0.11 < v2m["consent"]["share_of_web"] < 0.19 and v2m["consent"]["all_columns_blank"]
@@ -326,7 +345,8 @@ def test_planted_effects_visible_in_decided_win_rates_on_v2(v2_dir):
     assert win(D.employee_band == "51-200") > 2 * win(D.employee_band == "1-10")
     assert win(D.is_free_email) < win(~D.is_free_email)
     assert win(D.text_category == "specific") > win(D.text_category == "vague")
-    assert win(D.context_persona.notna()) < win(D.context_persona.isna())
+    eligible = D.text_category.isin(gen.PERSONA_TEXT_CATEGORIES) & ~D.is_bot
+    assert win(eligible & D.context_persona.notna()) < win(eligible & D.context_persona.isna())
 
 
 def test_baseline_pipeline_runs_on_v2(v2_dir):

@@ -12,7 +12,6 @@ import json
 import os
 import re
 import sys
-from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
@@ -26,16 +25,11 @@ for _p in (HERE, ROOT):
 from emva.constants import BOT_MIN_TIME_ON_PAGE_S  # noqa: E402
 from emva.features import text_cat  # noqa: E402
 from emva.io import flag_bots_and_duplicates, load as emva_load  # noqa: E402
+from generate_data_v1 import CONSENT_COLUMNS, PERSONA_TEXT_CATEGORIES, Config  # noqa: E402
 from ground_truth_report import load as gt_load, tier_of  # noqa: E402
-
-if TYPE_CHECKING:
-    from generate_data_v1 import Config
 
 TEXT_ORDER = ["specific", "neutral", "vague", "copy_paste"]
 LEGAL_SUFFIXES = {"ltd", "limited", "inc", "incorporated", "gmbh", "sas", "bv"}
-CONSENT_COLUMNS = ["time_on_page_s", "hesitation_ms", "field_edit_count", "fields_edited", "pasted_text",
-                   "sessions_before_convert", "days_since_first_visit", "returned_visitor", "pages_visited",
-                   "viewed_pricing", "scroll_depth_pct", "fbp", "ip", "ip_country", "ip_city", "is_datacenter_ip"]
 
 
 def merged(t: dict) -> pd.DataFrame:
@@ -138,20 +132,25 @@ def consent_stats(X: pd.DataFrame) -> dict:
 
 
 def persona_stats(X: pd.DataFrame) -> dict:
-    """Persona shares, decided win rates with and without a persona, and the regex category distribution of
-    persona vs non-persona texts (genuine-human original leads)."""
+    """Persona shares (of original leads and of all rows), decided win rates with and without a persona, leads
+    whose text cannot carry the persona (must be 0), and the regex category distribution of persona vs other
+    texts among genuine-human originals with a neutral or specific answer (the only leads that can get one)."""
     O = X[~X.is_dup]
     has = O.g_context_persona.notna()
-    humans = O[~O.g_is_bot.astype(bool)]
+    humans = O[~O.g_is_bot.astype(bool) & O.g_text_category.isin(PERSONA_TEXT_CATEGORIES)]
     hp = humans.g_context_persona.notna()
     dist = pd.DataFrame({"persona": humans.regex_text[hp].value_counts(normalize=True),
                          "no_persona": humans.regex_text[~hp].value_counts(normalize=True)}).reindex(TEXT_ORDER).fillna(0)
     true_dist = pd.DataFrame({"persona": humans.g_text_category[hp].value_counts(normalize=True),
                               "no_persona": humans.g_text_category[~hp].value_counts(normalize=True)}).reindex(TEXT_ORDER).fillna(0)
+    text = O.ans.apply(lambda a: a.get("what_to_solve") or "")
+    no_trace = has & (~O.g_text_category.isin(PERSONA_TEXT_CATEGORIES) | text.str.strip().eq(""))
     dec = O.g_outcome.isin(["won", "lost"])
     won = O.g_outcome.eq("won")
-    return {"share_all_leads": float(X.g_context_persona.notna().mean()), "share_originals": float(has.mean()),
-            "share_human_originals": float(hp.mean()), "by_persona": O.g_context_persona.value_counts().to_dict(),
+    return {"originals": len(O), "persona_originals": int(has.sum()), "share_originals": float(has.mean()),
+            "rows": len(X), "persona_rows": int(X.g_context_persona.notna().sum()),
+            "share_rows": float(X.g_context_persona.notna().mean()),
+            "by_persona": O.g_context_persona.value_counts().to_dict(), "persona_without_text_trace": int(no_trace.sum()),
             "win_rate_persona": float(won[dec & has].mean()), "win_rate_no_persona": float(won[dec & ~has].mean()),
             "decided_persona": int((dec & has).sum()), "regex_dist": dist, "true_dist": true_dist,
             "regex_dist_max_gap": float((dist.persona - dist.no_persona).abs().max())}
@@ -226,7 +225,7 @@ def interaction_stats(X: pd.DataFrame) -> pd.DataFrame:
 # Planted-effect recovery: regress logit(p_close_true) on every planted feature
 # ---------------------------------------------------------------------------------------------
 
-def planted_design(t: dict, X: pd.DataFrame, cfg: "Config") -> tuple[pd.DataFrame, pd.Series, dict]:
+def planted_design(t: dict, X: pd.DataFrame, cfg: Config) -> tuple[pd.DataFrame, pd.Series, dict]:
     """Design matrix of every planted feature for original leads whose true session is recorded (no consent
     decline, no fast-human edit, no duplicate), the logit of p_close_true, and the planted value per column."""
     O = X[~X.is_dup].copy()
@@ -286,7 +285,7 @@ def planted_design(t: dict, X: pd.DataFrame, cfg: "Config") -> tuple[pd.DataFram
     return M, y, planted
 
 
-def planted_recovery(t: dict, X: pd.DataFrame, cfg: "Config") -> tuple[pd.DataFrame, float]:
+def planted_recovery(t: dict, X: pd.DataFrame, cfg: Config) -> tuple[pd.DataFrame, float]:
     """OLS of logit(p_close_true) on the planted features: recovered vs planted coefficient, and residual sd
     (the planted noise sd is ``cfg.noise_sd``)."""
     M, y, planted = planted_design(t, X, cfg)
@@ -302,7 +301,7 @@ def planted_recovery(t: dict, X: pd.DataFrame, cfg: "Config") -> tuple[pd.DataFr
 # All measures, and the ground_truth.md section
 # ---------------------------------------------------------------------------------------------
 
-def measure_v2(d: str, cfg: "Config | None" = None) -> dict:
+def measure_v2(d: str, cfg: Config | None = None) -> dict:
     """Every v2 measurement for data directory ``d`` (planted recovery only when ``cfg`` is given)."""
     t = gt_load(d)
     X = merged(t)
@@ -329,7 +328,7 @@ def _md(df: pd.DataFrame, fmt: str = "{}") -> str:
     return "\n".join(rows)
 
 
-def render_v2_section(d: str, cfg: "Config") -> str:
+def render_v2_section(d: str, cfg: Config) -> str:
     """The "v2 mechanisms" section of ground_truth.md, measured on the data in ``d``."""
     m = measure_v2(d, cfg)
     br, gh, cs, ps, fh, dr = m["bot_rule"], m["ghosting"], m["consent"], m["persona"], m["fast_humans"], m["dropout"]
@@ -346,14 +345,14 @@ def render_v2_section(d: str, cfg: "Config") -> str:
 | 5.4 | Consent declined: {100 * cfg.consent_missing_share:.0f}% of website sessions record no analytics telemetry (columns: {', '.join(CONSENT_COLUMNS)}); flag `consent_declined` | No effect: closing uses the real behaviour; the status-quo tier sees the blank pages count | {cs['declined']} rows, {100 * cs['share_of_web']:.1f}% of website rows |
 | 5.5 | Interactions: LinkedIn lead from a company with 51+ employees; senior title on form D | {cfg.linkedin_51plus_eff:+.1f} and {cfg.senior_guide_eff:+.1f} on close log-odds | Outcome regression on decided originals: {ix.loc['linkedin_x_51plus', 'coef']:+.2f} [{ix.loc['linkedin_x_51plus', 'lo']:+.2f}, {ix.loc['linkedin_x_51plus', 'hi']:+.2f}] (n = {ix.loc['linkedin_x_51plus', 'cell_decided']}) and {ix.loc['senior_x_formD', 'coef']:+.2f} [{ix.loc['senior_x_formD', 'lo']:+.2f}, {ix.loc['senior_x_formD', 'hi']:+.2f}] (n = {ix.loc['senior_x_formD', 'cell_decided']}) |
 | 5.6 | Ghosting follows the status-quo tier: never-contacted log-odds = {cfg.ghost_intercept} + {cfg.ghost_tier_eff} by tier, nothing else; stalls {cfg.stall_by_tier} by tier | Sales neglect of low tiers | Never contacted {100 * gh['never_contacted_share']:.1f}% of originals, by tier {gh['never_by_tier']}; correlation with tier {gh['corr_tier']:.3f}, with true p {gh['corr_p']:.3f} |
-| 5.7 | Hidden persona (nonprofit, job seeker, competitor, agency pitching) on {100 * cfg.persona_share:.0f}% of genuine-human leads, written as one sentence appended to non-vague answers, no regex keyword; `context_persona` | {cfg.persona_eff:+.1f} on close log-odds | {100 * ps['share_all_leads']:.1f}% of all leads, {ps['by_persona']}; decided win rate {100 * ps['win_rate_persona']:.1f}% vs {100 * ps['win_rate_no_persona']:.1f}%; largest regex-category share gap persona vs not {100 * ps['regex_dist_max_gap']:.1f} pp |
+| 5.7 | Hidden persona (nonprofit, job seeker, competitor, agency pitching) on {100 * cfg.persona_share:.0f}% of original leads, assigned only among genuine humans with a neutral or specific answer so that every persona lead's text carries one persona sentence (no regex keyword). The sentence stays in English when a DE/FR/NL answer is replaced by a native one (code-switching). `context_persona` | {cfg.persona_eff:+.1f} on close log-odds | {ps['persona_originals']} of {ps['originals']} original leads ({100 * ps['share_originals']:.1f}%), {ps['by_persona']}; persona leads without a text trace: {ps['persona_without_text_trace']}; decided win rate {100 * ps['win_rate_persona']:.1f}% vs {100 * ps['win_rate_no_persona']:.1f}%; largest regex-category share gap, persona vs other neutral/specific human texts: {100 * ps['regex_dist_max_gap']:.1f} pp |
 | 5.8 | Fast humans: {100 * cfg.fast_human_share:.0f}% of genuine-human website sessions with telemetry record 5-14.9s on the page; flag `fast_human` | None: they keep the close odds of their real session | {fh['fast_humans']} sessions ({100 * fh['share']:.1f}%). Bot rule (headless or under {br['threshold_s']}s): precision {100 * br['precision']:.1f}%, recall {100 * br['recall']:.1f}% ({br['fp']} false positives, {br['fp_fast_humans']} of them fast humans; {br['fn']} missed bots, {br['fn_consent_declined']} of them consent-declined) |
 
 ### Regex text category vs generator category (rows: generator, columns: `emva.features.text_cat`)
 
 {_md(m['regex_confusion'])}
 
-### Persona texts vs other genuine-human texts: regex category shares
+### Persona texts vs other genuine-human neutral/specific texts: regex category shares
 
 {_md(ps['regex_dist'].round(3))}
 

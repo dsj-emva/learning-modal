@@ -31,6 +31,7 @@ sys.path.insert(0, ROOT)
 from ground_truth_report import load as gt_load, measure  # noqa: E402
 from emva.constants import TEST_FROM  # noqa: E402
 from emva.io import flag_bots_and_duplicates, load as emva_load  # noqa: E402
+from emva.labels import LEGACY  # noqa: E402
 from emva.pipeline import build, run  # noqa: E402
 
 PLANTED = ["band=11-50", "band=51-200", "band=201-1000", "band=1000+", "email=free", "text=specific", "text=vague",
@@ -44,7 +45,7 @@ PLANTED = ["band=11-50", "band=51-200", "band=201-1000", "band=1000+", "email=fr
 
 def run_baseline(data_dir: str) -> tuple[dict, pd.Series]:
     """Baseline pipeline (emva.pipeline.run) on ``data_dir``: summary metrics and learned log-odds weights."""
-    r = run(data_dir)
+    r = run(data_dir, labels=LEGACY)   # the frozen baseline labels; horizon is the default since Phase 1
     return r.summary.iloc[0].to_dict(), r.weights["log_odds"]
 
 
@@ -52,7 +53,7 @@ def cleaning_view(data_dir: str) -> dict:
     """Bot/duplicate shares and label counts as the baseline pipeline's cleaning step sees them."""
     L = emva_load(data_dir)
     F = flag_bots_and_duplicates(L)
-    B = build(L)
+    B = build(L, LEGACY)
     return {"rows": len(L), "bot_share": F.bot.mean(), "dup_share": (F.dup & ~F.bot).mean(), "kept": len(B),
             "labelled": int(B.y.notna().sum()), "label_pos_rate": B.y.mean(),
             "test_labelled": int((B.y.notna() & (B.created_at >= TEST_FROM)).sum())}
