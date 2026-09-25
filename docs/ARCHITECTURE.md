@@ -36,7 +36,9 @@ flowchart TD
 | boilerplate | `emva/boilerplate.py` | v2 copy-paste detector: 16 snippets, token-set Jaccard, `BOILERPLATE_SIMILARITY_THRESHOLD` 0.6 (plan 2.5; low recall on paraphrased v2 text, ADR 0011) |
 | design | `emva/design.py` | Legacy `design()`: levels absent from the data make no column; a missing reference level is silently kept (baseline behaviour). v2 `fixed_design()`: exactly the columns declared in `constants.V2_LEVELS` (39), absent level = zero column, undeclared value raises (ADR 0009). `FeatureSpec.design` picks by feature set |
 | fit | `emva/model.py` | `make_lr` is the unfitted estimator, reused by the coefficient bootstrap |
-| value | `emva/value.py` | `DealValueModel`: ridge on log value; lognormal correction exp(sd²/2) with sd estimated from training residuals (plan 2.4), or the baseline's fixed sd (`eval.regression.BASELINE_DEAL_LOG_RESIDUAL_SD`) for `--feature-set legacy`. `deal_value_design` is still data-driven. Capping/compression and `value_at_submit`/`value_at_close` are Phase 3 |
+| value | `emva/value.py` | `DealValueModel`: ridge on log value; lognormal correction exp(sd²/2) with sd estimated from training residuals (plan 2.4), or the baseline's fixed sd (`eval.regression.BASELINE_DEAL_LOG_RESIDUAL_SD`) for `--feature-set legacy`. Deal-value design: `deal_value_design` (legacy, data-driven) or `fixed_deal_value_design` (v2, every level of `constants.DEAL_VALUE_LEVELS`, unknown level raises; `FeatureSpec.value_design`). `value_at_close` (plan 3.3) |
+| value transform | `emva/value_transform.py` | `ValueTransform` (cap percentile, compression, floor, tiers) `.fit(training values)` -> `FittedValueTransform.apply`; the pipeline writes `value_at_submit` with it in horizon mode (Phase 3, ADR 0012 proposed default) |
+| tROAS | `emva/troas.py` | `python -m emva.troas`: conversions per campaign per 30 days / week at submit and close stage vs Google (30 / 30 days) and Meta (50 / week) thresholds (verify) |
 | orchestration | `emva/pipeline.py` | `PipelineResult` (X, masks, design, weights, summary, labels, messages); `scores()` adds horizon label columns only in horizon mode (ADR 0007) |
 | CLI | `emva/__main__.py`, `emva/cli.py` | `cli.py` holds the label flags and `--feature-set`, shared with the report and `eval.collinearity` |
 | context | `emva/context/` | `agent.py` (Phase 0 move of `baseline/context_agent.py`: requests-based Haiku call, sha256 cache, logged retries), `contract.py` (current implicit JSON shape), `features.py` (clip + logit). Phase 6 replaces all three |
@@ -90,6 +92,7 @@ The only place that may read ground truth (ground rule 2), and even here only tw
 | `collinearity.py` | pipeline design | Plan 2.7: pairwise \|corr\| of design columns on the training rows; `python -m emva.eval.collinearity` exits 1 on any pair > 0.95 (strict). The report prints the same check as a PASS/FAIL section and exits 1 only with `--strict` (ADRs 0009, 0011) |
 | `feature_selection.py` | data CSVs (via the pipeline) | Plan 2.6: coefficient-bootstrap CIs (≥ 200 refits) for `c_budget`, `c_timeline`, `ip_type`, `edits_1_4` on the full v2 candidate design; evidence for `features.V2_DROPPED` |
 | `phase2_study.py` | data CSVs, **`ground_truth_labels.csv`** | Phase 2 evidence: name-match count and correctness, boilerplate precision/recall, lead-ads buckets, before/after weights and ties, collinearity table, paired v2-vs-legacy AUC, residual sd. Run as a script only |
+| `value_report.py` | pipeline result, leads | Phase 3: value-scale table per transform (p1/p50/p90/p99/max, max/median, top-1% share, tie-averaged top-20% revenue vs the baseline's, value / revenue) per test set and over all scored leads, the plan 3.2 PASS/fail table, and click-ID coverage per paid channel (plan 3.5). Called from `report.py` |
 | `rolling.py`, `ceiling.py` | (Phase 4, planned) | rolling-origin splits; oracle-feature ceiling (reads ground truth) |
 
 ## 4. The data generator (`scripts/`)
@@ -154,7 +157,7 @@ From `REBUILD_PLAN.md`, with state on 2026-09-25:
 flowchart LR
     P0["Phase 0<br/>freeze + instrument<br/>merged"] --> P1["Phase 1<br/>labels<br/>merged"]
     P1 --> P2["Phase 2<br/>features + leakage<br/>ready for review"]
-    P2 --> P3["Phase 3<br/>value layer<br/>pending"]
+    P2 --> P3["Phase 3<br/>value layer<br/>ready for review"]
     P2 --> P4["Phase 4<br/>evaluation hardening<br/>pending"]
     P0 --> P51["Phase 5.1<br/>generator v1 rewrite<br/>merged"]
     P51 --> P5["Phase 5.2-5.8<br/>generator v2<br/>in progress"]
