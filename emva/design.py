@@ -1,17 +1,17 @@
-"""Dummy-coded design matrix (``baseline/emva_score.py::design``)."""
+"""Dummy-coded design matrix: data-driven for the legacy set (``baseline/emva_score.py::design``), fixed for v2."""
 from __future__ import annotations
 
 from collections.abc import Mapping
 
 import pandas as pd
 
-from emva.constants import CATS
+from emva.constants import CATS, V2_LEVELS
 from emva.features import FeatureSet, feature_cats
 
 
 def design(X: pd.DataFrame, extra: pd.Series | pd.DataFrame | None = None,
            cats: Mapping[str, str] = CATS) -> pd.DataFrame:
-    """One-hot encode every feature in ``cats`` (default: the legacy set), dropping each feature's reference level.
+    """Legacy (data-driven) design: one-hot encode every feature in ``cats``, dropping each reference level.
 
     Column names are ``<feature>=<level>``. Levels absent from ``X`` produce no column,
     and a reference level absent from ``X`` is silently not dropped (baseline behaviour).
@@ -27,6 +27,41 @@ def design(X: pd.DataFrame, extra: pd.Series | pd.DataFrame | None = None,
     return D
 
 
+def fixed_columns(cats: Mapping[str, str], levels: Mapping[str, tuple[str, ...]] = V2_LEVELS) -> list[str]:
+    """The design columns ``fixed_design`` emits: ``<feature>=<level>`` for every non-reference level, in spec order.
+
+    Raises ``ValueError`` if a feature has no level list or its reference level is not in it.
+    """
+    cols = []
+    for c, ref in cats.items():
+        if c not in levels or ref not in levels[c]:
+            raise ValueError(f"feature {c!r}: no level list containing its reference level {ref!r}")
+        cols += [f"{c}={lvl}" for lvl in levels[c] if lvl != ref]
+    return cols
+
+
+def fixed_design(X: pd.DataFrame, cats: Mapping[str, str],
+                 levels: Mapping[str, tuple[str, ...]] = V2_LEVELS) -> pd.DataFrame:
+    """Fixed-schema design: exactly ``fixed_columns(cats, levels)``, whatever levels occur in ``X``.
+
+    A level absent from ``X`` gives an all-zero column, so one row gets the full column set. A value
+    not in the feature's level list raises ``ValueError`` naming the feature and the values.
+    """
+    cols = fixed_columns(cats, levels)
+    data: dict[str, pd.Series] = {}
+    for c, ref in cats.items():
+        values = X[c].astype(str)
+        unknown = sorted(set(values) - set(levels[c]))
+        if unknown:
+            raise ValueError(f"feature {c!r} has values outside its declared levels {list(levels[c])}: {unknown[:5]}")
+        for lvl in levels[c]:
+            if lvl != ref:
+                data[f"{c}={lvl}"] = values.eq(lvl).astype(float)
+    return pd.DataFrame(data, index=X.index, columns=cols)
+
+
 def feature_design(X: pd.DataFrame, feature_set: FeatureSet) -> pd.DataFrame:
-    """The model design for ``feature_set``: ``design(X)`` for legacy (exactly the baseline), ``CATS_V2`` for v2."""
-    return design(X, cats=feature_cats(feature_set))
+    """The model design: ``design(X)`` for legacy (exactly the baseline), ``fixed_design`` over ``CATS_V2`` for v2."""
+    if FeatureSet(feature_set) is FeatureSet.LEGACY:
+        return design(X)
+    return fixed_design(X, feature_cats(feature_set))

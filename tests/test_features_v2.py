@@ -5,8 +5,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from emva.constants import CATS_V2_CANDIDATES, MISSING
-from emva.design import feature_design
+from emva.constants import CATS, CATS_V2_CANDIDATES, MISSING, V2_LEVELS
+from emva.design import design, feature_design, fixed_columns, fixed_design
+from emva.pipeline import run
+
+from conftest import REPO
 from emva.features import (
     BEHAVIOURAL_FEATURES,
     CATS_V2,
@@ -20,11 +23,12 @@ from emva.features import (
 )
 
 REFERENCE = {f: CATS_V2_CANDIDATES[f] for f in BEHAVIOURAL_FEATURES}
+V2_DESIGN_COLUMNS = 39  # sum over CATS_V2 of (declared levels - 1)
 
 
 def _lead(**kw) -> dict:
     """A website lead with every behavioural input present and domain enrichment."""
-    base = dict(utm_medium="cpc", utm_source="google", email_l="a@acme.example", a_what_to_solve="x",
+    base = dict(form_variant="B", utm_medium="cpc", utm_source="google", email_l="a@acme.example", a_what_to_solve="x",
                 a_job_title=None, a_company_size=None, enrichment_source="domain", en_employee_band="51-200",
                 en_monthly_ad_spend_band="£5k-£25k", en_crm_platform="HubSpot", en_is_hiring=True,
                 en_sector="Software", time_on_page_s=120.0, hesitation_ms=1000.0, sessions_before_convert=1.0,
@@ -150,7 +154,7 @@ def test_feature_sets_and_2_6_drop():
 def test_v2_design_columns_come_from_the_spec_not_the_data(v1_horizon):
     X, D, tr = v1_horizon.X, v1_horizon.design, v1_horizon.train
     assert v1_horizon.features is FeatureSet.V2
-    assert list(D.columns) == list(feature_design(X, FeatureSet.V2).columns)  # no per-dataset pruning
+    assert list(D.columns) == fixed_columns(CATS_V2) and D.shape[1] == V2_DESIGN_COLUMNS  # from the spec
     assert [c for c in D.columns if c.endswith("=missing")] == ["band=missing"]
     assert "session_missing=yes" in D and "enrichment_missing=yes" in D
     assert not any(c.split("=", 1)[0] in V2_DROPPED or c.startswith("no_company") for c in D.columns)
@@ -173,3 +177,45 @@ def test_equal_coefficients_on_v1(v1_horizon):
 def test_v2_residual_sd_is_estimated(v1_horizon, v1_result):
     assert v1_horizon.deal_value.estimated and not v1_result.deal_value.estimated
     assert 0.3 < v1_horizon.deal_value.log_residual_sd < 0.7
+
+
+def test_level_lists_cover_every_candidate_with_its_reference_first():
+    assert set(V2_LEVELS) == set(CATS_V2_CANDIDATES)
+    assert all(V2_LEVELS[f][0] == ref and len(set(V2_LEVELS[f])) == len(V2_LEVELS[f])
+               for f, ref in CATS_V2_CANDIDATES.items())
+    assert len(fixed_columns(CATS_V2)) == V2_DESIGN_COLUMNS
+
+
+def test_one_row_frame_produces_the_full_column_set():
+    X = _features(_lead())
+    D = fixed_design(X, CATS_V2)
+    assert list(D.columns) == fixed_columns(CATS_V2) and D.shape == (1, V2_DESIGN_COLUMNS)
+    assert D.loc[0, "channel=meta"] == 0.0 and D.loc[0, "time_on_page=60-300s"] == 1.0  # absent level -> zero column
+    assert D.loc[0, "session_missing=yes"] == 0.0 and set(D.values.ravel()) <= {0.0, 1.0}
+    assert list(feature_design(X, FeatureSet.V2).columns) == list(D.columns)
+
+
+def test_unseen_level_raises():
+    X = _features(_lead())
+    X.loc[0, "form_variant"] = "E"
+    with pytest.raises(ValueError, match=r"feature 'form_variant' has values outside its declared levels .*'E'"):
+        fixed_design(X, CATS_V2)
+
+
+def test_feature_without_a_level_list_is_refused():
+    with pytest.raises(ValueError, match="no level list"):
+        fixed_columns({"new_feature": "x"})
+
+
+def test_legacy_design_stays_data_driven(v1_result):
+    X = v1_result.X
+    assert list(feature_design(X, FeatureSet.LEGACY).columns) == list(design(X).columns)
+    assert list(design(X).columns) == list(v1_result.design.columns)
+    assert len(design(X.iloc[:1]).columns) < len(design(X).columns)  # one row: only the levels it has
+    assert CATS == feature_cats(FeatureSet.LEGACY)
+
+
+def test_no_equal_coefficients_on_data_v2():
+    """ADR 0011: the 'no identical coefficients' criterion is evaluated on data/v2."""
+    w = run(REPO / "data" / "v2").weights.log_odds
+    assert [(a, b) for a, b in combinations(w.index, 2) if w[a] == w[b]] == []

@@ -18,7 +18,7 @@ import pandas as pd
 
 from emva.cli import add_label_arguments, label_config
 from emva.constants import CATS_V2_CANDIDATES, TEST_FROM
-from emva.design import design
+from emva.design import fixed_columns, fixed_design
 from emva.eval.bootstrap import N_RESAMPLES, SEED, coef_bootstrap
 from emva.eval.report import md_table
 from emva.features import FeatureSet
@@ -47,13 +47,13 @@ def selection_table(data: str | Path, n_refits: int = N_RESAMPLES, seed: int = S
         raise ValueError(f"need at least {MIN_REFITS} refits, got {n_refits}")
     X = build(load(data), labels, FeatureSet.V2)
     tr, _ = split_masks(X, TEST_FROM, labels.eligible(X))
-    D = design(X, cats=CATS_V2_CANDIDATES)
+    D = fixed_design(X, CATS_V2_CANDIDATES)
     cis = dict(zip(D.columns, coef_bootstrap(D[tr].values, X.y[tr].values, _lr_coef, n_resamples=n_refits, seed=seed),
                    strict=True))
     rows, keep = [], {}
     for feat in candidates:
         kept_any = False
-        for col in design(X, cats={feat: CATS_V2_CANDIDATES[feat]}).columns:
+        for col in fixed_columns({feat: CATS_V2_CANDIDATES[feat]}):
             n_train = int(X.loc[tr, feat].astype(str).eq(col.split("=", 1)[1]).sum())
             ci = cis[col]
             excludes = ci.lo > 0 or ci.hi < 0

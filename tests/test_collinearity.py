@@ -66,3 +66,13 @@ def test_cli_exits_nonzero_and_lists_the_pair_on_v1(feature_set, pair):
                            "--feature-set", feature_set], cwd=REPO, capture_output=True, text=True)
     assert proc.returncode == 1, proc.stdout + proc.stderr
     assert "FAIL (1 pairs" in proc.stdout and f"  - {pair}: +1.000" in proc.stdout
+
+
+@pytest.mark.parametrize("labels", ["horizon", "legacy"])
+def test_v2_features_pass_strict_on_data_v2(labels):
+    """ADR 0011: the tie and collinearity criteria are evaluated on data/v2, where consent-declined leads separate
+    session_missing from the lead-ads channel."""
+    proc = subprocess.run([sys.executable, "-m", "emva.eval.collinearity", "--data", str(REPO / "data" / "v2"),
+                           "--label-mode", labels], cwd=REPO, capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "- PASS: max |corr| = 0.8" in proc.stdout

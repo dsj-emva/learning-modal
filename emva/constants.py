@@ -85,6 +85,34 @@ CATS_V2_CANDIDATES: dict[str, str] = {
     "c_budget": "not_asked", "c_timeline": "not_asked", "edits_1_4": "no",
 }
 
+# Complete level list of every v2 candidate feature, reference level first. The v2 design emits exactly one
+# column per non-reference level listed here, whatever occurs in the data (absent level = all-zero column),
+# and refuses a value not listed (ADR 0009). Budget and timeline levels are the form's answer options.
+V2_LEVELS: dict[str, tuple[str, ...]] = {
+    "channel": ("google", "meta", "meta_leadads", "linkedin", "chatgpt", "organic_direct"),
+    "form_variant": ("A", "B", "C", "D"),
+    "session_missing": ("no", "yes"),
+    "enrichment_missing": ("no", "yes"),
+    "band": ("1-10", "11-50", "51-200", "201-1000", "1000+", MISSING),
+    "email": ("business", "free"),
+    "text": ("neutral", "copy_paste", "vague", "specific"),
+    "seniority": ("junior/ic", "student", "senior", "mid", "not_asked/blank"),
+    "spend": ("under £5k", "none", "£5k-£25k", "£25k-£100k", "£100k+"),
+    "crm": ("other", "hubspot_sf"),
+    "hiring": ("not_hiring", "hiring"),
+    "time_on_page": ("15-60s", "60-300s", "300-600s", ">600s"),
+    "hesitation_90s": ("no", "yes"),
+    "sessions_3plus": ("no", "yes"),
+    "viewed_pricing": ("no", "yes"),
+    "search_term": ("generic", "brand", "not_google"),
+    "business_hours": ("outside", "wkday_9-18"),
+    "ip_country": ("match", "mismatch"),
+    "ip_type": ("residential", "dc"),
+    "c_budget": ("not_asked", "Under £5k", "£5k-£20k", "£20k-£50k", "£50k+"),
+    "c_timeline": ("not_asked", "This month", "This quarter", "Next 6 months", "Just researching"),
+    "edits_1_4": ("no", "yes"),
+}
+
 # Company-name enrichment (plan 2.3): trailing tokens stripped after normalisation. The plan's list plus
 # "sas", a legal form companies.csv uses that the plan's list does not name.
 LEGAL_SUFFIXES: frozenset[str] = frozenset({"ltd", "limited", "inc", "llc", "gmbh", "bv", "sa", "plc", "co", "sas"})
