@@ -191,18 +191,11 @@ def test_ground_truth_md_written_from_output(run_a, g):
     assert f"{int((G.outcome == 'never_contacted').sum())} leads (plus duplicates" in md
 
 
-@pytest.mark.parametrize("option", sorted(gen.V2_OPTIONS))
-def test_v2_options_refused_until_implemented(option):
-    off = gen.V2_OPTIONS[option]
-    on = (not off) if isinstance(off, bool) else 0.1
-    with pytest.raises(NotImplementedError):
-        gen.generate(gen.Config(n=100, **{option: on}))
-
-
 def test_v2_options_cover_all_seven_phase5_tasks():
-    assert sorted(gen.V2_OPTIONS) == sorted(["text_paraphrase", "enrichment_dropout", "consent_missing_share",
-                                             "interactions", "ghosting_follows_tier", "context_only_signal",
-                                             "fast_human_share"])
+    """Phase 5.2-5.8 are implemented (tests/test_generate_data_v2.py); every option is off by default."""
+    tasks = {f.metadata["v2"] for f in gen.fields(gen.Config) if "v2" in f.metadata}
+    assert tasks == {"5.2", "5.3", "5.4", "5.5", "5.6", "5.7", "5.8"}
+    assert gen.v2_on(gen.Config()) == []
 
 
 # ---------------------------------------------------------------- review fixes

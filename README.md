@@ -9,6 +9,7 @@ emva/         the package: io, labels, features, design, model, value, pipeline,
 scripts/      check_baseline.py (make baseline), run_experiments.py (make experiment)
 tests/        pytest unit + integration tests
 data/v1/      synthetic data (ground_truth* files are for emva/eval/ only)
+data/v2/      generator v2 output (Phase 5): same schema, messier text, dropout, missingness, hidden persona
 ```
 
 ## Setup
@@ -56,6 +57,27 @@ design's columns are fixed by the spec. `--feature-set legacy` is the baseline's
 checks: `python -m emva.eval.phase2_study`, `python -m emva.eval.feature_selection`,
 `python -m emva.eval.collinearity` (exits 1 on |corr| > 0.95; `make report` runs it too and exits 1
 on data/v1, where `session_missing` equals `channel=meta_leadads`; see reports/phase2.md).
+
+## Synthetic data v2
+
+`scripts/generate_data_v2.py` is the v1 generator with the Phase 5.2-5.8 options on: Claude Haiku paraphrases
+of every free-text template (cached in `scripts/paraphrase_cache.json`), typos, DE/FR/NL language mixing, a wide
+boilerplate pool, 30% enrichment-domain dropout with noisy typed company names, 15% consent-declined telemetry,
+two interaction effects, ghosting that follows the status-quo tier, a hidden context-only persona and 2% fast
+humans. `data/v2/ground_truth.md` lists every mechanism with its planted and measured size; `reports/phase5.md`
+has the acceptance numbers.
+
+```sh
+.venv/bin/python scripts/generate_data_v2.py                   # rewrites data/v2 (needs the complete paraphrase cache)
+.venv/bin/python scripts/generate_data_v2.py --no-paraphrase --out DIR
+.venv/bin/python scripts/paraphrase_templates.py --check       # which templates are missing from the cache
+.venv/bin/python scripts/paraphrase_templates.py --populate    # fill them (ANTHROPIC_API_KEY, optional
+                                                               # ANTHROPIC_WORKSPACE_ID, from env or repo-root .env)
+.venv/bin/python scripts/v2_checks.py --data data/v2 --ref data/v1                   # regex, bot rule, shares, ghosting
+.venv/bin/python scripts/compare_to_v1.py --gen data/v2 --gen-label v2 --md OUT.md   # fidelity tables v2 vs v1
+```
+
+With every option off the generator's v1 output is byte-identical (pinned in `tests/test_generate_data_v2.py`).
 
 The context agent (`python -m emva.context.agent`, needs `ANTHROPIC_API_KEY`) writes a CSV that
 `python -m emva --context FILE` uses for the context-layer ablation.
