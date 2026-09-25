@@ -32,8 +32,9 @@ behind a frozen baseline instead of rewriting, so every change is measured again
    (`scripts/generate_data_v*.py` and its measurement scripts). Nothing else under `emva/` may import,
    read or hard-code anything from them.
    **The grep rule:** `grep -rn "0.45\|ground_truth" emva/` must return only `emva/eval/` lines
-   (`tests/test_label_study.py::test_ground_rule_2_grep`). On `main` the one known exception is
-   `emva/value.py:19` (removed by Phase 2, plan 2.4).
+   (`tests/test_label_study.py::test_ground_rule_2_grep`). There is no exception outside `emva/eval/`
+   since Phase 2 (plan 2.4): the baseline's 0.45 residual sd lives only in `emva/eval/regression.py`
+   (`BASELINE_DEAL_LOG_RESIDUAL_SD`), used by `--feature-set legacy` to reproduce the baseline.
 3. **Standard report.** Every task ends with `make report` (`python -m emva.eval.report`) pasted into
    `reports/<task>.md`: baseline vs candidate vs status quo, AUC with bootstrap CI, Brier, top-20% wins and
    revenue (by p and by p×value), decile calibration, AUC by month, value scale.
@@ -85,7 +86,10 @@ In a worktree there is no `.venv`: pass the main checkout's interpreter, quoted,
 | `--horizon-days N` | H, default 120 (horizon mode only; with legacy it is a usage error) |
 | `--include-ghosted` | horizon: count leads still New at H as 0 instead of excluding them |
 | `--stalled-as-lost` | horizon: count stalled open deals as 0 instead of censoring them |
-| `--feature-set {legacy,v2}` | **arriving with Phase 2** (`phase2-features`): default `v2`; `legacy` + `--label-mode legacy` stays byte-identical to `baseline/` |
+| `--feature-set {legacy,v2}` | `v2` (default, Phase 2): `session_missing` / `enrichment_missing` indicators, name enrichment, boilerplate similarity, fixed 39-column design from `V2_LEVELS` (ADR 0009), residual sd estimated. `legacy`: baseline features; with `--label-mode legacy` byte-identical to `baseline/` |
+
+The report also takes `--strict` (exit 1 when the candidate design fails the collinearity check;
+`python -m emva.eval.collinearity` is always strict).
 
 The same label flags work on `python -m emva.eval.report`, where they change only the candidate.
 Other entry points: `python -m emva.eval.label_study`, `python -m emva.eval.ground_truth_reference`
@@ -126,14 +130,16 @@ data/v1/             synthetic data + ground truth (eval/generator only). data/v
 emva/constants.py    every constant (AS_OF, TEST_FROM, HORIZON_DAYS, CATS reference levels, patterns)
 emva/io.py           load CSVs, normalise CRM stages, join enrichment, won_at/first_contact_at; bot + duplicate cleaning
 emva/labels.py       LabelMode/LabelConfig, legacy label, label_source, won_within_h, horizon_label, maturity, split
-emva/features.py     bucketed features (text regex, seniority, channel, behaviour buckets)
-emva/design.py       dummy matrix, reference levels dropped
+emva/features.py     FeatureSet; legacy and v2 bucketed features (indicators, name enrichment, boilerplate text)
+emva/boilerplate.py  boilerplate snippets + token-set Jaccard detector (v2 text=copy_paste)
+emva/design.py       legacy data-driven dummies; v2 fixed_design from V2_LEVELS (unknown level raises)
 emva/model.py        L2 logistic regression, predict, scorecard (weights.csv)
 emva/value.py        ridge deal-value model, expected value, realised revenue
 emva/pipeline.py     run(): load -> clean -> label -> features -> design -> fit -> value -> summary
 emva/cli.py          label flags shared by python -m emva and the report;  emva/__main__.py: the CLI
 emva/context/        agent.py (Haiku call + cache), contract.py (JSON shape), features.py (context_logit)
-emva/eval/           bootstrap, metrics, regression, status_quo, report, label_study, ground_truth_reference
+emva/eval/           bootstrap, metrics, regression, status_quo, report, label_study, ground_truth_reference,
+                     collinearity, feature_selection, phase2_study
 scripts/             check_baseline (make baseline), run_experiments, generate_data_v1, ground_truth_report, compare_to_v1
 tests/               pytest, one file per module + integration; conftest runs v1 in legacy and horizon mode
 reports/             one write-up per task; docs/ context layer (this set of files)
@@ -164,7 +170,7 @@ reports/             one write-up per task; docs/ context layer (this set of fil
 | 0 freeze and instrument | merged (15f90fc) | `phase0-freeze-instrument` | `reports/phase0.md` |
 | 5.1 generator v1 rewrite | merged (ed3f54b) | `phase5-generator-v1` | `reports/phase5-1.md` |
 | 1 labels | merged (92168cf) | `phase1-labels` | `reports/phase1.md` |
-| 2 features and leakage | in progress, fix round after ruling (ADR 0009) | `phase2-features` | `reports/phase2.md` |
+| 2 features and leakage | ready for review (ADRs 0009, 0011) | `phase2-features` | `reports/phase2.md` |
 | 5.2-5.8 generator v2 | merged (01c56f4) | `phase5-generator-v2` | `reports/phase5.md` |
 | 3 value layer, 4 evaluation hardening | pending (need Phase 2) | | |
 | 6 context agent v2 | pending (needs 2 and 5) | | |

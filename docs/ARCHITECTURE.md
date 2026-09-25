@@ -2,13 +2,13 @@
 
 How data moves through EMVA, which module owns each step, where ground truth is allowed to flow, and
 how the phases depend on each other. Vocabulary is defined in `docs/CONTEXT.md`; rulings in
-`docs/adr/`. State as of `main` 92168cf (Phase 1 merged), 2026-09-25, with the in-flight Phase 2 and
-Phase 5 v2 branches described where they change things.
+`docs/adr/`. State as of `main` e98a586 (Phases 0, 1, 5.1, 5.2-5.8 merged), 2026-09-25, plus Phase 2
+as on `phase2-features` (ready for review).
 
 ## 1. The scoring pipeline
 
-`emva.pipeline.run(data, margin, context, test_from, labels)` is the whole pipeline. With
-`labels=LEGACY` it reproduces `baseline/emva_score.py::main` step for step and byte for byte.
+`emva.pipeline.run(data, margin, context, test_from, labels, features)` is the whole pipeline. With
+`labels=LEGACY, features=FeatureSet.LEGACY` it reproduces `baseline/emva_score.py::main` step for step and byte for byte.
 
 ```mermaid
 flowchart TD
@@ -16,9 +16,9 @@ flowchart TD
     LOAD["io.load<br/>normalise CRM stages (STAGE), final_stage, last_change,<br/>deal_value, won_at, first_contact_at,<br/>a_&lt;answer&gt; columns, co_&lt;enrichment&gt; join by domain"] --> CLEAN
     CLEAN["io.clean = flag_bots_and_duplicates + drop<br/>bot: headless UA or time_on_page_s &lt; 15<br/>dup: not the first submission per normalised email"] --> LABELS
     LABELS["labels.assign_labels(LabelConfig)<br/>legacy: y = label()<br/>horizon: label_source, matured_at, won_within_h, y = horizon_label()"] --> FEAT
-    FEAT["features.add_features<br/>channel, band, email, text, seniority, spend, crm, hiring,<br/>behaviour buckets, search_term, ip, c_budget/c_timeline ..."] --> SPLIT
+    FEAT["features.featurise (legacy add_features / v2 add_features_v2)<br/>channel, band, email, text, seniority, spend, crm, hiring,<br/>behaviour buckets, search_term, ip, c_budget/c_timeline ..."] --> SPLIT
     SPLIT["labels.split_masks(test_from, LabelConfig.eligible)<br/>train: created &lt; 2026-05-01, test: on or after<br/>horizon: mature rows only"] --> DESIGN
-    DESIGN["design.design<br/>one-hot per CATS feature, reference level dropped"] --> FIT
+    DESIGN["design.feature_design<br/>legacy: one-hot per CATS feature (data-driven)<br/>v2: fixed_design over V2_LEVELS (39 columns)"] --> FIT
     FIT["model.fit_lr (L2 LR, C=0.5) -> model.predict -> p_formula<br/>model.scorecard -> weights.csv"] --> VALUE
     VALUE["value: deal_value_design -> fit_deal_value (ridge on log value, train wins)<br/>predict_deal_value -> deal_value_hat<br/>expected_value = p × deal_value_hat × margin"] --> OUT
     CTX["context agent CSV (optional --context)<br/>context.features.context_logit"] -.-> FIT
@@ -31,12 +31,13 @@ flowchart TD
 | load | `emva/io.py::load` | Raises on a lead with two Won rows. Enrichment columns are NaN when the domain is not in `companies.csv` |
 | clean | `emva/io.py::clean` | Bots and duplicates are dropped before labelling; 9,311 of 10,000 v1 leads remain |
 | labels | `emva/labels.py` | Two definitions side by side; see section 2 |
-| features | `emva/features.py` | `text_cat` (regex + three copy-paste prefixes + `VAGUE` list), `seniority` (title regex), `channel` (UTM rules) |
-| design | `emva/design.py` | Levels absent from the data make no column; a missing reference level is silently kept (baseline behaviour) |
+| features | `emva/features.py` | `FeatureSet` switch (section 2). Legacy `add_features`: `text_cat` (regex + three copy-paste prefixes + `VAGUE` list), `seniority` (title regex), `channel` (UTM rules). v2 `add_features_v2`: `session_absent` / `session_missing`, `enrichment_missing`, `text_cat_v2`; `V2_DROPPED` (plan 2.6) |
+| boilerplate | `emva/boilerplate.py` | v2 copy-paste detector: 16 snippets, token-set Jaccard, `BOILERPLATE_SIMILARITY_THRESHOLD` 0.6 (plan 2.5; low recall on paraphrased v2 text, ADR 0011) |
+| design | `emva/design.py` | Legacy `design()`: levels absent from the data make no column; a missing reference level is silently kept (baseline behaviour). v2 `fixed_design()`: exactly the columns declared in `constants.V2_LEVELS` (39), absent level = zero column, undeclared value raises (ADR 0009). `feature_design()` picks by feature set |
 | fit | `emva/model.py` | `make_lr` is the unfitted estimator, reused by the coefficient bootstrap |
-| value | `emva/value.py` | `DEAL_LOG_RESIDUAL_SD_FROM_GENERATOR = 0.45` is the ground-rule-2 violation removed by Phase 2 (plan 2.4). Capping/compression and `value_at_submit`/`value_at_close` are Phase 3 |
+| value | `emva/value.py` | `DealValueModel`: ridge on log value; lognormal correction exp(sd²/2) with sd estimated from training residuals (plan 2.4), or the baseline's fixed sd (`eval.regression.BASELINE_DEAL_LOG_RESIDUAL_SD`) for `--feature-set legacy`. `deal_value_design` is still data-driven. Capping/compression and `value_at_submit`/`value_at_close` are Phase 3 |
 | orchestration | `emva/pipeline.py` | `PipelineResult` (X, masks, design, weights, summary, labels, messages); `scores()` adds horizon label columns only in horizon mode (ADR 0007) |
-| CLI | `emva/__main__.py`, `emva/cli.py` | `cli.py` holds the label flags shared with the report |
+| CLI | `emva/__main__.py`, `emva/cli.py` | `cli.py` holds the label flags and `--feature-set`, shared with the report and `eval.collinearity` |
 | context | `emva/context/` | `agent.py` (Phase 0 move of `baseline/context_agent.py`: requests-based Haiku call, sha256 cache, logged retries), `contract.py` (current implicit JSON shape), `features.py` (clip + logit). Phase 6 replaces all three |
 
 `emva/pipeline.py` imports `emva.eval.metrics.summary`; `metrics.py` is kept apart from `report.py` to
@@ -56,23 +57,25 @@ avoid a pipeline ↔ report import cycle. Nothing in `emva/` outside `eval/` imp
 - `LabelConfig` rejects the horizon-only flags in legacy mode; `cli.label_config` rejects an explicit
   `--horizon-days` with legacy.
 
-**Feature set** (`--feature-set`, `emva.features.FeatureSet`, default `v2`; **in progress on
-`phase2-features`, not on `main`**):
+**Feature set** (`--feature-set`, `emva.features.FeatureSet`, default `v2`; Phase 2, on
+`phase2-features` until merged):
 
 - `legacy`: `add_features` as above (missing inputs fall into reference levels, `no_company`, three-prefix
-  copy-paste rule, fixed 0.45 residual sd; that constant moves to `emva/eval/regression.py` so the grep
-  rule holds).
+  copy-paste rule), data-driven `design()`, fixed 0.45 residual sd (the constant lives in
+  `emva/eval/regression.py` so the grep rule holds).
 - `v2`: `add_features_v2`: company-name enrichment (`en_<column>`, domain then normalised-name match),
   `enrichment_missing` replaces `no_company`, `session_missing` indicator for absent telemetry with the
   seven behavioural features left at reference (ADR 0009), `band` keeps its own `missing` level,
   boilerplate detection by token-set Jaccard ≥ 0.6 (`emva/boilerplate.py`), `c_budget`, `c_timeline`,
-  `ip_type`, `edits_1_4` dropped (plan 2.6), residual sd estimated from training residuals.
+  `ip_type`, `edits_1_4` dropped (plan 2.6), residual sd estimated from training residuals. The design is
+  `fixed_design` over the declared `V2_LEVELS`: always the same 39 columns.
 - `--label-mode legacy --feature-set legacy` must stay byte-identical to `baseline/`; `make baseline`
   runs exactly that.
 
 ## 3. The evaluation package (`emva/eval/`)
 
-The only place that may read ground truth (ground rule 2), and even here only one module does on `main`.
+The only place that may read ground truth (ground rule 2), and even here only two modules do
+(`ground_truth_reference.py`, and `phase2_study.py` from Phase 2); both run as scripts only.
 
 | file | reads | purpose |
 |---|---|---|
@@ -83,7 +86,9 @@ The only place that may read ground truth (ground rule 2), and even here only on
 | `report.py` | data CSVs, runs `baseline/emva_score.py` in a temp dir | The standard report; `FROZEN_HORIZON` fixes test definition (b); `frozen_test_labels` builds both test sets independent of the candidate's flags |
 | `label_study.py` | data CSVs (via the pipeline) | Phase 1: size weights with coefficient CIs, flag combinations, horizon sensitivity |
 | `ground_truth_reference.py` | **`ground_truth_labels.csv`, `ground_truth.md`** | Phase 1 reference numbers (39.4% true 201-1000 rate, R1 true 120-day effects). Run as a script only; a test asserts nothing imports it |
-| `collinearity.py`, `feature_selection.py`, `phase2_study.py` | (Phase 2 branch) | 2.7 collinearity check (fails on any pair with \|corr\| > 0.95), 2.6 coefficient-bootstrap selection, Phase 2 study (uses ground truth for match/boilerplate precision) |
+| `collinearity.py` | pipeline design | Plan 2.7: pairwise \|corr\| of design columns on the training rows; `python -m emva.eval.collinearity` exits 1 on any pair > 0.95 (strict). The report prints the same check as a PASS/FAIL section and exits 1 only with `--strict` (ADRs 0009, 0011) |
+| `feature_selection.py` | data CSVs (via the pipeline) | Plan 2.6: coefficient-bootstrap CIs (≥ 200 refits) for `c_budget`, `c_timeline`, `ip_type`, `edits_1_4` on the full v2 candidate design; evidence for `features.V2_DROPPED` |
+| `phase2_study.py` | data CSVs, **`ground_truth_labels.csv`** | Phase 2 evidence: name-match count and correctness, boilerplate precision/recall, lead-ads buckets, before/after weights and ties, collinearity table, paired v2-vs-legacy AUC, residual sd. Run as a script only |
 | `rolling.py`, `ceiling.py` | (Phase 4, planned) | rolling-origin splits; oracle-feature ceiling (reads ground truth) |
 
 ## 4. The data generator (`scripts/`)
@@ -147,7 +152,7 @@ From `REBUILD_PLAN.md`, with state on 2026-09-25:
 ```mermaid
 flowchart LR
     P0["Phase 0<br/>freeze + instrument<br/>merged"] --> P1["Phase 1<br/>labels<br/>merged"]
-    P1 --> P2["Phase 2<br/>features + leakage<br/>in progress"]
+    P1 --> P2["Phase 2<br/>features + leakage<br/>ready for review"]
     P2 --> P3["Phase 3<br/>value layer<br/>pending"]
     P2 --> P4["Phase 4<br/>evaluation hardening<br/>pending"]
     P0 --> P51["Phase 5.1<br/>generator v1 rewrite<br/>merged"]

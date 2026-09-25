@@ -18,11 +18,14 @@ wins and this file is wrong: fix it in the same PR. State: `main` 92168cf, 2026-
 - **Scored leads**: leads left after bot and duplicate removal (9,311 on v1).
 - **Enrichment**: the `companies.csv` row joined by normalised company domain, as `co_sector`,
   `co_employee_band`, `co_monthly_ad_spend_band`, `co_crm_platform`, `co_is_hiring` (NaN when the domain
-  misses). Phase 2 (in progress) adds a fallback exact match on the normalised typed company name
-  (`en_<column>`, `enrichment_source`).
+  misses). Phase 2 adds a fallback exact match on the normalised typed company name
+  (`en_<column>`, `enrichment_source`; v2 features only).
 - **Band**: the company-size feature. `co_employee_band`, else the typed `a_company_size` answer, else
   `"1-10"` (legacy, the reference level) or `"missing"` (Phase 2 v2 features). Levels 1-10, 11-50,
   51-200, 201-1000, 1000+.
+- **session_missing / enrichment_missing** (v2 features, ADR 0009): yes/no indicators for an absent
+  on-site session (no landing page visit or any behavioural input blank) and for no companies.csv row.
+  The features they cover stay at their reference level; the indicator carries the effect.
 
 ### CRM state and labels (`emva/labels.py`)
 
@@ -124,7 +127,7 @@ it with the paired bootstrap.
 | 0 freeze and instrument | merged 15f90fc | `phase0-freeze-instrument` | `reports/phase0.md` |
 | 5.1 generator v1 rewrite | merged ed3f54b | `phase5-generator-v1` | `reports/phase5-1.md` |
 | 1 labels | merged 92168cf | `phase1-labels` | `reports/phase1.md` |
-| 2 features and leakage | in progress: indicator encoding after ruling (ADR 0009), report being updated | `phase2-features` | `reports/phase2.md` |
+| 2 features and leakage | ready for review (ADRs 0009, 0011) | `phase2-features` | `reports/phase2.md` |
 | 5.2-5.8 generator v2 | merged (01c56f4) | `phase5-generator-v2` | `reports/phase5.md` |
 | 3 value layer and platform contract | pending (needs 2) | | |
 | 4 evaluation hardening | pending (needs 2) | | |
