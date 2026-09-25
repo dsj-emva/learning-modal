@@ -19,7 +19,8 @@ def main(argv: list[str] | None = None) -> None:
     """Parse arguments, run the pipeline, print the summary and write outputs."""
     ap = argparse.ArgumentParser(prog="python -m emva")
     ap.add_argument("--data", default="data/v1")
-    ap.add_argument("--context", default=None, help="CSV with lead_id,context_score (0-1) from emva.context.agent")
+    ap.add_argument("--context", default=None,
+                    help="context agent output: judgments CSV from emva.context.agent, or a legacy lead_id,context_score CSV")
     ap.add_argument("--margin", type=float, default=1.0)
     ap.add_argument("--out", default=".")
     add_label_arguments(ap)

@@ -1,15 +1,23 @@
-"""Context agent: reads each lead the way a salesperson would, against a business brief,
-and returns a 0-1 context score. Output feeds ``python -m emva --context``.
+"""Context agent v2 (plan 6.4): Claude Haiku reads each lead card against the business brief and
+returns the named judgments of ``emva.context.contract``. Output feeds ``python -m emva --context``.
 
-Moved from ``baseline/context_agent.py`` unchanged in behaviour, except that failed attempts
-are logged to stderr instead of being swallowed silently, and the ``--data``/``--brief``
-defaults point at this repo. Only submission-time information is shown to the agent. It
-never sees CRM stages, comments, deal values or ground truth.
+Runtime rules:
+- Anthropic Python SDK, structured output (``output_config`` JSON schema from the contract), temperature 0,
+  model ``MODEL_ID`` (ADR 0010). The client sends the ``anthropic-workspace-id`` header; the key and the
+  workspace id come from the environment or the nearest ``.env`` and are never printed.
+- Bots and repeat submissions are removed with ``emva.io.clean`` *before* any call.
+- Every reply is cached by (card hash, brief hash, prompt version, model id) (``emva.context.cache``).
+- Transport errors (connection failures, timeouts, 408/409/429/5xx) are retried with exponential backoff up
+  to ``MAX_ATTEMPTS`` times, each failure logged; other API errors (400/401/403/404) are configuration
+  errors and raise. A reply that breaks the contract is a *parse error*: recorded, cached, never retried.
+- Every output row is stamped with ``(brief_hash, prompt_version, model_id)`` and its ``card_hash``.
+- ``--dry-run`` counts cache hits and misses for the given brief and exits without creating a client, so a
+  brief edit (new ``brief_hash``, every lead a miss, context weights must be refit) is reported for free.
 
 Usage:
-  export ANTHROPIC_API_KEY=...
-  python -m emva.context.agent --data data/v1 --brief baseline/business_brief.md \
-      --out context_scores.csv [--limit 500]
+  python -m emva.context.agent --data data/v2 --brief baseline/business_brief.md \
+      --cache data/v2/context/cache.json --out data/v2/context/context_judgments.csv \
+      [--ids FILE] [--limit N] [--workers 8] [--dry-run]
 """
 from __future__ import annotations
 
@@ -18,113 +26,308 @@ import hashlib
 import json
 import logging
 import os
-import re
+import threading
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
 
+import anthropic
 import pandas as pd
-import requests
 
-from emva.constants import ENRICHMENT_COLUMNS
-from emva.context.contract import OUTPUT_COLUMNS, ContextResponse, error_response
+from emva.context.cache import ReplyCache, cache_key
+from emva.context.card import LeadCard, card_hash, cards, render
+from emva.context.contract import (
+    JUDGMENTS,
+    OUTPUT_COLUMNS,
+    RESPONSE_SCHEMA,
+    STATUS_OK,
+    STATUS_PARSE_ERROR,
+    STATUS_TRANSPORT_ERROR,
+    ContractError,
+    validate,
+)
+from emva.io import clean, load
 
 log = logging.getLogger(__name__)
 
-MODEL = "claude-haiku-4-5-20251001"
+MODEL_ID = "claude-haiku-4-5-20251001"
+PROMPT_VERSION = "judgments-v1"
 MAX_ATTEMPTS = 5
-SYSTEM = """You are an experienced B2B salesperson qualifying inbound leads for the business described below.
-Judge how likely this lead is to become a paying customer, using judgement and context, not a checklist.
-Reply with JSON only, no other text:
-{"context_score": <number 0-1>, "fit": "<one short sentence>", "red_flags": ["..."]}
+MAX_WORKERS = 8
+MAX_TOKENS = 400
+REQUEST_TIMEOUT_S = 60.0
+RETRYABLE_STATUS = frozenset({408, 409, 429})
+
+SYSTEM_TEMPLATE = """You qualify inbound B2B leads for the business described in the brief below, the way an \
+experienced salesperson would. You see only what the person typed on the form. Judge the lead on each of these, \
+choosing exactly one allowed value:
+
+- is_real_business: does the lead come from a real, operating business? yes / no / unclear
+- persona: who is this person, relative to the business in the brief?
+  buyer (evaluating the product for their own organisation), vendor (selling something to us), student \
+(studying or doing research), job_seeker (looking for a job or internship), competitor (works for or is building \
+a similar product), nonprofit (a charity or non-profit organisation), agency_pitching (an agency offering its \
+services to us), unclear (cannot tell)
+- problem_specificity: the free text is specific (a concrete problem in their own words), vague (short or \
+generic), boilerplate (pasted marketing or template copy), or unrelated (nothing to do with our product)
+- urgency: now / this_quarter / researching / none (no sign of timing)
+- brief_fit: how well the lead matches who buys, per the brief: strong / partial / weak / none
+
+Also give a reason of at most 30 words. Base every judgment on the card and the brief only.
 
 BUSINESS BRIEF:
-"""
+{brief}"""
 
 
-def lead_card(r: pd.Series) -> str:
-    """Render the submission-time facts about one lead as the user message."""
-    a = json.loads(r.answers)
-    lines = [f"What they want to solve: {a.get('what_to_solve') or '(blank)'}",
-             f"Job title: {a.get('job_title') or '(not asked)'}",
-             f"Company typed: {a.get('company') or r.get('company_name') or '(none)'}",
-             f"Email domain: {str(r.email).split('@')[-1]}",
-             f"Country: {a.get('country')}"]
-    for k in ["team_size", "budget", "timeline", "company_size"]:
-        if a.get(k) not in (None, ""):
-            lines.append(f"{k.replace('_', ' ').title()}: {a[k]}")
-    if isinstance(r.get("co_sector"), str):
-        lines.append(f"Company profile: {r.co_sector}, {r.co_employee_band} employees, ad spend {r.co_monthly_ad_spend_band}/month, "
-                     f"CRM {r.co_crm_platform}, hiring {'yes' if r.co_is_hiring else 'no'}")
-    return "\n".join(lines)
+def brief_hash(brief_text: str) -> str:
+    """First 16 hex digits of the sha256 of the brief text (stamped into every row and the cache key)."""
+    return hashlib.sha256(brief_text.encode("utf-8")).hexdigest()[:16]
 
 
-def call(system: str, card: str, key: str, cache: dict[str, ContextResponse]) -> ContextResponse:
-    """Score one lead card, using ``cache`` keyed on sha256(system + card).
+def system_prompt(brief_text: str) -> str:
+    """The system prompt for ``brief_text``."""
+    return SYSTEM_TEMPLATE.format(brief=brief_text)
 
-    Tries up to ``MAX_ATTEMPTS`` times, with exponential backoff between attempts, on any
-    transport or parse failure (each failure is logged), then returns ``error_response()``
-    without caching it.
+
+# --- credentials and client -------------------------------------------------------------------------
+
+def find_dotenv(start: str | Path) -> Path | None:
+    """The first ``.env`` file found walking up from ``start`` to the filesystem root, else None."""
+    d = Path(start).resolve()
+    for cand_dir in (d, *d.parents):
+        cand = cand_dir / ".env"
+        if cand.is_file():
+            return cand
+    return None
+
+
+def load_env_var(name: str, start: str | Path | None = None) -> str | None:
+    """``name`` from the environment, else from the nearest ``.env`` above ``start`` (default: this file), else None."""
+    value = os.environ.get(name)
+    if value:
+        return value
+    path = find_dotenv(start or Path(__file__).parent)
+    if path is None:
+        return None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip().removeprefix("export ")
+        key, sep, val = line.partition("=")
+        if sep and key.strip() == name:
+            return val.strip().strip('"').strip("'") or None
+    return None
+
+
+def make_client() -> anthropic.Anthropic:
+    """SDK client with the workspace header and SDK retries off (``judge`` does its own, logged, retries).
+
+    Raises ``SystemExit`` when ``ANTHROPIC_API_KEY`` or ``ANTHROPIC_WORKSPACE_ID`` cannot be found.
     """
-    h = hashlib.sha256((system + card).encode()).hexdigest()
-    if h in cache:
-        return cache[h]
-    for attempt in range(MAX_ATTEMPTS):
+    key = load_env_var("ANTHROPIC_API_KEY")
+    workspace = load_env_var("ANTHROPIC_WORKSPACE_ID")
+    if not key or not workspace:
+        raise SystemExit("ANTHROPIC_API_KEY and ANTHROPIC_WORKSPACE_ID must be set (environment or .env); "
+                         "the key is not workspace-scoped, so the workspace header is required (ADR 0010).")
+    return anthropic.Anthropic(api_key=key, default_headers={"anthropic-workspace-id": workspace},
+                               max_retries=0, timeout=REQUEST_TIMEOUT_S)
+
+
+# --- one call ---------------------------------------------------------------------------------------
+
+@dataclass
+class Outcome:
+    """Result of judging one card: ``status`` (contract ``STATUSES``), the validated ``reply`` when ok,
+    the model's ``raw`` text (parse errors), an ``error`` description, and ``attempts`` (API requests made)."""
+
+    status: str
+    reply: dict[str, str] | None = None
+    raw: str | None = None
+    error: str = ""
+    attempts: int = 0
+
+
+def is_transport_error(exc: BaseException) -> bool:
+    """True for errors worth retrying: no HTTP response, timeouts, 408/409/429 and 5xx."""
+    if isinstance(exc, anthropic.APIConnectionError):  # includes APITimeoutError
+        return True
+    return isinstance(exc, anthropic.APIStatusError) and (exc.status_code in RETRYABLE_STATUS or exc.status_code >= 500)
+
+
+def parse_reply(message: Any) -> dict[str, str]:
+    """Validated judgments from an SDK ``Message``; raises ``ContractError`` for anything off-contract."""
+    if message.stop_reason != "end_turn":
+        raise ContractError(f"stop_reason {message.stop_reason!r}")
+    texts = [b.text for b in message.content if b.type == "text"]
+    if len(texts) != 1:
+        raise ContractError(f"expected one text block, got {len(texts)}")
+    try:
+        obj = json.loads(texts[0])
+    except json.JSONDecodeError as exc:
+        raise ContractError(f"invalid JSON: {exc}") from exc
+    return validate(obj)
+
+
+def judge(client: anthropic.Anthropic, system: str, card_text: str,
+          sleep: Callable[[float], None] = time.sleep) -> Outcome:
+    """Send one card; retry transport errors with backoff 1, 2, 4, 8 s; never retry parse errors.
+
+    Non-retryable API errors (bad request, authentication, permission, not found) propagate.
+    """
+    for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
-            resp = requests.post("https://api.anthropic.com/v1/messages", timeout=60, headers={
-                "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
-                json={"model": MODEL, "max_tokens": 200, "temperature": 0, "system": system,
-                      "messages": [{"role": "user", "content": card}]})
-            resp.raise_for_status()
-            text = resp.json()["content"][0]["text"]
-            out = json.loads(re.search(r"\{.*\}", text, re.S).group(0))
-            cache[h] = out
-            return out
-        except Exception as exc:  # retried; Phase 6 separates parse from transport errors
-            log.warning("context call failed (attempt %d/%d): %r", attempt + 1, MAX_ATTEMPTS, exc)
-            if attempt + 1 < MAX_ATTEMPTS:
-                time.sleep(2 ** attempt)
-    return error_response()
+            message = client.messages.create(
+                model=MODEL_ID, max_tokens=MAX_TOKENS, system=system,
+                messages=[{"role": "user", "content": card_text}],
+                output_config={"format": {"type": "json_schema", "schema": RESPONSE_SCHEMA}},
+                extra_body={"temperature": 0})
+        except anthropic.APIError as exc:
+            if not is_transport_error(exc):
+                raise
+            log.warning("context call transport error (attempt %d/%d): %r", attempt, MAX_ATTEMPTS, exc)
+            if attempt == MAX_ATTEMPTS:
+                return Outcome(STATUS_TRANSPORT_ERROR, error=f"{type(exc).__name__}: {exc}", attempts=attempt)
+            sleep(2 ** (attempt - 1))
+            continue
+        texts = [b.text for b in message.content if b.type == "text"]
+        raw = texts[0] if texts else None
+        try:
+            return Outcome(STATUS_OK, reply=parse_reply(message), attempts=attempt)
+        except ContractError as exc:
+            log.warning("context reply broke the contract: %s", exc)
+            return Outcome(STATUS_PARSE_ERROR, raw=raw, error=str(exc), attempts=attempt)
+    raise AssertionError("unreachable")
 
 
-def main() -> None:
-    """CLI entry point: score leads and write a CSV with ``OUTPUT_COLUMNS``."""
+# --- a batch of leads -------------------------------------------------------------------------------
+
+@dataclass
+class RunStats:
+    """Counts for one run: leads judged, cache hits, API requests (including retries) and outcome counts."""
+
+    leads: int = 0
+    cache_hits: int = 0
+    cache_misses: int = 0
+    api_requests: int = 0
+    by_status: dict[str, int] = field(default_factory=lambda: {STATUS_OK: 0, STATUS_PARSE_ERROR: 0,
+                                                              STATUS_TRANSPORT_ERROR: 0})
+    brief_hash: str = ""
+    cached_brief_hashes: set[str] = field(default_factory=set)
+
+    def describe(self) -> str:
+        """One line for the console and the report."""
+        s = self.by_status
+        return (f"{self.leads} leads, brief_hash {self.brief_hash}: {self.cache_hits} cache hits, "
+                f"{self.cache_misses} misses, {self.api_requests} API requests; ok {s[STATUS_OK]}, "
+                f"parse errors {s[STATUS_PARSE_ERROR]}, transport errors {s[STATUS_TRANSPORT_ERROR]}")
+
+
+def select_leads(data: str | Path, ids: list[str] | None = None, limit: int | None = None) -> pd.DataFrame:
+    """Load ``data``, drop bots and duplicates (``emva.io.clean``), then keep ``ids`` (in order) and/or the first ``limit``.
+
+    Requested ids that ``clean`` removed are logged and skipped; ids not in the data raise ``KeyError``.
+    """
+    L = load(data)
+    X = clean(L)
+    if ids is not None:
+        unknown = [i for i in ids if i not in L.index]
+        if unknown:
+            raise KeyError(f"{len(unknown)} lead ids not in {data}: {unknown[:5]}")
+        dropped = [i for i in ids if i not in X.index]
+        if dropped:
+            log.warning("%d requested leads are bots or duplicates and are not sent: %s", len(dropped), dropped[:5])
+        X = X.loc[[i for i in ids if i in X.index]]
+    return X.head(limit) if limit else X
+
+
+def _row(lead_id: str, card: LeadCard, entry: dict[str, Any] | None, transport_error: str, bh: str) -> dict[str, Any]:
+    """One output row: judgments (when ok), status, error, card hash and the three stamps.
+
+    ``entry`` is the cache entry (None when every attempt failed in transport; ``transport_error`` says why).
+    """
+    reply = (entry or {}).get("reply") or {}
+    status = entry["status"] if entry else STATUS_TRANSPORT_ERROR
+    error = entry.get("error", "") if entry else transport_error
+    return {"lead_id": lead_id, **{k: reply.get(k) for k in (*JUDGMENTS, "reason")}, "status": status,
+            "error": error, "card_hash": card_hash(card), "brief_hash": bh, "prompt_version": PROMPT_VERSION,
+            "model_id": MODEL_ID}
+
+
+def run_agent(X: pd.DataFrame, brief_text: str, cache: ReplyCache,
+              client_factory: Callable[[], anthropic.Anthropic] = make_client, workers: int = MAX_WORKERS,
+              dry_run: bool = False, sleep: Callable[[float], None] = time.sleep) -> tuple[pd.DataFrame, RunStats]:
+    """Judge every row of the cleaned frame ``X``; return (output frame with ``OUTPUT_COLUMNS``, stats).
+
+    Cache hits cost nothing. With ``dry_run`` no client is created and no request is made: the frame is
+    empty and the stats give hits and misses. Otherwise misses are sent with at most ``workers`` (<=
+    ``MAX_WORKERS``) concurrent requests; ok and parse-error outcomes are cached as they arrive.
+    """
+    if not 1 <= workers <= MAX_WORKERS:
+        raise ValueError(f"workers must be between 1 and {MAX_WORKERS}, got {workers}")
+    bh = brief_hash(brief_text)
+    system = system_prompt(brief_text)
+    C = cards(X)
+    keys = {lid: cache_key(card_hash(c), bh, PROMPT_VERSION, MODEL_ID) for lid, c in C.items()}
+    misses = [lid for lid in C.index if cache.get(keys[lid]) is None]
+    stats = RunStats(leads=len(C), cache_hits=len(C) - len(misses), cache_misses=len(misses), brief_hash=bh,
+                     cached_brief_hashes=cache.brief_hashes())
+    if dry_run:
+        return pd.DataFrame(columns=list(OUTPUT_COLUMNS)), stats
+
+    transport_errors: dict[str, str] = {}
+    lock = threading.Lock()
+    if misses:
+        client = client_factory()
+
+        def work(lid: str) -> None:
+            c = C[lid]
+            out = judge(client, system, render(c), sleep=sleep)
+            with lock:
+                stats.api_requests += out.attempts
+            if out.status == STATUS_TRANSPORT_ERROR:
+                transport_errors[lid] = out.error
+            else:
+                cache.put(keys[lid], {"card_hash": card_hash(c), "brief_hash": bh, "prompt_version": PROMPT_VERSION,
+                                      "model_id": MODEL_ID, "status": out.status, "reply": out.reply, "raw": out.raw,
+                                      "error": out.error})
+
+        with ThreadPoolExecutor(workers) as ex:
+            list(ex.map(work, misses))
+
+    rows = [_row(lid, c, cache.get(keys[lid]), transport_errors.get(lid, ""), bh) for lid, c in C.items()]
+    for r in rows:
+        stats.by_status[r["status"]] += 1
+    return pd.DataFrame(rows, columns=list(OUTPUT_COLUMNS)), stats
+
+
+def main(argv: list[str] | None = None) -> None:
+    """CLI entry point (see the module docstring)."""
     logging.basicConfig(level=logging.WARNING)
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--data", default="data/v1")
+    ap = argparse.ArgumentParser(prog="python -m emva.context.agent")
+    ap.add_argument("--data", default="data/v2")
     ap.add_argument("--brief", default="baseline/business_brief.md")
-    ap.add_argument("--out", default="context_scores.csv")
+    ap.add_argument("--cache", default="data/v2/context/cache.json")
+    ap.add_argument("--out", default="data/v2/context/context_judgments.csv")
+    ap.add_argument("--ids", default=None, help="CSV with a lead_id column: judge these leads, in this order")
     ap.add_argument("--limit", type=int, default=None)
-    ap.add_argument("--workers", type=int, default=8)
-    a = ap.parse_args()
-    key = os.environ["ANTHROPIC_API_KEY"]
-    with open(a.brief) as f:
-        system = SYSTEM + f.read()
-
-    L = pd.read_csv(f"{a.data}/historical_leads.csv")
-    CO = pd.read_csv(f"{a.data}/companies.csv")
-    CO["dom"] = CO.domain.str.lower(); L["dom"] = L.company_domain.str.lower()
-    L = L.merge(CO[["dom", *ENRICHMENT_COLUMNS]]
-                .add_prefix("co_").rename(columns={"co_dom": "dom"}), on="dom", how="left")
-    if a.limit:
-        L = L.sample(a.limit, random_state=0)
-    cards = [lead_card(r) for _, r in L.iterrows()]
-
-    cache_file = a.out + ".cache.json"
-    cache: dict[str, ContextResponse] = {}
-    if os.path.exists(cache_file):
-        with open(cache_file) as f:
-            cache = json.load(f)
-    with ThreadPoolExecutor(a.workers) as ex:
-        res = list(ex.map(lambda c: call(system, c, key, cache), cards))
-    with open(cache_file, "w") as f:
-        json.dump(cache, f)
-
-    values = (L.lead_id.values,
-              [r.get("context_score") for r in res],
-              [r.get("fit") for r in res],
-              ["; ".join(r.get("red_flags") or []) for r in res])
-    pd.DataFrame(dict(zip(OUTPUT_COLUMNS, values, strict=True))).to_csv(a.out, index=False)
-    print(f"wrote {len(res)} scores to {a.out}")
+    ap.add_argument("--workers", type=int, default=MAX_WORKERS)
+    ap.add_argument("--dry-run", action="store_true", help="report cache hits/misses for this brief; no API calls")
+    a = ap.parse_args(argv)
+    ids = pd.read_csv(a.ids).lead_id.tolist() if a.ids else None
+    brief = Path(a.brief).read_text(encoding="utf-8")
+    out, stats = run_agent(select_leads(a.data, ids, a.limit), brief, ReplyCache(a.cache), workers=a.workers,
+                           dry_run=a.dry_run)
+    print(stats.describe())
+    if a.dry_run:
+        if stats.cache_misses:
+            known = ", ".join(sorted(stats.cached_brief_hashes)) or "none"
+            print(f"dry run: {stats.cache_misses} leads would call the API. Cached brief hashes: {known}. "
+                  f"A new brief_hash means new judgments and a refit of the context weights (ADR 0014).")
+        return
+    Path(a.out).parent.mkdir(parents=True, exist_ok=True)
+    out.to_csv(a.out, index=False)
+    print(f"wrote {len(out)} rows to {a.out}")
 
 
 if __name__ == "__main__":
