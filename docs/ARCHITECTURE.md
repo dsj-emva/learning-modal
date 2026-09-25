@@ -161,7 +161,7 @@ flowchart LR
     P2 --> P4["Phase 4<br/>evaluation hardening<br/>pending"]
     P0 --> P51["Phase 5.1<br/>generator v1 rewrite<br/>merged"]
     P51 --> P5["Phase 5.2-5.8<br/>generator v2<br/>merged"]
-    P3 --> P6["Phase 6<br/>context agent v2<br/>ready for review"]
+    P3 --> P6["Phase 6<br/>context agent v2<br/>ready for merge"]
     P4 --> P6
     P5 --> P6
     P2 --> P6
@@ -178,7 +178,7 @@ flowchart LR
     DATA["data/vN"] --> SEL["agent.select_leads<br/>io.load + io.clean<br/>(bots, duplicates dropped before any call)"]
     SEL --> CARD["card.lead_card<br/>free text, typed company,<br/>job title, email domain"]
     BRIEF["business brief<br/>(system prompt)"] --> KEY
-    CARD --> KEY["cache.cache_key<br/>(card hash, brief_hash,<br/>prompt_version, model_id)"]
+    CARD --> KEY["cache.cache_key<br/>(card hash, brief_hash,<br/>prompt_version, prompt_fingerprint, model_id)"]
     KEY -->|hit| ROW
     KEY -->|miss| CALL["agent.judge<br/>Haiku 4.5, structured output,<br/>workspace header, temperature 0<br/>transport errors: retry 1-2-4-8 s<br/>contract errors: parse_error"]
     CALL --> VAL["contract.validate"] --> CACHE["cache.json (committed)"] --> ROW
@@ -189,12 +189,12 @@ flowchart LR
 |---|---|
 | `emva/context/card.py` | `LeadCard` with exactly four strings (`CARD_FIELDS`); no enrichment, spend, CRM, hiring, bucketed answers or telemetry (tested) |
 | `emva/context/contract.py` | `JUDGMENTS` (five enums), `reason` <= 30 words, `RESPONSE_SCHEMA` for `output_config`, `validate` -> `ContractError` (parse error); `STATUSES` ok / parse_error / transport_error; `OUTPUT_COLUMNS` with the `(brief_hash, prompt_version, model_id)` stamp |
-| `emva/env.py` | `find_dotenv` / `load_env_var`, shared by the agent and `scripts/paraphrase_templates.py` |
+| `emva/env.py` | `find_dotenv` / `load_env_var`, shared by the agent and `scripts/paraphrase_templates.py`; the search stops at the repo root (a linked worktree falls back to the main checkout) |
 | `emva/context/agent.py` | `make_client` (key and workspace via `emva.env`, `anthropic-workspace-id` header, SDK retries off), `judge` (one card; transport errors retried, 4xx configuration errors raise, parse errors recorded), `run_agent` (cache, <= 8 workers, `--dry-run` counts misses without a client) |
-| `emva/context/cache.py` | `ReplyCache`: JSON, atomic writes, ok and parse-error replies cached, transport errors never |
+| `emva/context/cache.py` | `ReplyCache` (format 2): JSON, atomic writes (`*.tmp` gitignored), key adds `prompt_fingerprint` (system template + schema + max tokens), ok and parse-error replies cached, transport errors never; identical cards in a run share one request |
 | `emva/context/features.py` | `CONTEXT_LEVELS` / `CONTEXT_CATS` (references yes / buyer / specific / none / partial); persona pooled via `PERSONA_GROUPS` into `ctx_persona_group` (buyer / non_buyer / unclear, ADR 0016); 13 columns from `design.fixed_design`; one stamp per file enforced |
 | `emva/eval/context_harness.py` | evaluation side (reads ground truth): persona-stratified sample, oracle power curve, same-row cross-fitted comparison, R12 `coefficient_criterion` (weight CI excludes 0 and lies in the oracle CI), weight CIs, persona confusion, formula correlation, boilerplate recall |
-| `scripts/run_context_agent.py` | 6.6 run on the sample; appends counts to `data/v2/context/runs.jsonl` |
+| `scripts/run_context_agent.py` | 6.6 run on the committed `sample_ids.csv` (written only by `python -m emva.eval.context_harness sample`; the script reads no ground truth); appends counts to `data/v2/context/runs.jsonl`; `--dry-run` writes nothing |
 
 A brief edit changes `brief_hash`, so every lead is a cache miss: `--dry-run` reports the count and the
 cached brief hashes without calling; the real run then produces a new judgments file, and the context

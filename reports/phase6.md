@@ -7,11 +7,14 @@ simulated data** (`data/v2`, generator v2 as merged at 01c56f4).
 
 - The agent now returns five enum judgments and a short reason (no 0-1 score), from a four-field lead card
   (free text, typed company, job title, email domain), through the Anthropic SDK with structured output,
-  the workspace header, a cache keyed by (card, brief, prompt version, model) and a stamp on every row.
+  the workspace header, a cache keyed by (card, brief, prompt version, prompt fingerprint, model) and a stamp
+  on every row.
 - Real run: 1,000 v2 leads through `claude-haiku-4-5-20251001`: **1,000 API requests, 0 parse errors,
   0 transport errors**. A rerun makes 0 requests and reproduces the CSV byte for byte (tested).
 - Haiku reads the planted persona well: 262 of 300 planted persona leads (87%) are judged a non-buyer
   persona, competitor 76/80 and job seeker 65/70 exactly; agency pitching is mostly called `vendor`.
+  False positives: **58 of 700 non-persona leads (8.3%) are judged non-buyer** (21 vendor, 26 student,
+  10 agency_pitching, 1 nonprofit), so non-buyer precision is 262/320 = 82%.
   Boilerplate recall on paraphrased text is **0.88** (67/76), against 0.026 for the Phase 2 Jaccard
   detector on the same rows (R6).
 - The context features are close to orthogonal to the formula: combined context score vs formula logit
@@ -21,9 +24,11 @@ simulated data** (`data/v2`, generator v2 as merged at 01c56f4).
   cross-fitted oracle gap on the sample is 0.0037 [-0.0050, 0.0114], not distinguishable from zero. Under
   ruling R12 that criterion is recorded as **unmeasurable** at this effect size (not passed), and acceptance
   moves to the coefficient level.
-- **R12 coefficient criterion: PASS.** With persona pooled at the feature level (R13), the weight of
-  `ctx_persona_group=non_buyer` next to the formula is **-0.606 [-1.067, -0.179]**, against the oracle
-  persona weight **-0.612 [-1.021, -0.209]** on the same 1,000 rows. Caveat: inside the full combined model
+- **R12 coefficient criterion: PASS** (caveat: the persona pooling rule was chosen after seeing the per-level
+  results; it is applied to the unchanged cached judgments and is now fixed in code). With persona pooled at
+  the feature level (R13), the weight of `ctx_persona_group=non_buyer` next to the formula is
+  **-0.606 [-1.067, -0.179]**, against the oracle persona weight **-0.612 [-1.021, -0.209]** on the same
+  1,000 rows. Caveat: inside the full combined model
   (all 13 context columns) the same column is -0.383 [-0.887, 0.156], not significant; the other judgments
   share part of its signal.
 
@@ -53,7 +58,7 @@ simulated data** (`data/v2`, generator v2 as merged at 01c56f4).
 
 | criterion | result | evidence | pass/fail |
 |---|---|---|---|
-| **R12 (acceptance): pooled persona weight has a 95% CI excluding 0 and lies inside the oracle weight's CI, same rows** | `ctx_persona_group=non_buyer` in formula + `ctx_persona_group`: **-0.606 [-1.067, -0.179]**; oracle persona indicator: **-0.612 [-1.021, -0.209]**. Formula + `ctx_persona_group` AUC +0.0049 [-0.0048, 0.0143] (p 0.30). In the full 13-column combined model the column is -0.383 [-0.887, 0.156] | "R12 acceptance" table below; `emva.eval.context_harness.coefficient_criterion` | **PASS** |
+| **R12 (acceptance): pooled persona weight has a 95% CI excluding 0 and lies inside the oracle weight's CI, same rows** | `ctx_persona_group=non_buyer` in formula + `ctx_persona_group`: **-0.606 [-1.067, -0.179]**; oracle persona indicator: **-0.612 [-1.021, -0.209]**. Formula + `ctx_persona_group` AUC +0.0049 [-0.0048, 0.0143] (p 0.30). In the full 13-column combined model the column is -0.383 [-0.887, 0.156] | "R12 acceptance" table below; `emva.eval.context_harness.coefficient_criterion` | **PASS** (pooling rule chosen after seeing per-level results; applied to unchanged cached judgments; now fixed in code) |
 | Combined model recovers > 1/2 of the planted context-only gap (plan) | fraction recovered 1.87 [95% CI -10.6, 12.2]; formula + context AUC +0.0070 [-0.0051, 0.0195] (p 0.25); oracle gap +0.0037 [-0.0050, 0.0114] (p 0.38); model-free ceiling 0.0037 (all labelled) / 0.0095 (sample) | 6.5 and 6.6 below | **unmeasurable** (R12; not passed) |
 | `persona` weights individually significant (plan, per contract level) | 0 of 7 unpooled levels significant (e.g. competitor -0.35 [-0.97, 0.20]) | secondary table below | superseded by R12/R13 (underpowered at n = 1,000) |
 | Correlation of context features with the formula score reported and < 0.5 | combined context score r = 0.136; max single-column \|r\| = 0.333 (`is_real_business=no`) | correlation table below | PASS |
@@ -86,8 +91,10 @@ Seeded (`numpy.random.default_rng(0)`), stratified on the planted persona, drawn
 v2 leads with a horizon label** (mature, not censored; the rows any model can be fit or scored on):
 **300 of the 364 labelled persona leads and 700 of the 3,866 others**. Persona share 30% (vs 8.6% among
 labelled leads); 184 wins. 300 is above the plan's floor of 150 and gives roughly 75 leads per planted
-persona. Ids: `data/v2/context/sample_ids.csv`. Bots and duplicates are excluded by construction (the
-pool is `io.clean` output) and `select_leads` drops any again before calling.
+persona. Ids: `data/v2/context/sample_ids.csv` (`lead_id` only), written only by
+`python -m emva.eval.context_harness sample`; `scripts/run_context_agent.py` reads it and never touches ground
+truth. Bots and duplicates are excluded by construction (the pool is `io.clean` output) and `select_leads`
+drops any again before calling.
 
 ## Protocol
 
@@ -264,6 +271,8 @@ Formula fit on all pre-2026-05-01 labelled leads. Combined context score (contex
 | full sample | 1,000 | 20 | 980 | 1,000 | 0 | 0 |
 | rerun (reproducibility) | 1,000 | 1,000 | 0 | 1,000 | 0 | 0 |
 | rerun after R12/R13 | 1,000 | 1,000 | 0 | 1,000 | 0 | 0 |
+| rerun after Phase 3 merge | 1,000 | 1,000 | 0 | 1,000 | 0 | 0 |
+| rerun after review fixes (re-keyed cache) | 1,000 | 1,000 | 0 | 1,000 | 0 | 0 |
 | **total** | | | **1,000** (budget 1,300) | | **0** | **0** |
 
 From `data/v2/context/runs.jsonl`. No retries were needed. Cost estimate (token usage was not logged):
@@ -294,6 +303,22 @@ mocked or forbidden by a factory that raises).
    same cached judgments, no new calls).
 9. **ADR number 0014** as instructed (0012 and 0013 are presumably Phases 3 and 4).
 10. **Brief**: `baseline/business_brief.md` is the committed brief (frozen, not edited).
+11. **The brief is in the system prompt, not in the lead card.** Plan 6.2 lists the brief among the card's
+    contents; it is sent once per request as the system prompt instead, with the four card fields as the
+    user message. The model sees the same text either way; the brief is hashed into `brief_hash` and the
+    cache key, not into `card_hash`.
+12. **Probe timing.** The harness commit (8e5c11c, 15:09 UTC) postdates the 20-lead probe (14:56 UTC,
+    `runs.jsonl`): sampling ran from the then-uncommitted harness code. The sample is nonetheless
+    deterministic: `python -m emva.eval.context_harness sample` (seed 0, 300 persona / 700 other labelled
+    leads, the parameters ratified in R15) reproduces `data/v2/context/sample_ids.csv` byte for byte
+    (`tests/test_context_harness.py::test_harness_sample_reproduces_the_committed_ids`).
+13. **Two duplicate cards were called twice.** 1,000 leads have 998 unique cards; the original run sent
+    one request per lead (1,000). Identical cards now share one request (review fix 4); the cache holds 998
+    entries.
+14. **Cache re-keyed (review fix 2).** The cache key now includes `prompt_fingerprint` (sha256 of
+    `SYSTEM_TEMPLATE`, `RESPONSE_SCHEMA`, `MAX_TOKENS`; `8e2001b9a82fdc75`). The prompt has not changed since
+    the real run (no diff to either since 09f9460), so the 998 entries were re-keyed in place (cache format
+    2) with no API calls; a rerun still gives 1,000 hits.
 
 ## Open questions for the orchestrator
 

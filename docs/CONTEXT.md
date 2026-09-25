@@ -109,7 +109,7 @@ wins and this file is wrong: fix it in the same PR. State: `main` 92168cf, 2026-
 - **Paraphrase cache**: `scripts/paraphrase_cache.json` (v2 branch, committed): Haiku paraphrases of
   each free-text template, 5 per template, keyed by sha256 of (template, model id, prompt version). The
   generator only reads it. The context agent keeps its own cache (`data/v2/context/cache.json`, keyed by
-  sha256 of (card hash, brief hash, prompt version, model id)).
+  sha256 of (card hash, brief hash, prompt version, prompt fingerprint, model id)).
 - **Generator v1**: `scripts/generate_data_v1.py`, the seeded rewrite of the lost original; reproduces v1
   distributions, not rows (ADR 0003). Its close model is additive logistic, which is why a correctly
   specified LR and the exact regex match it perfectly.
@@ -146,7 +146,7 @@ it with the paired bootstrap.
 | 5.2-5.8 generator v2 | merged (01c56f4) | `phase5-generator-v2` | `reports/phase5.md` |
 | 3 value layer | merged (a13491d) | `phase3-value` | `reports/phase3.md` |
 | 4 evaluation hardening | pending (needs 2) | | |
-| 6 context agent v2 | ready for review | `phase6-context-agent` | `reports/phase6.md` |
+| 6 context agent v2 | ready for merge | `phase6-context-agent` | `reports/phase6.md` |
 | 7 production readiness document | pending (needs all) | | |
 
 Open question carried from Phase 1 (not yet ruled): should young `crm_lost` leads be 0 rather than NaN?

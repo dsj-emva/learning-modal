@@ -33,7 +33,7 @@ not be passed off with placeholder text.
 - `emva/context/agent.py` (Phase 0: `requests` with `x-api-key` only, cache keyed without the model id) was
   brought in line in Phase 6 (`phase6-context-agent`, ADR 0014): it uses the Anthropic SDK, sends the
   `anthropic-workspace-id` header on every request (refusing to run without `ANTHROPIC_WORKSPACE_ID`),
-  and its cache key is sha256 of (card hash, brief hash, prompt version, model id), so a model change is a
+  and its cache key is sha256 of (card hash, brief hash, prompt version, prompt fingerprint, model id), so a model change is a
   miss. `data/v2/context/cache.json` is committed; `(brief_hash, prompt_version, model_id)` is stamped on
   every output row.
 - Using another model needs a new ADR.

@@ -28,7 +28,8 @@ prompt or model produced them.
   connection failure, timeout, 408/409/429 or 5xx is a *transport error* (retried with backoff 1, 2, 4,
   8 s, never cached); other API errors (400/401/403/404) are configuration errors and raise.
 - **Stamp and cache**: every output row carries `(brief_hash, prompt_version, model_id)` and the card
-  hash; the cache key is (card hash, brief hash, prompt version, model id). A judgments file must carry
+  hash; the cache key is (card hash, brief hash, prompt version, prompt fingerprint, model id), the
+  fingerprint hashing the system template, response schema and max tokens. A judgments file must carry
   one stamp. A brief edit gives a new `brief_hash`, every lead becomes a miss (`--dry-run` reports it
   without calling), and the context weights are refit on the new judgments; weights never carry over
   between stamps.
