@@ -23,7 +23,7 @@ test:
 	$(MAKE) compile
 
 compile:
-	"$(PY)" -m compileall -q emva scripts baseline tests
+	"$(PY)" -m compileall -q emva scripts baseline tests app
 
 ## experiment NAME=...: run a named experiment into runs/NAME/
 experiment:
