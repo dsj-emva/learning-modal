@@ -51,5 +51,12 @@ rule), legacy labels with the same one-month windows, and the baseline reproduct
   leads (the v2 headline is about 0.04 below the relaxed rule; section 4.1 of `reports/phase4.md`).
 - The frozen test sets of ADR 0006 are unchanged and still reported.
 - Phase 7 and any external claim quote this number, with its CI and "on simulated data".
-- Open: whether a later AS_OF (more mature months) or a shorter H should move the split dates; not
-  changed here (ground rule 5: no tuning to an acceptance number).
+- AS_OF and H are not changed to get more splits (orchestrator ruling at the Phase 4 review; ground rules 4
+  and 5): four usable splits is the honest count, and the two empty splits stay listed in every table.
+- The planted context-only gap measured with this machinery (about +0.005 AUC on v2) is consistent with
+  Phase 6's coefficient-level acceptance (ADR 0016).
+
+## Orchestrator ruling (Phase 4 review, 2026-09-25)
+
+AS_OF and H stay frozen; the headline is the mean over the four sufficient splits with the empty splits listed.
+Status stays Proposed until the orchestrator merges Phase 4.

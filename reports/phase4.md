@@ -49,7 +49,8 @@ No change to `emva/model.py`, `emva/pipeline.py` or `emva/features.py`; the GBDT
    Adding the true persona to the pipeline's own design gains +0.004 [+0.000, +0.008] on (a) and +0.000 rolling.
    The planted −1.0 persona on 8% of leads is worth well under 0.01 AUC even when read perfectly, far below the
    CI widths above. Phase 6 should measure its gain with paired tests on the largest test set, and on log-loss or
-   calibration of persona leads as well as AUC; an AUC-only harness is underpowered for a signal this size.
+   calibration of persona leads as well as AUC; an AUC-only harness is underpowered for a signal this size
+   (Phase 6's acceptance is now coefficient-level, ADR 0016).
 7. **Calibration decay:** under the headline rule the calibration slope is 0.70 to 0.91 on v2 (over-confident:
    small early training sets), intercepts −0.22 to +0.13; it degrades with distance from the fit month (slope
    0.89 → 0.70 from M+1 to M+3 for the 2026-01 fit). Legacy labels look better calibrated (slopes near 1), but
@@ -63,7 +64,7 @@ No change to `emva/model.py`, `emva/pipeline.py` or `emva/features.py`; the GBDT
    LinkedIn leads after enrichment dropout). Neither improves held-out AUC materially (rolling +0.002
    [−0.000, +0.005]). The v1 null control is not clean: LinkedIn × 51+ comes out +0.56 [+0.18, +0.98] on v1,
    where nothing is planted, so a significant coefficient here is not by itself evidence of a planted term
-   (open question below).
+   (open finding under "Orchestrator decisions").
 
 ## Acceptance
 
@@ -96,12 +97,36 @@ No change to `emva/model.py`, `emva/pipeline.py` or `emva/features.py`; the GBDT
 - Docstrings of `ground_truth_reference.py` and `phase2_study.py` now list `ceiling.py` as the third
   ground-truth reader.
 
+## Orchestrator decisions (review of Phase 4)
+
+- **AS_OF and H stay as they are** (frozen, ground rule 4). Four usable rolling splits is the honest count; the two
+  empty splits (2026-06-01, 2026-07-01) stay listed. Recorded in ADR 0013.
+- **Phase 6 criterion.** Phase 6's acceptance has been restated to coefficient level (ADR 0016 on
+  `origin/phase6-context-agent`: the context weight's CI excludes zero and its point lies inside the oracle
+  weight's CI), consistent with the planted context-only gap of about +0.005 AUC measured here (finding 6).
+- **LinkedIn × 51+ on v1 stays an open finding, flagged for the reviewers** (paragraph below).
+
+### Open finding: LinkedIn × 51+ is "significant" on v1, where nothing is planted
+
+The pipeline gives it +0.56 [+0.18, +0.98] on the v1 horizon training set (4,049 leads). Checks run for this
+paragraph (scratch scripts, not committed code) rule out an encoding artefact: with the *true* band and channel
+(oracle formula design) the coefficient is the same, +0.55 [+0.19, +0.97], although the pipeline's band agrees
+with the true band more often for LinkedIn leads (94.5% vs 82.0%). The planted structure itself gives almost
+nothing: fitting the same oracle design to `p_close_true` as soft labels gives +0.11 on those rows (+0.04 on all
+cleaned leads; the non-zero part is the planted noise term, which makes the true model non-logistic in the
+features), and 200 label sets drawn from `p_close_true` on the same rows give +0.10 ± 0.17, none reaching +0.55.
+The realised eventual outcome (Won at any time) on the same rows gives +0.32, which is within about 1.3 sd of
+those draws: a chance realisation of the win draws. The horizon label adds the rest (won within 120 days with
+ghosted excluded and stalled censored: +0.55; all mature leads with those counted as 0: +0.42). Best explanation:
+**mostly sampling chance in this particular set of outcomes, amplified by the 120-day label's truncation and
+censoring**, not a planted or encoded effect. With about 40 coefficients per model and two interaction terms
+tested per dataset, one CI excluding zero on the null dataset is not surprising. Consequence for the v2 reading:
+a significant interaction coefficient on its own is weak evidence that a planted term was recovered; the senior
+× form D detection on v2 should be read with that in mind.
+
 ## Open questions
 
-- Why LinkedIn × band 51+ is significant on v1 where it is not planted (label selection via ghosting/stalling,
-  the horizon label's time-to-close dependence on size, or channel/size correlation in the generator).
-- Should the rolling headline move to a later AS_OF or shorter H so more than four splits qualify? Not changed here.
-- Phase 6's harness: given a planted gap of about 0.005 AUC, which metric and test set should its acceptance use?
+- Phase 6 inherits the measurement problem for small context effects; ADR 0016 addresses it on coefficients.
 
 <!-- BEGIN GENERATED: python -m emva.eval.hardening (make report-full); edits inside are overwritten -->
 # Phase 4 evaluation hardening (generated)
