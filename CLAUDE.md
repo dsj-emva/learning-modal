@@ -95,7 +95,7 @@ Other entry points: `python -m emva.eval.label_study`, `python -m emva.eval.grou
 ```sh
 python scripts/generate_data_v1.py --seed 20260924 --as-of 2026-09-24 --out DIR --n 10000   # ~17 s
 python scripts/compare_to_v1.py --gen DIR [--seeds 1,2,3] [--md out.md]                    # fidelity vs data/v1
-# on phase5-generator-v2 (in progress):
+# generator v2 (merged):
 python scripts/generate_data_v2.py [--no-paraphrase]        # writes data/v2/
 python scripts/paraphrase_templates.py --check|--populate|--probe
 python scripts/v2_checks.py --data data/v2 --ref data/v1
