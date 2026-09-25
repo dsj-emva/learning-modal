@@ -61,9 +61,9 @@ def test_nothing_imports_the_ground_truth_reference():
 
 
 def test_ground_rule_2_grep():
-    # Only emva/eval/ may mention ground truth; the one known 0.45 constant is removed in plan 2.4.
+    # Only emva/eval/ may mention ground truth or the generator constant 0.45 (removed from the model in plan 2.4).
     # -I skips compiled __pycache__ files, which embed the strings of the modules they come from.
     out = subprocess.run(["grep", "-rnI", r"0.45\|ground_truth", "emva/"], cwd=REPO, capture_output=True,
                          text=True).stdout.splitlines()
     outside = [line for line in out if not line.startswith("emva/eval/")]
-    assert outside == ["emva/value.py:19:DEAL_LOG_RESIDUAL_SD_FROM_GENERATOR = 0.45"]
+    assert outside == []
