@@ -84,3 +84,13 @@ def test_coefficient_criterion_needs_significance_and_agreement_with_the_oracle(
     assert not coefficient_criterion(ci(-0.40, -0.90, 0.10), oracle)     # CI includes zero
     assert not coefficient_criterion(ci(-1.50, -2.00, -1.10), oracle)    # significant but outside the oracle CI
     assert not coefficient_criterion(ci(0.50, 0.10, 0.90), oracle)       # wrong sign
+
+
+def test_harness_sample_reproduces_the_committed_ids(tmp_path):
+    from pathlib import Path
+
+    from emva.eval.context_harness import main
+    repo = Path(__file__).resolve().parents[1]
+    out = tmp_path / "ids.csv"
+    main(["sample", "--data", str(repo / "data" / "v2"), "--out", str(out)])
+    assert out.read_bytes() == (repo / "data" / "v2" / "context" / "sample_ids.csv").read_bytes()

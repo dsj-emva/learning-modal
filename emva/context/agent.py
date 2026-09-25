@@ -6,7 +6,8 @@ Runtime rules:
   model ``MODEL_ID`` (ADR 0010). The client sends the ``anthropic-workspace-id`` header; the key and the
   workspace id come from the environment or the nearest ``.env`` and are never printed.
 - Bots and repeat submissions are removed with ``emva.io.clean`` *before* any call.
-- Every reply is cached by (card hash, brief hash, prompt version, model id) (``emva.context.cache``).
+- Every reply is cached by (card hash, brief hash, prompt version, prompt fingerprint, model id)
+  (``emva.context.cache``); identical cards in one run share one request.
 - Transport errors (connection failures, timeouts, 408/409/429/5xx) are retried with exponential backoff up
   to ``MAX_ATTEMPTS`` times, each failure logged; other API errors (400/401/403/404) are configuration
   errors and raise. A reply that breaks the contract is a *parse error*: recorded, cached, never retried.
@@ -80,6 +81,16 @@ Also give a reason of at most 30 words. Base every judgment on the card and the 
 
 BUSINESS BRIEF:
 {brief}"""
+
+
+def prompt_fingerprint() -> str:
+    """First 16 hex digits of sha256 over ``SYSTEM_TEMPLATE``, ``RESPONSE_SCHEMA`` (sorted JSON) and ``MAX_TOKENS``.
+
+    Part of the cache key next to ``PROMPT_VERSION``, so editing the prompt, the schema or the token limit
+    without bumping the version still makes every entry a miss.
+    """
+    blob = json.dumps([SYSTEM_TEMPLATE, RESPONSE_SCHEMA, MAX_TOKENS], sort_keys=True)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
 
 
 def brief_hash(brief_text: str) -> str:
@@ -183,6 +194,7 @@ class RunStats:
     leads: int = 0
     cache_hits: int = 0
     cache_misses: int = 0
+    unique_misses: int = 0
     api_requests: int = 0
     by_status: dict[str, int] = field(default_factory=lambda: {STATUS_OK: 0, STATUS_PARSE_ERROR: 0,
                                                               STATUS_TRANSPORT_ERROR: 0})
@@ -193,7 +205,8 @@ class RunStats:
         """One line for the console and the report."""
         s = self.by_status
         return (f"{self.leads} leads, brief_hash {self.brief_hash}: {self.cache_hits} cache hits, "
-                f"{self.cache_misses} misses, {self.api_requests} API requests; ok {s[STATUS_OK]}, "
+                f"{self.cache_misses} misses ({self.unique_misses} unique cards), {self.api_requests} API requests; "
+                f"ok {s[STATUS_OK]}, "
                 f"parse errors {s[STATUS_PARSE_ERROR]}, transport errors {s[STATUS_TRANSPORT_ERROR]}")
 
 
@@ -212,7 +225,7 @@ def select_leads(data: str | Path, ids: list[str] | None = None, limit: int | No
         if dropped:
             log.warning("%d requested leads are bots or duplicates and are not sent: %s", len(dropped), dropped[:5])
         X = X.loc[[i for i in ids if i in X.index]]
-    return X.head(limit) if limit else X
+    return X.head(limit) if limit is not None else X
 
 
 def _row(lead_id: str, card: LeadCard, entry: dict[str, Any] | None, transport_error: str, bh: str) -> dict[str, Any]:
@@ -235,41 +248,44 @@ def run_agent(X: pd.DataFrame, brief_text: str, cache: ReplyCache,
 
     Cache hits cost nothing. With ``dry_run`` no client is created and no request is made: the frame is
     empty and the stats give hits and misses. Otherwise misses are sent with at most ``workers`` (<=
-    ``MAX_WORKERS``) concurrent requests; ok and parse-error outcomes are cached as they arrive.
+    ``MAX_WORKERS``) concurrent requests, one request per unique cache key (leads with identical cards share
+    it); ok and parse-error outcomes are cached as they arrive.
     """
     if not 1 <= workers <= MAX_WORKERS:
         raise ValueError(f"workers must be between 1 and {MAX_WORKERS}, got {workers}")
     bh = brief_hash(brief_text)
     system = system_prompt(brief_text)
     C = cards(X)
-    keys = {lid: cache_key(card_hash(c), bh, PROMPT_VERSION, MODEL_ID) for lid, c in C.items()}
+    fp = prompt_fingerprint()
+    keys = {lid: cache_key(card_hash(c), bh, PROMPT_VERSION, fp, MODEL_ID) for lid, c in C.items()}
     misses = [lid for lid in C.index if cache.get(keys[lid]) is None]
-    stats = RunStats(leads=len(C), cache_hits=len(C) - len(misses), cache_misses=len(misses), brief_hash=bh,
-                     cached_brief_hashes=cache.brief_hashes())
+    to_call = {keys[lid]: C[lid] for lid in misses}  # one request per unique key, first card wins (identical anyway)
+    stats = RunStats(leads=len(C), cache_hits=len(C) - len(misses), cache_misses=len(misses),
+                     unique_misses=len(to_call), brief_hash=bh, cached_brief_hashes=cache.brief_hashes())
     if dry_run:
         return pd.DataFrame(columns=list(OUTPUT_COLUMNS)), stats
 
-    transport_errors: dict[str, str] = {}
+    transport_errors: dict[str, str] = {}  # cache key -> error
     lock = threading.Lock()
-    if misses:
+    if to_call:
         client = client_factory()
 
-        def work(lid: str) -> None:
-            c = C[lid]
+        def work(key: str) -> None:
+            c = to_call[key]
             out = judge(client, system, render(c), sleep=sleep)
             with lock:
                 stats.api_requests += out.attempts
-            if out.status == STATUS_TRANSPORT_ERROR:
-                transport_errors[lid] = out.error
-            else:
-                cache.put(keys[lid], {"card_hash": card_hash(c), "brief_hash": bh, "prompt_version": PROMPT_VERSION,
-                                      "model_id": MODEL_ID, "status": out.status, "reply": out.reply, "raw": out.raw,
-                                      "error": out.error})
+                if out.status == STATUS_TRANSPORT_ERROR:
+                    transport_errors[key] = out.error
+            if out.status != STATUS_TRANSPORT_ERROR:
+                cache.put(key, {"card_hash": card_hash(c), "brief_hash": bh, "prompt_version": PROMPT_VERSION,
+                                "prompt_fingerprint": fp, "model_id": MODEL_ID, "status": out.status,
+                                "reply": out.reply, "raw": out.raw, "error": out.error})
 
         with ThreadPoolExecutor(workers) as ex:
-            list(ex.map(work, misses))
+            list(ex.map(work, to_call))
 
-    rows = [_row(lid, c, cache.get(keys[lid]), transport_errors.get(lid, ""), bh) for lid, c in C.items()]
+    rows = [_row(lid, c, cache.get(keys[lid]), transport_errors.get(keys[lid], ""), bh) for lid, c in C.items()]
     for r in rows:
         stats.by_status[r["status"]] += 1
     return pd.DataFrame(rows, columns=list(OUTPUT_COLUMNS)), stats

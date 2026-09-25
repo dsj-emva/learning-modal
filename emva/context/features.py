@@ -56,8 +56,14 @@ def persona_group(persona: pd.Series) -> pd.Series:
     return persona.astype(str).map(PERSONA_GROUPS)
 
 
-def judgment_frame(ok: pd.DataFrame) -> pd.DataFrame:
-    """The ``CONTEXT_CATS`` feature columns for ok judgment rows (indexed by lead): judgments as is, persona grouped."""
+def judgment_frame(ok: pd.DataFrame, pool_persona: bool = True) -> pd.DataFrame:
+    """The ``CONTEXT_CATS`` feature columns for ok judgment rows (indexed by lead): judgments as is, persona grouped.
+
+    ``pool_persona=False`` keeps the eight contract values in a ``ctx_persona`` column instead (the harness's
+    secondary, unpooled weights).
+    """
+    if not pool_persona:
+        return pd.DataFrame({PREFIX + k: ok[k] for k in JUDGMENTS}, index=ok.index)
     return pd.DataFrame({f: persona_group(ok.persona) if f == "ctx_persona_group" else ok[f.removeprefix(PREFIX)]
                          for f in CONTEXT_CATS}, index=ok.index)
 

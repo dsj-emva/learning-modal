@@ -1,10 +1,14 @@
-"""On-disk cache of context-agent replies, keyed by (card hash, brief hash, prompt version, model id).
+"""On-disk cache of context-agent replies, keyed by (card hash, brief hash, prompt version, prompt fingerprint,
+model id).
 
 The cache is a JSON file committed next to the outputs (``data/v2/context/cache.json``) so a rerun
 with the same brief, prompt and model reproduces every judgment without the API (ADR 0010). Any
 change to the brief, the prompt version or the model id changes the key, so old replies are never
-reused silently. Successful replies and parse errors are cached (both are what the model said);
-transport errors never are. Writes are atomic (temp file + rename) and deterministic (sorted keys).
+reused silently. The prompt fingerprint (``emva.context.agent.prompt_fingerprint``: system template,
+response schema, max tokens) catches a prompt edit made without a version bump. Successful replies and
+parse errors are cached (both are what the model said); transport errors never are. Writes are atomic (temp file ``<name>.tmp`` + rename; ``data/**/*.tmp`` is
+gitignored) and deterministic (sorted keys). Format 2 added the fingerprint to the key; format 1 files are
+refused (the committed Phase 6 cache was re-keyed in place, see ``reports/phase6.md``).
 """
 from __future__ import annotations
 
@@ -15,18 +19,20 @@ import threading
 from pathlib import Path
 from typing import Any
 
-CACHE_FORMAT = 1
+CACHE_FORMAT = 2
 
 
-def cache_key(card_hash: str, brief_hash: str, prompt_version: str, model_id: str) -> str:
-    """sha256 hex of the four identifiers, JSON-encoded as a list."""
-    return hashlib.sha256(json.dumps([card_hash, brief_hash, prompt_version, model_id]).encode()).hexdigest()
+def cache_key(card_hash: str, brief_hash: str, prompt_version: str, prompt_fingerprint: str, model_id: str) -> str:
+    """sha256 hex of the five identifiers, JSON-encoded as a list."""
+    ids = [card_hash, brief_hash, prompt_version, prompt_fingerprint, model_id]
+    return hashlib.sha256(json.dumps(ids).encode()).hexdigest()
 
 
 class ReplyCache:
     """Thread-safe dict of cache entries backed by a JSON file.
 
-    Each entry is ``{"card_hash", "brief_hash", "prompt_version", "model_id", "status", "reply", "raw", "error"}``:
+    Each entry is ``{"card_hash", "brief_hash", "prompt_version", "prompt_fingerprint", "model_id", "status", "reply",
+    "raw", "error"}``:
     ``status`` is ``ok`` or ``parse_error``, ``reply`` the validated judgments (``ok``) or None, ``raw``
     the model's text and ``error`` the contract violation (parse errors; None and "" otherwise).
     """

@@ -1,6 +1,8 @@
 """Context-agent evaluation harness (plan 6.5 and 6.6). Evaluation side: reads ground truth.
 
-- ``sample_leads``: the seeded, persona-stratified 1,000-lead sample the real Haiku run uses.
+- ``sample_leads``: the seeded, persona-stratified 1,000-lead sample the real Haiku run uses. ``python -m
+  emva.eval.context_harness sample`` is the only writer of ``data/v2/context/sample_ids.csv`` (``lead_id``
+  only, so ``scripts/run_context_agent.py`` can read it without touching ground truth).
 - ``oracle_power_curve``: an oracle context feature built from the planted persona (log-odds effect
   ``PERSONA_EFFECT`` plus Gaussian noise of sd 0.25 / 0.5 / 1 / 2) is added to the formula design; the
   curve is the fraction of the oracle gap, ``AUC(formula + true persona) - AUC(formula)``, recovered at
@@ -38,20 +40,27 @@ import pandas as pd
 from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import StratifiedKFold
 
-from emva.context.contract import JUDGMENTS
-from emva.context.features import CONTEXT_COLUMNS, PERSONA_ACCEPTANCE_COLUMN, PREFIX, context_design
+from emva.context.contract import JUDGMENTS, STATUS_OK
+from emva.context.features import (
+    CONTEXT_CATS,
+    CONTEXT_COLUMNS,
+    PERSONA_ACCEPTANCE_COLUMN,
+    PREFIX,
+    context_design,
+    judgment_frame,
+)
+from emva.design import fixed_columns, fixed_design
 from emva.eval.bootstrap import (
     CI_LEVEL,
     N_RESAMPLES,
     SEED,
     BootstrapCI,
     PairedComparison,
-    _percentile_ci,
-    _resample_indices,
     coef_bootstrap,
     paired_auc,
+    percentile_ci,
+    resample_indices,
 )
-from emva.design import fixed_columns, fixed_design
 from emva.feature_spec import feature_spec
 from emva.features import FeatureSet
 from emva.io import load
@@ -66,8 +75,7 @@ N_FOLDS: int = 5
 SAMPLE_SIZE: int = 1000
 SAMPLE_PERSONA: int = 300               # >= 150 required by the plan; ~75 per planted persona
 # Secondary, underpowered (R13): the contract judgments without pooling, persona at its eight levels.
-FINE_CATS: dict[str, str] = {"ctx_is_real_business": "yes", "ctx_persona": "buyer", "ctx_problem_specificity": "specific",
-                             "ctx_urgency": "none", "ctx_brief_fit": "partial"}
+FINE_CATS: dict[str, str] = {("ctx_persona" if f == "ctx_persona_group" else f): ref for f, ref in CONTEXT_CATS.items()}
 FINE_LEVELS: dict[str, tuple[str, ...]] = {PREFIX + k: v for k, v in JUDGMENTS.items()}
 
 
@@ -168,8 +176,8 @@ def gap_recovered(y: np.ndarray, p_formula: np.ndarray, p_context: np.ndarray, p
         return (roc_auc_score(y[i], p_context[i]) - a_f) / (roc_auc_score(y[i], p_oracle[i]) - a_f)
 
     rng = np.random.default_rng(seed)
-    samples = np.array([frac(i) for i in _resample_indices(y, n_resamples, rng)])
-    return _percentile_ci(frac(np.arange(len(y))), samples, level)
+    samples = np.array([frac(i) for i in resample_indices(y, n_resamples, rng)])
+    return percentile_ci(frac(np.arange(len(y))), samples, level)
 
 
 def true_probability_gap(y: np.ndarray, p_true: np.ndarray, persona: np.ndarray,
@@ -262,9 +270,8 @@ def evaluate_judgments(ed: EvalData, judgments_path: str | Path, data: str | Pat
     persona_ci = pg_ci[pg_cols.index(PERSONA_ACCEPTANCE_COLUMN)]
 
     # secondary (underpowered): the unpooled judgments, persona at its eight contract levels
-    ok = J[J.status == "ok"].set_index("lead_id")
-    F = pd.DataFrame({PREFIX + k: ok[k] for k in JUDGMENTS}, index=ok.index).reindex(idx)
-    Cf = fixed_design(F, FINE_CATS, FINE_LEVELS).to_numpy()
+    ok = J[J.status == STATUS_OK].set_index("lead_id")
+    Cf = fixed_design(judgment_frame(ok, pool_persona=False).reindex(idx), FINE_CATS, FINE_LEVELS).to_numpy()
     fine_ci = coef_bootstrap(np.column_stack([D, Cf]), y, lr_coef, n_resamples=n_resamples, seed=seed)[D.shape[1]:]
     fine = _weights_table(fixed_columns(FINE_CATS, FINE_LEVELS), Cf, fine_ci)
 
@@ -410,13 +417,13 @@ def main(argv: list[str] | None = None) -> None:
     if a.cmd == "sample":
         ids = sample_leads(ed.labelled, ed.persona)
         Path(a.out).parent.mkdir(parents=True, exist_ok=True)
-        pd.DataFrame({"lead_id": ids, "planted_persona": (ed.persona[ids] != "none").to_numpy()}).to_csv(a.out, index=False)
+        pd.DataFrame({"lead_id": ids}).to_csv(a.out, index=False)  # lead ids only: the agent side may read this file
         print(f"wrote {len(ids)} ids ({int((ed.persona[ids] != 'none').sum())} persona) to {a.out}")
         return
     ev = evaluate_judgments(ed, a.judgments, a.data)
     lab = ed.labelled
     J = pd.read_csv(a.judgments)
-    sample_rows = ed.X.index.isin(J.lead_id[J.status == "ok"]) & lab
+    sample_rows = ed.X.index.isin(J.lead_id[J.status == STATUS_OK]) & lab
     curves, refs = {}, {}
     for name, m in (("all labelled leads", lab), ("the judged sample", pd.Series(sample_rows, index=ed.X.index))):
         y_m, persona_m = ed.X.y[m].to_numpy(dtype=float), (ed.persona[m] != "none").to_numpy()

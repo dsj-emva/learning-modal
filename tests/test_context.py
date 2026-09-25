@@ -128,10 +128,40 @@ def test_card_hash_is_stable_and_content_sensitive():
 
 # --- cache ------------------------------------------------------------------------------------------
 
-def test_cache_key_depends_on_all_four_identifiers():
-    base = ("card", "brief", "v1", "model")
-    keys = {cache_key(*base)} | {cache_key(*(base[:i] + ("other",) + base[i + 1:])) for i in range(4)}
-    assert len(keys) == 5
+def test_cache_key_depends_on_all_five_identifiers():
+    base = ("card", "brief", "v1", "fingerprint", "model")
+    keys = {cache_key(*base)} | {cache_key(*(base[:i] + ("other",) + base[i + 1:])) for i in range(5)}
+    assert len(keys) == 6
+
+
+def test_concurrent_puts_lose_no_entries(tmp_path):
+    import threading
+    cache = ReplyCache(tmp_path / "c.json")
+
+    def put_many(t: int) -> None:
+        for i in range(50):
+            cache.put(f"k{t}-{i}", {"brief_hash": "b", "status": "ok", "reply": GOOD})
+
+    threads = [threading.Thread(target=put_many, args=(t,)) for t in range(8)]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join()
+    assert len(cache.entries) == 400 and len(ReplyCache(tmp_path / "c.json").entries) == 400
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_prompt_edit_without_version_bump_is_a_cache_miss(tmp_path, leads, monkeypatch):
+    cache = ReplyCache(tmp_path / "cache.json")
+    run_agent(leads, "B", cache, client_factory=lambda: FakeClient(default=message(json.dumps(GOOD))))
+    before = agent.prompt_fingerprint()
+    monkeypatch.setattr(agent, "SYSTEM_TEMPLATE", agent.SYSTEM_TEMPLATE + " Be terse.")
+    assert agent.prompt_fingerprint() != before
+    _, stats = run_agent(leads, "B", cache, client_factory=no_client, dry_run=True)
+    assert stats.cache_misses == 3 and stats.cache_hits == 0
+    monkeypatch.setattr(agent, "MAX_TOKENS", agent.MAX_TOKENS + 1)
+    monkeypatch.setattr(agent, "SYSTEM_TEMPLATE", agent.SYSTEM_TEMPLATE.removesuffix(" Be terse."))
+    assert agent.prompt_fingerprint() != before
 
 
 def test_cache_persists_and_rejects_unknown_format(tmp_path):
@@ -217,7 +247,7 @@ def test_dry_run_cli_reports_the_retrain_without_calling(tmp_path, monkeypatch, 
     brief.write_text("a temporary brief")
     agent.main(["--brief", str(brief), "--cache", str(tmp_path / "c.json"), "--dry-run"])
     printed = capsys.readouterr().out
-    assert "3 misses, 0 API requests" in printed and "refit of the context weights" in printed
+    assert "3 misses (3 unique cards), 0 API requests" in printed and "refit of the context weights" in printed
 
 
 @pytest.mark.parametrize("reply", [message("not json"), message(json.dumps({**GOOD, "persona": "customer"})),
@@ -260,6 +290,27 @@ def test_configuration_errors_raise_instead_of_being_retried():
     assert len(client.calls) == 1
 
 
+def test_identical_cards_share_one_request(tmp_path, leads):
+    twins = pd.concat([leads.head(1), leads.head(1).rename(index={"L1": "L1b"})])
+    client = FakeClient(default=message(json.dumps(GOOD)))
+    out, stats = run_agent(twins, "B", ReplyCache(tmp_path / "c.json"), client_factory=lambda: client)
+    assert len(client.calls) == 1 and stats.api_requests == 1
+    assert stats.cache_misses == 2 and stats.unique_misses == 1
+    assert out.lead_id.tolist() == ["L1", "L1b"] and (out.status == "ok").all()
+
+
+def test_transport_errors_reach_every_lead_sharing_the_card(tmp_path, leads):
+    twins = pd.concat([leads.head(1), leads.head(1).rename(index={"L1": "L1b"})])
+    client = FakeClient(default=anthropic.APIConnectionError(request=REQ))
+    out, _ = run_agent(twins, "B", ReplyCache(tmp_path / "c.json"), client_factory=lambda: client, sleep=lambda s: None)
+    assert out.status.tolist() == ["transport_error"] * 2 and len(client.calls) == agent.MAX_ATTEMPTS
+
+
+def test_limit_zero_means_no_leads(data_v1):
+    assert select_leads(data_v1, limit=0).empty
+    assert len(select_leads(data_v1, limit=3)) == 3
+
+
 def test_concurrency_is_capped(tmp_path, leads):
     with pytest.raises(ValueError, match="workers"):
         run_agent(leads, "B", ReplyCache(tmp_path / "c.json"), client_factory=no_client, workers=9)
@@ -280,21 +331,48 @@ def test_client_refuses_to_run_without_a_workspace(monkeypatch, tmp_path):
         make_client()
 
 
-def test_load_env_var_reads_a_dotenv_above_the_start(tmp_path, monkeypatch):
+def make_repo(root: Path, git_file: str | None = None) -> Path:
+    (root / "emva").mkdir(parents=True)
+    if git_file is None:
+        (root / ".git").mkdir()
+    else:
+        (root / ".git").write_text(git_file)
+    return root
+
+
+def test_load_env_var_reads_the_repo_dotenv(tmp_path, monkeypatch):
     from emva.env import find_dotenv, load_env_var
     monkeypatch.delenv("EMVA_TEST_VAR", raising=False)
-    (tmp_path / ".env").write_text("export EMVA_TEST_VAR='abc'\nOTHER=1\n")
-    (tmp_path / "sub").mkdir()
-    assert find_dotenv(tmp_path / "sub") == tmp_path / ".env"
-    assert load_env_var("EMVA_TEST_VAR", tmp_path / "sub") == "abc"
-    assert load_env_var("MISSING_VAR", tmp_path / "sub") is None
+    repo = make_repo(tmp_path / "repo")
+    (repo / ".env").write_text("export EMVA_TEST_VAR='abc'\nOTHER=1\n")
+    assert find_dotenv(repo / "emva") == repo / ".env"
+    assert load_env_var("EMVA_TEST_VAR", repo / "emva") == "abc"
+    assert load_env_var("MISSING_VAR", repo / "emva") is None
     monkeypatch.setenv("EMVA_TEST_VAR", "from-env")
-    assert load_env_var("EMVA_TEST_VAR", tmp_path / "sub") == "from-env"
+    assert load_env_var("EMVA_TEST_VAR", repo / "emva") == "from-env"
 
 
-def test_paraphrase_script_and_agent_share_the_loader():
-    import sys
-    sys.path.insert(0, str(REPO / "scripts"))
+def test_dotenv_search_stops_at_the_repo_root(tmp_path):
+    from emva.env import find_dotenv
+    (tmp_path / ".env").write_text("ANTHROPIC_API_KEY=outside\n")      # above the repo: never read
+    repo = make_repo(tmp_path / "repo")
+    assert find_dotenv(repo / "emva") is None
+    assert find_dotenv(tmp_path) is None                                   # not inside a repository
+
+
+def test_dotenv_in_a_linked_worktree_falls_back_to_the_main_checkout(tmp_path):
+    from emva.env import find_dotenv
+    main = make_repo(tmp_path / "main")
+    (main / ".git" / "worktrees" / "wt").mkdir(parents=True)
+    (main / ".env").write_text("X=1\n")
+    wt = make_repo(main / ".claude" / "worktrees" / "wt", git_file=f"gitdir: {main / '.git' / 'worktrees' / 'wt'}\n")
+    assert find_dotenv(wt / "emva") == main / ".env"
+    (wt / ".env").write_text("X=2\n")
+    assert find_dotenv(wt / "emva") == wt / ".env"                         # the worktree's own file wins
+
+
+def test_paraphrase_script_and_agent_share_the_loader(monkeypatch):
+    monkeypatch.syspath_prepend(str(REPO / "scripts"))
     import paraphrase_templates
 
     from emva import env
@@ -414,3 +492,45 @@ def test_committed_cache_reproduces_the_committed_judgments_without_the_api():
     committed = pd.read_csv(ctx / "context_judgments.csv", keep_default_na=False)
     assert stats.cache_hits == len(ids) == 1000 and stats.api_requests == 0
     pd.testing.assert_frame_equal(out.fillna("").astype(str), committed.astype(str))
+
+
+def test_committed_cache_is_rekeyed_with_the_current_prompt_fingerprint():
+    data = json.loads((DATA_V2 / "context" / "cache.json").read_text(encoding="utf-8"))
+    assert data["format"] == 2 and len(data["entries"]) == 998       # 1,000 leads, 998 unique cards
+    fp = agent.prompt_fingerprint()
+    for key, e in data["entries"].items():
+        assert e["prompt_fingerprint"] == fp
+        assert key == cache_key(e["card_hash"], e["brief_hash"], e["prompt_version"], fp, e["model_id"])
+
+
+def test_committed_sample_file_holds_lead_ids_only():
+    assert list(pd.read_csv(DATA_V2 / "context" / "sample_ids.csv").columns) == ["lead_id"]
+
+
+def ground_truth_readers() -> set[str]:
+    """``emva.eval`` modules whose source names a ground-truth file."""
+    return {f"emva.eval.{p.stem}" for p in (REPO / "emva" / "eval").glob("*.py")
+            if "ground_truth" in p.read_text(encoding="utf-8")}
+
+
+def test_run_script_never_imports_ground_truth_readers():
+    import subprocess
+    import sys
+    code = ("import importlib.util, sys; "
+            f"spec = importlib.util.spec_from_file_location('rca', {str(REPO / 'scripts' / 'run_context_agent.py')!r}); "
+            "spec.loader.exec_module(importlib.util.module_from_spec(spec)); "
+            "print('\\n'.join(m for m in sys.modules if m.startswith('emva.eval')))")
+    loaded = set(subprocess.run([sys.executable, "-c", code], cwd=REPO, capture_output=True, text=True,
+                                check=True).stdout.split())
+    readers = ground_truth_readers()
+    assert "emva.eval.context_harness" in readers and not loaded & readers
+
+
+def test_run_script_dry_run_has_no_file_side_effects(monkeypatch, capsys):
+    monkeypatch.syspath_prepend(str(REPO / "scripts"))
+    import run_context_agent
+    ctx = DATA_V2 / "context"
+    before = {p.name: (p.stat().st_mtime_ns, p.read_bytes()) for p in ctx.iterdir()}
+    run_context_agent.main(["--dry-run"])
+    assert "1000 cache hits, 0 misses" in capsys.readouterr().out
+    assert {p.name: (p.stat().st_mtime_ns, p.read_bytes()) for p in ctx.iterdir()} == before

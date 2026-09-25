@@ -4,6 +4,7 @@ pandas==3.0.6
 scikit-learn==1.9.1
 scipy==1.17.1          # LogisticRegression's lbfgs solver; pinned because it affects coefficients
 anthropic==1.8.0       # emva/context/agent.py (Phase 6 context agent, SDK + structured output)
+httpx2==2.13.1         # anthropic's HTTP layer; tests build SDK error objects with it
 requests==2.34.2       # baseline/context_agent.py (frozen)
 matplotlib==3.10.9     # reports/phase6_power_curve.png (emva/eval/context_harness.py, imported lazily)
 pytest==9.1.1
