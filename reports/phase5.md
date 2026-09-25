@@ -1,6 +1,6 @@
 # Phase 5.2-5.8: generator v2
 
-Branch `phase5-generator-v2`, cut from `origin/main` (ed3f54b plus the `.env` ignore, 869805a). Plan items 5.2 to 5.8.
+Branch `phase5-generator-v2`, rebased onto `origin/main` at 92168cf (Phase 1 labels). Plan items 5.2 to 5.8.
 All numbers are on simulated data.
 
 ## What was built
@@ -43,7 +43,7 @@ paraphrases** (76 calls in total: 14 were spent before the two fixes below). `da
 | Regex agreement with the generator's text category < 100% | **66.5%** of leads (68.5% of genuine humans). v1: 100%. Without paraphrase: 80.4% | Pass |
 | Bot-rule precision < 100% (`emva.io`: headless UA or under 15 s) | **Precision 72.7%, recall 90.2%.** 494 flagged, 359 true bots. All 135 false positives are 5.8 fast humans. All 39 missed bots are consent-declined, non-headless bots with a blank time on page. v1: 100% / 100% | Pass |
 | Current pipeline runs on v2 with the standard report, AUC with CI | Baseline AUC **0.785 [0.758, 0.810]**, status quo 0.649 [0.618, 0.682]. Table below | Pass |
-| `--label-mode legacy` and default | **Not possible on main.** `python -m emva` on main has no `--label-mode` flag (`error: unrecognized arguments`); that flag comes with Phase 1, which is not merged. The default run is below | Deferred to Phase 1 |
+| `--label-mode legacy` and default (horizon) | After rebasing onto Phase 1 (92168cf), both run. `python -m emva --data data/v2 --label-mode legacy`: AUC 0.785. Default horizon: AUC 0.791. Both standard tables are below. The v2 mature test set has **448 leads (75 won)**, against 2,336 (327 won) under legacy labels | Pass |
 | All planted v1 effects still present | OLS of logit(p_close_true) on every planted feature recovers all 44 coefficients, residual sd 0.497 (planted 0.5). Largest gaps: under 15 s −1.33 vs −1.5 (truncation at p > 0.001, since bots sit near 0) and over 600 s −0.26 vs −0.4 (small cell). The v1 decided-win-rate test also passes on v2 | Pass |
 
 Regex category (columns) vs generator category (rows), `data/v2`:
@@ -61,27 +61,46 @@ boilerplate rarely starts with one of the three fixed prefixes. Plan item 2.5 re
 
 ### Standard report on data/v2 (`python -m emva.eval.report --data data/v2`)
 
-Phases 2 to 4 will re-run this on v2. Candidate = baseline here, because main has no candidate change yet.
+The report scores every model under both label definitions. Candidate = the `emva` pipeline trained with horizon labels
+(H = 120). Phases 2 to 4 will re-run this on v2.
+
+Label counts over the 9,212 scored leads: 1,139 won, 4,516 CRM-lost, 785 stalled, 1,251 ghosted, 1,521 open. The latest
+mature lead was created 2026-05-26.
+
+| definition | train (wins) | test (wins) |
+|---|---|---|
+| legacy | 5,507 (812) | 2,336 (327) |
+| horizon H=120 | 3,787 (718) | **448 (75)** |
+
+**(a) Legacy labels, legacy test set** (2,336 leads created on or after 2026-05-01, 327 won)
 
 | model | AUC [95% CI] | Brier | top-20% wins | top-20% revenue (by p) | top-20% revenue (by p×value) |
 |---|---|---|---|---|---|
 | baseline | 0.785 [0.758, 0.810] | 0.1025 | 0.529 | 0.635 | 0.714 |
-| candidate | 0.785 [0.758, 0.810] | 0.1025 | 0.529 | 0.635 | 0.714 |
+| candidate | 0.785 [0.758, 0.809] | 0.1057 | 0.511 | 0.645 | 0.718 |
 | status quo | 0.649 [0.618, 0.682] | n/a | 0.385 | 0.441 | 0.441 |
 
-Frozen test set: 2,336 labelled leads from 2026-05-01 (327 won). Paired AUC, status quo minus baseline: −0.136 [−0.164, −0.107].
+Paired AUC vs baseline: candidate −0.000 [−0.006, +0.006], status quo −0.136 [−0.164, −0.107]. AUC by month (baseline /
+status quo): May 0.793 / 0.701, Jun 0.784 / 0.623, Jul 0.798 / 0.658, Aug 0.731 / 0.562, Sep 0.910 / 0.675 (95 leads).
+Value scale, test set: baseline max/median 95.0x, top-1% share 11.5%; candidate 73.4x, 10.6%; status quo 19.5x, 6.4%.
 
-AUC by test month (baseline / status quo): May 0.793 / 0.701, Jun 0.784 / 0.623, Jul 0.798 / 0.658, Aug 0.731 / 0.562,
-Sep 0.910 / 0.675 (95 leads).
+**(b) Horizon labels, mature test set** (448 mature leads created 2026-05-01 to 2026-05-26, 75 won; ghosted-at-H
+excluded, stalled censored)
 
-Calibration by decile (mean p → observed): 0.011→0.009, 0.022→0.021, 0.035→0.060, 0.052→0.064, 0.074→0.073,
-0.099→0.111, 0.137→0.137, 0.193→0.184, 0.295→0.258, 0.494→0.483.
+| model | AUC [95% CI] | Brier | top-20% wins | top-20% revenue (by p) | top-20% revenue (by p×value) |
+|---|---|---|---|---|---|
+| baseline | 0.787 [0.730, 0.835] | 0.1154 | 0.493 | 0.578 | 0.620 |
+| candidate | 0.791 [0.731, 0.839] | 0.1164 | 0.493 | 0.589 | 0.623 |
+| status quo | 0.663 [0.588, 0.731] | n/a | 0.453 | 0.446 | 0.446 |
 
-Value scale, test set: baseline max/median 95.0x, top-1% share 11.5%; status quo 19.5x, 6.4%.
+Paired AUC vs baseline: candidate +0.004 [−0.010, +0.017], status quo −0.125 [−0.185, −0.065]. The mature test set is
+one month (May), so its CI is about twice as wide as the legacy one. Value scale, test set: baseline 80.5x, 11.1%;
+candidate 70.2x, 10.4%; status quo 15.0x, 5.7%.
 
-`python -m emva --data data/v2 --out DIR` (baseline summary, blank deal values filled): AUC 0.785, Brier 0.1025, top-20%
-wins 0.529, revenue 0.728. The same data without paraphrase gives AUC 0.790. For reference, the frozen v1 baseline is
-0.814 [0.789, 0.836], and the regenerated v1 across 8 seeds is 0.805 ± 0.013 (reports/phase5-1.md).
+`python -m emva` summaries on data/v2 (blank deal values filled): legacy AUC 0.785, Brier 0.1025, top-20% wins 0.529,
+revenue 0.728; horizon AUC 0.791, Brier 0.1164, wins 0.493, revenue 0.657. Before Phase 1, the same data without paraphrase
+gave AUC 0.790 (legacy). For reference, the frozen v1 baseline is 0.814 [0.789, 0.836], and the regenerated v1 across
+8 seeds is 0.805 ± 0.013 (reports/phase5-1.md).
 
 ## Per-option numbers (data/v2, n = 10,000)
 
@@ -127,7 +146,8 @@ signal, and sharpens the tier gradient. So ghosting now tracks the old score mor
   (`<word><sect>-group.example`), rather than losing the row. Without the row, plan item 2.3 (typed-name matching) would
   have nothing to match against. A blank domain was avoided because pandas joins NaN to NaN in `emva.io.load`. The full
   table is written as `ground_truth_companies.csv`.
-- **Consent covers bots too** (the plan says "website leads"). This is where the bot rule's missed bots come from.
+- **Consent covers bots too, as intended** (the plan says "website leads"; orchestrator decision: accepted). Bots hiding
+  behind declined consent is realistic, and it is where the bot rule's missed bots come from.
   Consent-declined sessions keep user agent, device, referrer, landing URL and click IDs (request and URL data). The
   `consent` marketing-opt-in column is independent of `consent_declined`.
 - **What is true and what is recorded.** Consent-declined and fast-human sessions keep their real behaviour in the close
@@ -139,19 +159,17 @@ signal, and sharpens the tier gradient. So ghosting now tracks the old score mor
   one would move the text out of the regex's vague list. About 28% of persona leads therefore have no textual trace. This
   caps what Phase 6 can recover.
 - **Interaction choice.** LinkedIn × 201+ employees was too small a cell (about 45 decided at n = 3,000). I widened it to
-  51+ employees.
-- **Generator imports `emva.features.text_cat`**, only to filter persona paraphrases. `emva/` does not import the
-  generator.
+  51+ employees. Orchestrator decision: the planted +0.8 stays. The outcome regression recovers only +0.47 [+0.10, +0.84]
+  (the logit(p) regression recovers +0.79), so **Phase 4 should check that its models can detect this term**.
+- **Persona paraphrases are filtered at generation time** (orchestrator decision), so `paraphrase_cache.json` stays raw
+  Haiku output. The filter is `persona_safe` in the generator, which imports `emva.features.text_cat` for it. `emva/`
+  does not import the generator.
 
 ## Open questions
 
-- Whether persona paraphrases should be filtered at cache time rather than at generation time. Now the cache holds raw
-  Haiku output, and the filter is visible in code.
-- The outcome-regression estimate of the LinkedIn interaction (+0.47) sits below the planted +0.8. The logit(p) regression
-  recovers +0.79, so the effect is planted correctly; the outcome fit omits spend, CRM and other correlated terms. Phase 4
-  could check whether the planted size is enough for its models.
+None outstanding. The persona filter, the interaction size and consent-for-bots were decided by the orchestrator (see above).
 
 ## Runtime
 
 n = 10,000: v2 generation about 21 s (paraphrase adds nothing measurable). `test_generate_data_v2.py`: about 45 s. Full
-`pytest`: 171 passed in about 76 s.
+`pytest` after the Phase 1 rebase: 212 passed in about 108 s.
