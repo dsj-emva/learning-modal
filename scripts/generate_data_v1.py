@@ -608,7 +608,7 @@ def session_behaviour(rng, cfg: Config, channel, lead_ads, bot, country, city, v
         b["sessions_before_convert"] = sess
         b["days_since_first_visit"] = 0 if sess == 1 else int(min(120, max(1, round(np.exp(rng.normal(1.70, 1.04))))))
         b["pages_visited"] = 1 + int(rng.poisson(1.6))
-        b["viewed_pricing"] = bool(rng.random() < 0.336)
+        b["viewed_pricing"] = bool(rng.random() < {1: 0.255, 2: 0.352}.get(sess, 0.45))   # returning visitors compare prices
         b["scroll_depth_pct"] = int(rng.integers(30, 101))
         if rng.random() < 0.954:
             ipc = country
