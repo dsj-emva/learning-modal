@@ -54,7 +54,7 @@ def check(data: Path) -> list[str]:
                  else f"values equal, tie order differs for rows {moved}"))
 
         e_stdout = _run([sys.executable, "-m", "emva", "--data", str(data), "--out", e_out, "--label-mode", "legacy"], REPO)
-        print("\npython -m emva:\n" + e_stdout)
+        print("\npython -m emva --label-mode legacy:\n" + e_stdout)
         failures += [f"emva {m}" for m in summary_mismatches(parse_summary(e_stdout))]
         failures += [f"emva weights.csv {m}" for m in weights_mismatches(read_weights(f"{e_out}/weights.csv"),
                                                                       read_weights(FROZEN_WEIGHTS))]
