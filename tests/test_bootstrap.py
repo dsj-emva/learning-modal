@@ -1,7 +1,9 @@
 import numpy as np
 import pytest
 
-from emva.eval.bootstrap import auc_ci, paired_auc
+from sklearn.linear_model import LogisticRegression
+
+from emva.eval.bootstrap import auc_ci, coef_bootstrap, paired_auc
 
 
 def _synthetic(n: int, seed: int = 0) -> tuple[np.ndarray, np.ndarray]:
@@ -54,3 +56,29 @@ def test_rejects_bad_input():
         auc_ci(np.zeros(10), np.arange(10.0))
     with pytest.raises(ValueError):
         auc_ci(np.array([0.0, 1.0]), np.array([0.1, np.nan]))
+
+
+def _lr_coef(X: np.ndarray, y: np.ndarray) -> np.ndarray:
+    return LogisticRegression(C=1e6, max_iter=1000).fit(X, y).coef_[0]
+
+
+def test_coef_bootstrap_covers_planted_coefficients():
+    rng = np.random.default_rng(3)
+    X = rng.normal(size=(3000, 2))
+    y = (rng.uniform(size=3000) < 1 / (1 + np.exp(-(1.0 * X[:, 0] + 0.0 * X[:, 1])))).astype(float)
+    cis = coef_bootstrap(X, y, _lr_coef, n_resamples=200, seed=1)
+    assert len(cis) == 2 and all(len(c.samples) == 200 for c in cis)
+    assert cis[0].lo < 1.0 < cis[0].hi and cis[1].lo < 0.0 < cis[1].hi
+    assert cis[0].lo > 0.5  # clearly non-zero
+    assert all(c.lo <= c.point <= c.hi for c in cis)
+
+
+def test_coef_bootstrap_is_seeded_and_checks_input():
+    rng = np.random.default_rng(4)
+    X, y = rng.normal(size=(200, 1)), rng.integers(0, 2, 200).astype(float)
+    assert coef_bootstrap(X, y, _lr_coef, n_resamples=20, seed=5)[0].lo == \
+        coef_bootstrap(X, y, _lr_coef, n_resamples=20, seed=5)[0].lo
+    with pytest.raises(ValueError):
+        coef_bootstrap(X[:10], y, _lr_coef, n_resamples=5)
+    with pytest.raises(ValueError):
+        coef_bootstrap(X, np.zeros(200), _lr_coef, n_resamples=5)
