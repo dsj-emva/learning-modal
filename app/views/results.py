@@ -9,40 +9,49 @@ import streamlit as st
 
 from app import charts, results, storage, ui
 from app import components as C
+from emva.constants import TEST_FROM
 
 TEST_SET_LABELS = {"mature": "Mature leads (horizon labels)", "legacy": "Legacy labels (frozen POC)"}
 
 
-def _kpis(head: pd.DataFrame, has_sq: bool) -> None:
-    """The KPI strip: model vs status quo."""
+def _kpis(head: pd.DataFrame) -> None:
+    """The KPI strip: this model against the status quo (or, without rules, the frozen baseline)."""
     m = head.set_index("model")
     model = m.loc[results.CANDIDATE]
-    sq = m.loc[results.STATUS_QUO] if has_sq else None
+    ref_name = next((n for n in (results.STATUS_QUO, results.BASELINE) if n in m.index), None)
+    ref = m.loc[ref_name] if ref_name else None
+    vs = f"vs {ref_name.split(' (')[0].lower()}" if ref_name else ""
 
     def d(col: str, fmt: str) -> str:
-        return C.delta(model[col] - sq[col], fmt) if sq is not None else ""
+        return C.delta(model[col] - ref[col], fmt) if ref is not None else ""
 
-    vs = " vs status quo" if sq is not None else ""
     ui.html(C.kpi_row([
-        C.kpi("AUC · ranking quality", C.num(model.auc), vs.strip(), d("auc", "auc"),
+        C.kpi("AUC · ranking quality", C.num(model.auc), vs, d("auc", "auc"),
               note=f"95% CI {model.auc_lo:.3f} – {model.auc_hi:.3f}"),
         C.kpi("Brier score", C.num(model.brier, 4), "lower is better", note="0 = perfect probabilities"),
-        C.kpi("Wins in the top 20%", C.pct(model.top20_wins), vs.strip(), d("top20_wins", "pts"),
+        C.kpi("Wins in the top 20%", C.pct(model.top20_wins), vs, d("top20_wins", "pts"),
               note="ranked by chance of closing"),
-        C.kpi("Revenue in the top 20%", C.pct(model.top20_revenue_value), vs.strip(),
+        C.kpi("Revenue in the top 20%", C.pct(model.top20_revenue_value), vs,
               d("top20_revenue_value", "pts"), note="ranked by value per lead"),
     ]))
 
 
-def _standard_table(head: pd.DataFrame) -> None:
-    """The standard table, formatted."""
+def _standard_table(head: pd.DataFrame, paired: pd.DataFrame | None, notes: list[str]) -> None:
+    """The standard report's headline and paired comparison (``emva.eval.report`` frames), formatted."""
     rows = [[r.model, C.num(r.auc), f"{r.auc_lo:.3f} – {r.auc_hi:.3f}", C.num(r.brier, 4), C.pct(r.top20_wins),
-             C.pct(r.top20_revenue_p), C.pct(r.top20_revenue_value), f"{r.n:,}", f"{r.wins:,}"]
-            for r in head.itertuples()]
+             C.pct(r.top20_revenue_p), C.pct(r.top20_revenue_value)] for r in head.itertuples()]
     ui.html(C.table(["Scored by", "AUC", "95% interval", "Brier", "Top-20% wins", "Top-20% revenue (by p)",
-                     "Top-20% revenue (by value)", "Test leads", "Won"], rows))
-    st.caption("Brier needs a probability, so the status quo (a bucket value) has none. Revenue is recorded deal "
-               "value of won test leads.")
+                     "Top-20% revenue (by value)"], rows))
+    caption = ["Revenue is the recorded deal value of won test leads."]
+    if results.STATUS_QUO in set(head.model):
+        caption.insert(0, "Brier needs a probability, so the status quo (a bucket value) has none.")
+    st.caption(" ".join(caption + notes))
+    if paired is not None and not paired.empty:
+        ui.html(C.section("Compared with the frozen baseline", "AUC difference on the same bootstrap resamples; "
+                          "an interval that excludes 0 is a real difference, not noise."))
+        ui.html(C.table(["Scored by", "AUC − baseline", "95% interval", "Bootstrap p"],
+                        [[r.model, f"{r.auc_diff:+.3f}", f"{r.diff_lo:+.3f} – {r.diff_hi:+.3f}", f"{r.p_value:.3f}"]
+                         for r in paired.itertuples()]))
 
 
 def _scorecard(run: storage.Run) -> None:
@@ -75,6 +84,12 @@ def _values(run: storage.Run) -> None:
     vd = results.value_distribution(run.out_dir)
     if vd.empty:
         st.caption("No value columns in this run's scores.")
+        return
+    skipped = vd[vd.skipped]
+    for _, r in skipped.iterrows():
+        st.caption(f"{r.label}: no scale statistics (its median or total is not positive).")
+    vd = vd[~vd.skipped]
+    if vd.empty:
         return
     for _, r in vd.iterrows():
         st.markdown(f"**{r.label}** · {int(r.n):,} scored leads")
@@ -115,16 +130,16 @@ def render() -> None:
     ev = ui.evaluation(run.run_id, run.out_dir, run.dataset_path, test_set)
     if ev is None:
         ui.html(C.callout("<b>This test set is empty for this dataset.</b> It needs labelled leads created on or "
-                          "after 2026-05-01 with both wins and losses.", "warn"))
+                          f"after {TEST_FROM} with both wins and losses.", "warn"))
     else:
         head = ev["headline"]
         ui.html(C.section("Headline", f"{ev['n']:,} test leads, {ev['wins']:,} won. AUC is the chance the model "
                                       "ranks a random winner above a random loser (0.5 = coin flip); the top-20% "
                                       "figures are the share of wins and recorded revenue in the leads it ranks "
                                       "highest."))
-        _kpis(head, ev["has_sq"])
+        _kpis(head)
         ui.html(C.section("Standard table", "The evaluation every change to the model is judged by, on this test set."))
-        _standard_table(head)
+        _standard_table(head, ev["paired"], ev["notes"])
         left, right = st.columns(2, gap="large")
         with left:
             ui.html(C.section("Calibration", "Predicted chance vs what actually happened, by tenth of the test "
@@ -153,11 +168,13 @@ def render() -> None:
             st.download_button(label, (out / name).read_bytes(), file_name=f"{run.run_id}-{name}", mime="text/csv",
                                icon=":material/download:", width="stretch", key=f"dl_{name}")
     if run.has_report:
+        # the report names the dataset by its server path; show the dataset name instead
+        report_text = run.report_path.read_text(encoding="utf-8").replace(run.dataset_path, run.dataset)
         with cols[2]:
-            st.download_button("Standard report", run.report_path.read_bytes(), file_name=f"{run.run_id}-report.md",
+            st.download_button("Standard report", report_text.encode("utf-8"), file_name=f"{run.run_id}-report.md",
                                mime="text/markdown", icon=":material/description:", width="stretch", key="dl_report")
         with st.expander("Full standard report (baseline vs model vs status quo)"):
-            st.markdown(run.report_path.read_text(encoding="utf-8"))
+            st.markdown(report_text)
     else:
         st.caption("No standard report for this run (the dataset has no status_quo_rules.json, or the report failed; "
                    "see the training log).")

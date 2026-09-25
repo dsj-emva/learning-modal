@@ -74,9 +74,10 @@ def evaluation(run_id: str, out_dir: str, dataset_path: str, test_set: str) -> d
     ev = results.evaluate(out_dir, dataset_path, test_set, leads=leads(dataset_path))
     if ev is None:
         return None
-    return {"headline": results.headline(ev), "calibration": results.calibration(ev),
+    head, paired = results.standard_table(ev)
+    return {"headline": head, "paired": paired, "notes": ev.notes, "calibration": results.calibration(ev),
             "auc_month": results.auc_month(ev), "base_rate": ev.base_rate, "n": len(ev.test.y),
-            "wins": int(ev.test.y.sum()), "has_sq": ev.sq_value is not None}
+            "wins": int(ev.test.y.sum())}
 
 
 @st.cache_data(show_spinner=False)

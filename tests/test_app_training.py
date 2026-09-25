@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from app import storage, training
@@ -15,7 +16,7 @@ from emva.io import load
 from emva.labels import HORIZON, LEGACY, split_masks
 from emva.pipeline import build
 
-from conftest import DATA_V1
+from conftest import APP_REPORT_RESAMPLES, DATA_V1
 
 
 @pytest.mark.parametrize("labels,mode", [(HORIZON, "horizon"), (LEGACY, "legacy")])
@@ -86,11 +87,15 @@ def test_results_frames_agree_with_the_run(app_trained) -> None:
 
     _, run = app_trained
     ev = results.evaluate(run.out_dir, run.dataset_path, "mature")
-    head = results.headline(ev, n_resamples=100)
+    head, paired = results.standard_table(ev, n_resamples=APP_REPORT_RESAMPLES)
+    assert list(head.model) == [results.BASELINE, results.CANDIDATE, results.STATUS_QUO] and ev.notes == []
+    assert np.isnan(head.brier.iloc[2]) and list(paired.model) == [results.CANDIDATE, results.STATUS_QUO]
     model = head.set_index("model").loc[results.CANDIDATE]
     assert round(model.auc, 3) == run.metrics["auc"] and round(model.brier, 4) == run.metrics["brier"]
     assert round(model.top20_wins, 3) == run.metrics["top20_wins"]
-    assert list(head.model) == [results.CANDIDATE, results.STATUS_QUO] and np.isnan(head.brier.iloc[1])
+    # the page's numbers are the report's: the same row, formatted as the report formats it, is in report.txt
+    cell = f"| candidate | {model.auc:.3f} [{model.auc_lo:.3f}, {model.auc_hi:.3f}] | {model.brier:.4f} |"
+    assert cell in run.report_path.read_text()
     assert 0 < ev.base_rate < 1
     cal = results.calibration(ev)
     assert list(cal.decile) == list(range(1, 11)) and cal.n.sum() == len(ev.test.y)
@@ -131,3 +136,25 @@ def test_training_job_does_not_see_the_password(tmp_path: Path, monkeypatch: pyt
     run = storage.register_run(root, storage.new_run(root, ds, TrainingConfig().as_dict()))
     training.start_training(root, run, python=sys.executable).wait(timeout=60)
     assert "APP_PASSWORD" not in seen and "PATH" in seen
+
+
+def test_results_without_rules_omit_the_status_quo(app_trained, tmp_path: Path) -> None:
+    import shutil
+
+    from app import results
+
+    _, run = app_trained
+    for f in ("historical_leads.csv", "crm_history.csv", "companies.csv"):
+        shutil.copy(Path(run.dataset_path) / f, tmp_path / f)
+    ev = results.evaluate(run.out_dir, tmp_path, "mature")
+    head, _ = results.standard_table(ev, n_resamples=50)
+    assert results.STATUS_QUO not in set(head.model) and any("status_quo_rules.json" in n for n in ev.notes)
+
+
+def test_value_distribution_skips_non_positive_columns(tmp_path: Path) -> None:
+    from app import results
+
+    pd.DataFrame({"lead_id": ["a", "b", "c"], "value_formula": [0.0, 0.0, 5.0], "value_at_submit": [1.0, 2.0, 3.0],
+                  "p_formula": [0.1, 0.2, 0.3], "y": [0, 1, 0]}).to_csv(tmp_path / "scores.csv", index=False)
+    vd = results.value_distribution(tmp_path).set_index("column")
+    assert vd.skipped.to_dict() == {"value_at_submit": False, "value_formula": True}

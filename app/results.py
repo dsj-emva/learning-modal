@@ -2,30 +2,35 @@
 
 Inputs are a run directory (``scores.csv``, ``weights.csv`` from ``python -m emva``) and the dataset it was
 trained on. The test sets are the standard report's frozen definitions (``emva.eval.report.frozen_test_labels``):
-``mature`` (horizon labels, the headline since Phase 1) and ``legacy`` (the POC's labels). Metrics come from
-``emva.eval.metrics`` / ``emva.eval.bootstrap`` and value scale from ``emva.eval.value_report.scale_stats``;
-nothing is parsed out of ``report.txt``.
+``mature`` (horizon labels, the headline since Phase 1) and ``legacy`` (the POC's labels). The standard table is
+``emva.eval.report.headline_frame`` / ``paired_frame`` over the report's own models (the frozen baseline via
+``run_baseline``, this run's scores, the status quo from the dataset's rules); calibration and AUC by month come
+from ``emva.eval.metrics`` / ``emva.eval.bootstrap``, value scale from ``emva.eval.value_report.scale_stats``.
+Nothing is parsed out of ``report.txt``.
 """
 from __future__ import annotations
 
+import logging
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from sklearn.metrics import brier_score_loss
 
 from app.storage import RULES_FILE
 from emva.constants import CATS, CATS_V2_CANDIDATES, TEST_FROM, TOP_FRACTION
-from emva.eval.bootstrap import N_RESAMPLES, auc_ci
-from emva.eval.metrics import auc_by_month, calibration_by_decile, top_share
-from emva.eval.report import TestSet, frozen_test_labels
+from emva.eval.bootstrap import N_RESAMPLES, SEED, auc_ci
+from emva.eval.metrics import auc_by_month, calibration_by_decile
+from emva.eval.report import ScoredModel, TestSet, frozen_test_labels, headline_frame, paired_frame, run_baseline
 from emva.eval.status_quo import load_rules, status_quo_value
 from emva.eval.value_report import scale_stats
 from emva.io import load
 
+log = logging.getLogger(__name__)
+
 TEST_SETS: tuple[str, ...] = ("mature", "legacy")
-CANDIDATE, STATUS_QUO = "Model", "Status quo"
+BASELINE, CANDIDATE, STATUS_QUO = "Baseline (frozen POC)", "This model", "Status quo"
 # Months with fewer test leads than this get no bootstrap band (the interval would be meaningless).
 MIN_MONTH_FOR_CI: int = 30
 
@@ -77,16 +82,27 @@ def scorecard(run_dir: str | Path) -> pd.DataFrame:
 
 @dataclass
 class Evaluation:
-    """A run's scores joined to one frozen test set: ``test`` (``TestSet``: labels, raw lead rows, revenue),
-    ``p`` and ``value`` (the model's P(close) and p × deal value on the test leads), ``sq_value`` (status-quo value
-    on the test leads, None without rules) and ``base_rate`` (win rate of the run's training labels)."""
+    """A run's scores joined to one frozen test set, as the standard report sees it.
+
+    ``test`` is the report's ``TestSet`` (labels, raw lead rows, revenue); ``models`` the report's ``ScoredModel``
+    list: the frozen baseline (when its script ran on this dataset), this run's model, and the status quo (when the
+    dataset has rules). ``notes`` say why a row is missing; ``base_rate`` is the win rate of the run's training labels.
+    """
 
     name: str
     test: TestSet
-    p: pd.Series
-    value: pd.Series
-    sq_value: pd.Series | None
+    models: list[ScoredModel]
+    notes: list[str]
     base_rate: float
+
+    def model(self, name: str) -> ScoredModel | None:
+        """The scored model called ``name`` (``BASELINE``, ``CANDIDATE``, ``STATUS_QUO``), or None if absent."""
+        return next((m for m in self.models if m.name == name), None)
+
+    @property
+    def candidate(self) -> ScoredModel:
+        """This run's model."""
+        return self.model(CANDIDATE)
 
 
 def training_base_rate(scores: pd.DataFrame, created_at: pd.Series) -> float:
@@ -97,15 +113,26 @@ def training_base_rate(scores: pd.DataFrame, created_at: pd.Series) -> float:
     return float(scores.y[train].mean())
 
 
+def _baseline(dataset: str | Path) -> tuple[pd.DataFrame | None, str | None]:
+    """The frozen baseline's scores on ``dataset`` (``emva.eval.report.run_baseline``), or None and why not."""
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            return run_baseline(dataset, tmp)[0], None
+        except RuntimeError as e:
+            log.warning("baseline script failed on %s: %s", dataset, e)
+            return None, "The frozen baseline script could not run on this dataset, so it has no row."
+
+
 def evaluate(run_dir: str | Path, dataset: str | Path, test_set: str = "mature",
              leads: pd.DataFrame | None = None) -> Evaluation | None:
-    """Join the run's scores to ``test_set`` (``mature`` or ``legacy``) of ``dataset``; None when that test set
-    is empty or has a single class (nothing to evaluate). ``leads`` is ``emva.io.load(dataset)`` if already loaded.
-    Raises ``ValueError`` if a test lead has no score (the run and dataset do not match)."""
+    """Join the run's scores to ``test_set`` (``mature`` or ``legacy``) of ``dataset``, with the baseline and status
+    quo scored as ``emva.eval.report.build_report`` scores them; None when that test set is empty or has a single
+    class. ``leads`` is ``emva.io.load(dataset)`` if already loaded. Raises ``ValueError`` if a test lead has no score
+    (the run and dataset do not match)."""
     if test_set not in TEST_SETS:
         raise ValueError(f"test set must be one of {TEST_SETS}, got {test_set!r}")
     L = load(dataset) if leads is None else leads
-    _, _, y_a, y_b = frozen_test_labels(L)
+    X, _, y_a, y_b = frozen_test_labels(L)
     y = y_b if test_set == "mature" else y_a
     if len(y) == 0 or y.nunique() < 2:
         return None
@@ -114,50 +141,48 @@ def evaluate(run_dir: str | Path, dataset: str | Path, test_set: str = "mature",
     if len(missing):
         raise ValueError(f"the run has no score for {len(missing)} test leads (e.g. {list(missing[:3])}); "
                          "was it trained on this dataset?")
+    models, notes = [], []
+    base, why = _baseline(dataset)
+    if base is None:
+        notes.append(why)
+    else:
+        models.append(ScoredModel(BASELINE, base.p_formula, base.value_formula))
+    models.append(ScoredModel(CANDIDATE, s.p_formula.loc[X.index], s.value_formula.loc[X.index]))
     rules = Path(dataset) / RULES_FILE
-    sq = status_quo_value(L.loc[y.index], load_rules(rules)).sq_value if rules.exists() else None
-    return Evaluation(name=test_set, test=TestSet(test_set, "", y, L.loc[y.index]), p=s.p_formula.loc[y.index],
-                      value=s.value_formula.loc[y.index], sq_value=sq,
+    if rules.exists():
+        models.append(ScoredModel(STATUS_QUO, None, status_quo_value(L.loc[X.index], load_rules(rules)).sq_value))
+    else:
+        notes.append(f"The dataset has no {RULES_FILE}, so there is no status-quo row.")
+    return Evaluation(name=test_set, test=TestSet(test_set, "", y, L.loc[y.index]), models=models, notes=notes,
                       base_rate=training_base_rate(s, L.created_at))
 
 
-def headline(ev: Evaluation, n_resamples: int = N_RESAMPLES) -> pd.DataFrame:
-    """The standard table's headline rows (model, then status quo when available), numeric.
-
-    Columns: ``model``, ``auc``, ``auc_lo``, ``auc_hi`` (percentile bootstrap, ``n_resamples``, seed 0), ``brier``
-    (NaN for the status quo, which has no probability), ``top20_wins``, ``top20_revenue_p`` (revenue captured by
-    the top 20% ranked by p; status quo by its value), ``top20_revenue_value`` (ranked by p × value), ``n``, ``wins``.
-    """
-    y, rev = ev.test.y, ev.test.revenue
-    rows = []
-    models = [(CANDIDATE, ev.p, ev.value)] + ([(STATUS_QUO, None, ev.sq_value)] if ev.sq_value is not None else [])
-    for name, p, value in models:
-        rank = (value if p is None else p).to_numpy()
-        ci = auc_ci(y.to_numpy(), rank, n_resamples)
-        rows.append({"model": name, "auc": ci.point, "auc_lo": ci.lo, "auc_hi": ci.hi,
-                     "brier": np.nan if p is None else brier_score_loss(y, np.clip(p, 0, 1)),
-                     "top20_wins": top_share(y, rank), "top20_revenue_p": top_share(rev, rank),
-                     "top20_revenue_value": top_share(rev, value.to_numpy()), "n": len(y), "wins": int(y.sum())})
-    return pd.DataFrame(rows)
+def standard_table(ev: Evaluation, n_resamples: int = N_RESAMPLES) -> tuple[pd.DataFrame, pd.DataFrame | None]:
+    """``(headline, paired)`` from ``emva.eval.report.headline_frame`` / ``paired_frame``, the functions behind the
+    standard report; ``paired`` (each model vs the baseline) is None without a baseline row."""
+    head = headline_frame(ev.test, ev.models, n_resamples, SEED)
+    paired = paired_frame(ev.test, ev.models, n_resamples, SEED) if ev.model(BASELINE) is not None else None
+    return head, paired
 
 
 def calibration(ev: Evaluation) -> pd.DataFrame:
     """Mean predicted vs observed win rate per decile of p on the test set (``calibration_by_decile``)."""
-    return calibration_by_decile(ev.test.y, ev.p.to_numpy())
+    return calibration_by_decile(ev.test.y, ev.candidate.p.loc[ev.test.ids].to_numpy())
 
 
 def auc_month(ev: Evaluation, n_resamples: int = N_RESAMPLES) -> pd.DataFrame:
     """AUC per test month (``auc_by_month``) plus ``auc_lo`` / ``auc_hi``: a bootstrap CI for months with both
     classes and at least ``MIN_MONTH_FOR_CI`` leads, NaN otherwise."""
     y, created = ev.test.y, ev.test.leads.created_at
-    out = auc_by_month(y, ev.p.to_numpy(), created)
+    p = ev.candidate.p.loc[ev.test.ids].to_numpy()
+    out = auc_by_month(y, p, created)
     months = created.dt.strftime("%Y-%m")
     lo, hi = [], []
     for m, n in zip(out.month, out.n):
         mask = (months == m).to_numpy()
         ym = y.to_numpy()[mask]
         if n >= MIN_MONTH_FOR_CI and 0 < ym.sum() < len(ym):
-            ci = auc_ci(ym, ev.p.to_numpy()[mask], n_resamples)
+            ci = auc_ci(ym, p[mask], n_resamples)
             lo.append(ci.lo)
             hi.append(ci.hi)
         else:
@@ -173,14 +198,18 @@ def value_distribution(run_dir: str | Path) -> pd.DataFrame:
     """Scale of the run's value columns over every scored lead (``emva.eval.value_report.scale_stats``).
 
     One row per column present (``value_at_submit`` is absent for legacy-label runs): ``column``, ``label``, ``p1``,
-    ``p50``, ``p90``, ``p99``, ``max``, ``max_over_median``, ``top1pct_share``, ``n``.
+    ``p50``, ``p90``, ``p99``, ``max``, ``max_over_median``, ``top1pct_share``, ``n`` and ``skipped`` (True, stats
+    NaN, when the median or total is not positive).
     """
     s = load_scores(run_dir)
     rows = []
     for col, label in VALUE_COLUMNS.items():
         if col in s and s[col].notna().any():
             v = s[col].dropna()
-            rows.append({"column": col, "label": label, **scale_stats(v), "n": len(v)})
+            if np.median(v) <= 0 or v.sum() <= 0:  # scale_stats' ratios are undefined; say so instead of raising
+                rows.append({"column": col, "label": label, "n": len(v), "skipped": True})
+                continue
+            rows.append({"column": col, "label": label, **scale_stats(v), "n": len(v), "skipped": False})
     return pd.DataFrame(rows)
 
 
@@ -189,6 +218,6 @@ def top_fraction_label() -> str:
     return f"top {int(TOP_FRACTION * 100)}%"
 
 
-__all__ = ["CANDIDATE", "Evaluation", "FEATURE_LABELS", "STATUS_QUO", "TEST_SETS", "VALUE_COLUMNS", "auc_month",
-           "calibration", "evaluate", "feature_label", "headline", "load_scores", "scorecard", "training_base_rate",
+__all__ = ["BASELINE", "CANDIDATE", "Evaluation", "FEATURE_LABELS", "STATUS_QUO", "TEST_SETS", "VALUE_COLUMNS", "auc_month",
+           "calibration", "evaluate", "feature_label", "load_scores", "scorecard", "standard_table", "training_base_rate",
            "value_distribution"]
