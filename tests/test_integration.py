@@ -184,6 +184,13 @@ def test_report_contains_both_label_definitions(report_text, v1_horizon):
     assert row.startswith("| all leads labelled by legacy rules (train + test) | 8041 | 15.0% | 24.5% | 24.4% | 16.5% | 27.5% |")
 
 
+def test_report_contains_the_value_sections(report_text):
+    assert "## Value transforms (plan 3.2)" in report_text and "## Click-ID coverage (plan 3.5)" in report_text
+    # the baseline's scale over all scored leads (Phase 0 measured 121.7× / 11.5%)
+    assert "| baseline (identity) | 11 | 374 | 6317 | 17841 | 45562 | 121.7× | 11.5% |" in report_text
+    assert "| cap p97 + log + floor £25 | PASS |" in report_text
+
+
 def test_report_runs_the_collinearity_check(report_text):
     text = _section(report_text, "Design collinearity (plan 2.7): FAIL")
     assert "Candidate design (`v2` features, 39 columns) on its 4049 training rows" in text
