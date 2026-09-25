@@ -17,6 +17,7 @@ import generate_data_v1 as gen  # noqa: E402
 from emva.design import design  # noqa: E402
 from emva.features import text_cat  # noqa: E402
 from emva.io import load  # noqa: E402
+from emva.labels import LEGACY  # noqa: E402
 from emva.pipeline import build  # noqa: E402
 
 N = 2000
@@ -174,7 +175,7 @@ def test_sanity_ranges(v1, g):
 
 
 def test_baseline_pipeline_runs_on_output(run_a):
-    X = build(load(run_a))
+    X = build(load(run_a), LEGACY)  # the baseline labels; horizon is the default since Phase 1
     assert len(X) > 0.9 * N * 0.9
     assert X.y.notna().sum() > 0.6 * len(X)
     assert 0.08 < X.y.mean() < 0.25
