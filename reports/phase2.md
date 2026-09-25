@@ -1,85 +1,87 @@
 # Phase 2: features and leakage
 
-Branch `phase2-features` from `origin/main` 92168cf. Plan items 2.1 to 2.7, then the orchestrator's
-indicator-encoding ruling. `--feature-set {legacy,v2}` (default `v2`) sits next to `--label-mode`;
-`--label-mode legacy --feature-set legacy` is still byte-identical to `baseline/` (`make baseline`
-passes; weights.csv and scores.csv byte-identical).
+Branch `phase2-features` from `origin/main` 92168cf, with `origin/main` merged in twice (Phase 5 v2 at
+504f11c / 01c56f4, then the docs context layer at e98a586). Plan items 2.1 to 2.7 plus the orchestrator's
+rulings below. `--feature-set {legacy,v2}` (default `v2`) sits next to `--label-mode`;
+`--label-mode legacy --feature-set legacy` is byte-identical to `baseline/` (`make baseline` passes).
 
-v2 numbers use `data/v2` from `origin/phase5-generator-v2` at ae5b7c6 (the data files come from
-5c32dd8, "data/v2: generate_data_v2.py, seed 20260924, n 10000, with paraphrase"), extracted with
-`git archive`; it is not on this branch.
+**v2 data:** `data/v2` on this branch, as merged from `main` (regenerated at da72dad, "Regenerate data/v2
+after the review fixes (paraphrase on)"; merged via 504f11c / 01c56f4). All v2-data numbers below are
+from that data.
 
 ## Orchestrator decisions (review of Phase 2)
 
-- **Deviation 1 (pruning identical design columns per dataset): not accepted.** The model's
-  column set must be fixed by the feature spec (single-row scoring and a hosted app need a stable
-  schema). Replaced by explicit indicators:
+- **Deviation 1 (data-dependent pruning of identical design columns): not accepted (ADR 0009).** The
+  model's column set must be fixed by the feature spec. Implemented as:
   - `session_missing` (yes/no): yes when the on-site session is absent (blank `landing_url`, or any
-    of the behavioural inputs blank). The seven behavioural features (`time_on_page`,
-    `hesitation_90s`, `sessions_3plus`, `viewed_pricing`, `ip_country`, `ip_type`, `business_hours`)
-    then take their reference level and the indicator carries the effect. Their individual `missing`
-    levels are gone.
-  - `enrichment_missing` (yes/no) as before; `spend`, `crm`, `hiring` take their reference level
-    without enrichment. `band` keeps its own `missing` level (the typed company-size fallback makes
-    it distinct from the indicator).
-  - No automatic column dropping anywhere. The 2.7 check stays strict and runs in the report.
-- **Deviation 2** (the legacy residual-sd constant in `emva/eval/regression.py`, imported by the
-  pipeline for `--feature-set legacy` only): accepted; the import site now carries a one-line comment.
-- **Deviations 3 to 8:** accepted.
-
-What the ruling means on v1: every session-less v1 lead is a Meta lead-ads lead (932 of 932, and no
-other lead lacks telemetry), so `session_missing=yes` and `channel=meta_leadads` are the same column.
-**The collinearity check therefore fails on v1 for the v2 feature set, on exactly that one pair
-(|corr| = 1.000), and `make report` / `python -m emva.eval.report` exit 1 on v1.** This is a property
-of the data, not of the feature design. On data/v2, 1,278 consent-declined website leads also have
-`session_missing=yes`, the two columns separate, and the check passes (max |corr| 0.820). The legacy
-feature set's failure (`email=free` = `no_company=yes`) is a design flaw: v2 fixes it on both datasets.
+    behavioural input blank). The seven behavioural features (`time_on_page`, `hesitation_90s`,
+    `sessions_3plus`, `viewed_pricing`, `ip_country`, `ip_type`, `business_hours`) then take their
+    reference level and the indicator carries the effect.
+  - `enrichment_missing` (yes/no); `spend`, `crm`, `hiring` take their reference level without
+    enrichment; `band` keeps its own `missing` level (the typed company-size fallback makes it distinct).
+  - **Fixed level lists:** `emva.constants.V2_LEVELS` declares every v2 feature's complete level list
+    (reference first); `emva.design.fixed_design` emits exactly those columns (**39 for the v2 feature
+    set**) whatever occurs in the data. A level absent from the data gives an all-zero column (a one-row
+    frame gets the full schema); an undeclared value raises `ValueError` naming the feature. The legacy
+    design stays data-driven (byte identity).
+  - No automatic column dropping. `python -m emva.eval.collinearity` is strict (exit 1). The standard
+    report prints the check as a PASS/FAIL section and exits 1 only with `--strict`, so `make report`
+    on v1 is not failed by a data property.
+- **Deviation 2** (legacy residual-sd constant in `emva/eval/regression.py`, imported by the pipeline for
+  `--feature-set legacy` only): accepted; commented at the import site. **Deviations 3 to 8:** accepted.
+- **R5 (ADR 0011).** The "no identical coefficients" and collinearity criteria are evaluated on
+  `data/v2`: on v1, `session_missing` and `channel=meta_leadads` are the same column by construction of
+  the data (every session-less v1 lead is a lead-ads lead), not of the model. Phase 2 passes on v2; the
+  AUC criterion passes on v1. Both results are kept below.
+- **R6 (ADR 0011).** The boilerplate detector's low recall on paraphrased v2 text (0.062 now) is a
+  known gap handed to Phase 6: semantic detection belongs to the context agent. Not fixed here.
+- **R7 (ADR 0011).** The residual sd estimated on v2 (0.5505 vs the old fixed 0.45) is evidence for plan
+  2.4: a hard-coded generator constant would understate v2 deal values.
 
 ## Acceptance
 
-| criterion | v1 | v2 data (ae5b7c6) |
-|---|---|---|
-| No two coefficients identical to 3 dp | **fail**, on the one structural pair above: `channel=meta_leadads` = `session_missing=yes` = −0.345 (horizon) / −0.273 (legacy labels). The columns are identical, so the L2 penalty splits one effect equally between them (sum −0.690 / −0.546). Also one coincidental tie in the default model: `hiring=hiring` = `band=1000+` = 0.382 (corr +0.217). The baseline's `email=free` = `no_company=yes` tie is gone. | **pass**: no equal pair in v2 + horizon or v2 + legacy labels |
-| Lead-ads leads no longer in the reference bucket for every behavioural feature | **changed by the ruling, pass as re-specified**: the 932 lead-ads leads sit in the reference level of all seven behavioural features *and* carry `session_missing=yes` (intended encoding). `session_missing=yes` weight −0.345 (horizon) / −0.273 (legacy labels), but on v1 it is inseparable from the lead-ads channel weight (same column). | 872 lead-ads leads plus 1,278 consent-declined website leads have `session_missing=yes`; weight **+0.632** (horizon) / +0.559 (legacy labels), now separately identified from `channel=meta_leadads` (−0.933 / −0.762) |
-| AUC within the baseline CI [0.789, 0.836], legacy test set | **pass**: v2 + legacy labels 0.816 [0.792, 0.838], paired vs baseline +0.002 [−0.002, +0.006]; v2 + horizon 0.814 [0.790, 0.837], paired +0.000 [−0.006, +0.006] | v2 features 0.802 (legacy labels) / 0.803 (horizon) vs legacy features 0.785, paired +0.018 [+0.010, +0.026] / +0.019 [+0.011, +0.027] |
-| AUC on the frozen mature test set (R3) | reported: v2 + legacy labels 0.781 [0.730, 0.828], paired +0.002 [−0.005, +0.011]; v2 + horizon 0.778 [0.730, 0.827], paired +0.000 [−0.015, +0.015] | v2 + horizon 0.805 vs legacy features 0.791, paired +0.014 [−0.002, +0.031]; v2 + legacy labels +0.017 [+0.001, +0.036] |
-| 2.7 collinearity (strict) | v2 **FAIL** on `channel=meta_leadads` ~ `session_missing=yes` only (data property); legacy FAIL on `email=free` ~ `no_company=yes` | v2 **PASS**, max 0.820 (`enrichment_missing=yes` ~ `band=missing`); legacy passes too (0.690) because v2 data breaks the free-email / no-company identity |
-| `grep -rn "0.45\|ground_truth" emva/` only `emva/eval/` | **pass** (test-enforced) | n/a |
+| criterion | evaluated on | result | numbers |
+|---|---|---|---|
+| No two coefficients identical to 3 dp | **data/v2 (R5)** | **pass** for the default model (v2 features, horizon labels): no equal pair | v2 features + legacy labels on v2 has one coincidental tie, `sessions_3plus=yes` = `hiring=hiring` = 0.062 (corr 0.000), not a duplicated column. v1 for reference: `channel=meta_leadads` = `session_missing=yes` = −0.345 (identical columns; the L2 penalty splits one effect equally), plus a coincidental `hiring=hiring` = `band=1000+` = 0.382 |
+| Collinearity, no pair above 0.95 | **data/v2 (R5)** | **pass** | v2 features: max |corr| 0.817 horizon / 0.813 legacy labels (`enrichment_missing=yes` ~ `band=missing`). v1 for reference: FAIL on exactly `channel=meta_leadads` ~ `session_missing=yes` (1.000); legacy features FAIL on `email=free` ~ `no_company=yes` (1.000) on v1 and pass on v2 (0.690) |
+| Lead-ads leads not silently in the reference bucket | v1 and v2 | **pass as re-specified** | v1: all 932 lead-ads leads have the seven behavioural features at reference and `session_missing=yes` (weight −0.345, not separable from the channel on v1). v2: 872 lead-ads + 1,278 consent-declined website leads have `session_missing=yes`; weight +0.536 horizon / +0.530 legacy labels, separately identified from `channel=meta_leadads` (−0.775 / −0.679) |
+| AUC within the baseline CI [0.789, 0.836], legacy test set | **v1** | **pass** | v2 features + legacy labels 0.816 [0.792, 0.838], paired vs baseline +0.002 [−0.002, +0.006]; + horizon labels 0.814 [0.790, 0.837], paired +0.000 [−0.006, +0.006] |
+| AUC on the frozen mature test set (R3) | v1 | reported | 0.781 [0.730, 0.828] (legacy labels), 0.778 [0.730, 0.827] (horizon); paired +0.002 / +0.000 |
+| grep `0.45\|ground_truth` only in `emva/eval/` | code | **pass** (test-enforced) | |
 
-On v2 data the v2 features beat legacy features by +0.014 to +0.019 AUC; on v1 they are level.
+v2 data, v2 vs legacy features on the same labels (paired, 1,000 resamples): legacy test set (n = 2,309)
++0.015 [+0.007, +0.024] with either label definition; mature test set (n = 441) +0.014 [−0.003, +0.030]
+(legacy labels) and +0.014 [−0.003, +0.029] (horizon). AUC 0.806 vs 0.791 (horizon labels, legacy test
+set). On v1 the two feature sets are level (+0.001 to +0.002, CIs include 0).
 
 ## Indicator weights
 
-| weight (log-odds) | v1, legacy labels | v1, horizon (default) | v2 data, legacy labels | v2 data, horizon |
+| log-odds | v1, legacy labels | v1, horizon (default) | v2, legacy labels | v2, horizon |
 |---|---|---|---|---|
-| session_missing=yes | −0.273 | −0.345 | +0.559 | +0.632 |
-| channel=meta_leadads | −0.273 | −0.345 | −0.762 | −0.933 |
-| enrichment_missing=yes | +0.091 | +0.168 | +0.018 | +0.039 |
-| band=missing | +0.041 | −0.084 | +1.176 | +1.128 |
-| email=free | −1.090 | −1.115 | −1.390 | −1.500 |
+| session_missing=yes | −0.273 | −0.345 | +0.530 | +0.536 |
+| channel=meta_leadads | −0.273 | −0.345 | −0.679 | −0.775 |
+| enrichment_missing=yes | +0.091 | +0.168 | −0.159 | −0.066 |
+| band=missing | +0.041 | −0.084 | +1.173 | +0.981 |
+| email=free | −1.090 | −1.115 | −1.308 | −1.282 |
 
-On v1 the first two rows are one effect split in half (see above). On v2 data the positive
-`session_missing` and the large positive `band=missing` weights are what the fitted model says; I
-have not checked them against the v2 generator's planted effects (Phase 5's ground truth) and flag
-them for that review.
+On v1 the first two rows are one effect split in half. The positive `session_missing` and large
+positive `band=missing` weights on v2 are what the fitted model says; I have not checked them against
+the v2 generator's planted effects and flag them for the Phase 5 / Phase 4 review.
 
-## Other required numbers (v1 unless stated)
+## Other required numbers
 
-- **2.3 match count:** of the **2,904** cleaned domain-miss leads, **948 (32.6%)** match a
-  companies.csv name exactly after normalisation; ground truth confirms 948/948. On v2 data: 2,079 of
-  4,772 (43.6%), again all correct. Exact match only, no fuzzy matching.
+- **2.3 match count:** v1: of **2,904** cleaned domain-miss leads, **948 (32.6%)** match a companies.csv
+  name exactly after normalisation; ground truth confirms 948/948. v2: 2,081 of 4,763 (43.7%), all
+  correct. Exact match only.
 - **2.5 boilerplate:** Jaccard ≥ **0.6**, 16 snippets. v1: precision 1.000, recall 1.000 (807/807).
-  **v2 data: precision 1.000, recall 0.065 (53 of 817)**; the legacy prefix rule gets 0.016. The
-  paraphrased v2 boilerplate is not close to any snippet by token overlap. The detector is no longer a
-  template match, but it is not good enough for v2 text; that is Phase 6's context layer (or a
-  better snippet list / embedding similarity).
-- **2.6:** re-run after the ruling (1,000 refits, horizon labels): c_budget, c_timeline, ip_type,
-  edits_1_4 all still dropped; no level's CI excludes zero. `ip_type` now has only its `dc` level.
-- **2.7 max |corr|:** see acceptance; full CLI output in "Collinearity and pipeline runs" below.
-- **2.4 value model:** fixed sd 0.45 (correction 1.1066) vs estimated **0.4546** (1.1089) on v1;
-  on v2 data the estimated sd is **0.5516** (1.1643), so the fixed constant would under-state v2
-  deal values by 5%. Top-20% capture by p×value is unchanged by construction (a constant factor).
-  Mean predicted / mean recorded deal value on won test leads: v1 0.968 → 0.970, v2 data 0.899 → 0.945.
+  v2: precision 1.000, **recall 0.062** (50/812); legacy prefix rule 0.012. Handed to Phase 6 (R6).
+- **2.6:** re-run on the final design (1,000 refits, horizon labels, v1): c_budget, c_timeline, ip_type,
+  edits_1_4 all dropped (no level's CI excludes zero).
+- **2.7:** see acceptance; full CLI output in "Collinearity and pipeline runs".
+- **2.4 value model (R7):** v1: fixed 0.45 (correction 1.1066) vs estimated **0.4546** (1.1089). v2:
+  estimated **0.5505** (1.1636); mean predicted / mean recorded deal value on won test leads 0.910 with
+  the fixed constant vs 0.957 estimated (horizon), 0.970 vs 1.020 (legacy labels). Top-20% capture by
+  p×value is unchanged by construction (a constant factor).
 
 ## Before/after weights for changed features (v1)
 
@@ -106,51 +108,43 @@ them for that review.
 
 ## What was done
 
-- **Switch.** `emva.features.FeatureSet`, `--feature-set` for `python -m emva`, `emva.eval.report`,
-  `emva.eval.collinearity`. The legacy path is intact; `make baseline` runs
-  `--label-mode legacy --feature-set legacy`. Phase 1 study scripts and `scripts/compare_to_v1.py`
-  are pinned to legacy features.
-- **2.1** (as ruled) `session_missing` from `emva.features.session_absent`; behavioural features at
-  reference when it is yes; no channel rule in `business_hours`.
-- **2.2** (as ruled) `enrichment_missing` replaces `no_company`; `spend`/`crm`/`hiring` at reference
-  without enrichment; `band` = enrichment → typed size → `missing`.
-- **2.3** `emva.io.normalise_company_name` / `match_company_names`: exact match after lower-casing,
-  punctuation handling and trailing legal-suffix stripping (the plan's list plus `sas`); ambiguous
-  names skipped.
-- **2.4** `emva.value.DealValueModel`: sd = sample sd of the in-sample training residuals of the
-  log-value ridge; correction exp(sd²/2).
+- **Switch.** `emva.features.FeatureSet`, `--feature-set` on `python -m emva`, `emva.eval.report`,
+  `emva.eval.collinearity`. Legacy path intact; `make baseline` runs `--label-mode legacy --feature-set
+  legacy`. Phase 1 study scripts and `scripts/compare_to_v1.py` pinned to legacy features.
+- **2.1 / 2.2** indicator encoding and fixed level lists as ruled (above).
+- **2.3** `emva.io.normalise_company_name` / `match_company_names`: lower-case, dots and apostrophes
+  dropped, other punctuation to spaces, whitespace collapsed, trailing legal suffixes stripped (the plan's
+  list plus `sas`); ambiguous names skipped; exact match only.
+- **2.4** `emva.value.DealValueModel`: sd = sample sd of the in-sample training residuals of the log-value
+  ridge; correction exp(sd²/2).
 - **2.5** `emva/boilerplate.py`, token-set Jaccard, threshold 0.6 (configurable).
-- **2.6** `python -m emva.eval.feature_selection`, outcome hard-coded in `emva.features.V2_DROPPED`.
-- **2.7** `emva/eval/collinearity.py`; the report prints every pair above 0.95 and exits 1.
+- **2.6** `python -m emva.eval.feature_selection`; outcome hard-coded in `emva.features.V2_DROPPED`.
+- **2.7** `emva/eval/collinearity.py` (strict CLI); report section with `--strict`.
 
 ## Deviations, not done, open questions
 
-1. `make report` exits 1 on v1 with the default feature set (the ruling's intended behaviour; the
-   report text is still printed in full). Anything scripting `make report` on v1 will see the failure.
-2. `design()` still builds dummies from the levels present in the data (baseline behaviour): a level
-   that never occurs produces no column. The ruling removed the data-dependent *pruning*; making the
-   level list itself fixed (declared levels per feature) is not done and would be the next step for a
-   stable scoring schema.
-3. The coincidental 3-dp tie `hiring=hiring` = `band=1000+` in the default v1 model is reported, not
-   engineered away.
-4. Boilerplate recall on v2 data is 6.5% (above).
-5. The v2-data weights for `session_missing` and `band=missing` are unexplained here (above).
-6. Accepted earlier: legacy constant location, `sas` suffix, 948 matches, no missing level for the
-   dropped `edits_1_4`, intermediate commits not individually green, one-line changes in
-   `scripts/compare_to_v1.py` and `tests/test_generate_data_v1.py`.
+1. The deal-value design (`emva.value.deal_value_design`: band, sector, channel, spend) is still built
+   from the levels present in the data; the fixed-schema ruling was applied to the formula design only.
+   A hosted scorer needs the same treatment there (Phase 3 owns the value layer).
+2. Coincidental 3-dp ties between unrelated columns are reported (v1 default model; v2 with legacy
+   labels), not engineered away.
+3. The v2-data weights for `session_missing` and `band=missing` are unexplained here (above).
+4. Accepted earlier: legacy constant location, `sas` suffix, 948 matches, no missing level for the
+   dropped `edits_1_4`, intermediate commits not all green, one-line changes in `scripts/compare_to_v1.py`
+   and `tests/test_generate_data_v1.py`.
 
 ## Commands
 
 ```
 make PY=.venv/bin/python baseline
-python -m emva.eval.report                       # (1) v2 features, horizon labels (default); exits 1 on v1
-python -m emva.eval.report --label-mode legacy   # (2) v2 features, legacy labels; exits 1 on v1
-python -m emva.eval.phase2_study [--data DIR]
+python -m emva.eval.report [--strict]                     # v2 features, horizon labels (default)
+python -m emva.eval.report --label-mode legacy [--strict] # v2 features, legacy labels
+python -m emva.eval.phase2_study [--data data/v2]
 python -m emva.eval.feature_selection --n-refits 1000
-python -m emva.eval.collinearity [--data DIR] [--feature-set legacy] [--label-mode legacy]
+python -m emva.eval.collinearity [--data DIR] [--feature-set legacy] [--label-mode legacy]   # strict
 ```
 
-The outputs follow, verbatim (v2 data path shortened to `data/v2`).
+The outputs follow, verbatim.
 
 
 ---
@@ -209,58 +203,58 @@ feature set legacy, labels legacy, 5588 training rows, 47 design columns
 (exit 1)
 ```
 
-### data/v2 (origin/phase5-generator-v2 @ ae5b7c6): `--label-mode horizon --feature-set v2`
+### data/v2 (main, regenerated at da72dad): `--label-mode horizon --feature-set v2`
 
 ```
 $ python -m emva --label-mode horizon --feature-set v2
   model   auc  brier  top20_wins  top20_revenue
-formula 0.805 0.1138       0.493          0.712
+formula 0.795 0.1215       0.513          0.728
 $ python -m emva.eval.collinearity --label-mode horizon --feature-set v2
-feature set v2, labels horizon H=120, 3787 training rows, 39 design columns
-- PASS: max |corr| = 0.820 between enrichment_missing=yes and band=missing
+feature set v2, labels horizon H=120, 3789 training rows, 39 design columns
+- PASS: max |corr| = 0.817 between enrichment_missing=yes and band=missing
 (exit 0)
 ```
 
-### data/v2 (origin/phase5-generator-v2 @ ae5b7c6): `--label-mode horizon --feature-set legacy`
+### data/v2 (main, regenerated at da72dad): `--label-mode horizon --feature-set legacy`
 
 ```
 $ python -m emva --label-mode horizon --feature-set legacy
   model   auc  brier  top20_wins  top20_revenue
-formula 0.791 0.1164       0.493          0.657
+formula 0.781 0.1249       0.513          0.685
 $ python -m emva.eval.collinearity --label-mode horizon --feature-set legacy
-feature set legacy, labels horizon H=120, 3787 training rows, 47 design columns
+feature set legacy, labels horizon H=120, 3789 training rows, 47 design columns
 - PASS: max |corr| = 0.690 between ip_country=mismatch and ip_type=dc
 (exit 0)
 ```
 
-### data/v2 (origin/phase5-generator-v2 @ ae5b7c6): `--label-mode legacy --feature-set v2`
+### data/v2 (main, regenerated at da72dad): `--label-mode legacy --feature-set v2`
 
 ```
 $ python -m emva --label-mode legacy --feature-set v2
   model   auc  brier  top20_wins  top20_revenue
-formula 0.802 0.0999       0.541           0.79
+formula 0.804 0.0965       0.541          0.766
 $ python -m emva.eval.collinearity --label-mode legacy --feature-set v2
-feature set v2, labels legacy, 5507 training rows, 39 design columns
-- PASS: max |corr| = 0.814 between enrichment_missing=yes and band=missing
+feature set v2, labels legacy, 5509 training rows, 39 design columns
+- PASS: max |corr| = 0.813 between enrichment_missing=yes and band=missing
 (exit 0)
 ```
 
-### data/v2 (origin/phase5-generator-v2 @ ae5b7c6): `--label-mode legacy --feature-set legacy`
+### data/v2 (main, regenerated at da72dad): `--label-mode legacy --feature-set legacy`
 
 ```
 $ python -m emva --label-mode legacy --feature-set legacy
   model   auc  brier  top20_wins  top20_revenue
-formula 0.785 0.1025       0.529          0.728
+formula 0.789 0.0983       0.525          0.722
 $ python -m emva.eval.collinearity --label-mode legacy --feature-set legacy
-feature set legacy, labels legacy, 5507 training rows, 47 design columns
-- PASS: max |corr| = 0.693 between ip_country=mismatch and ip_type=dc
+feature set legacy, labels legacy, 5509 training rows, 47 design columns
+- PASS: max |corr| = 0.686 between ip_country=mismatch and ip_type=dc
 (exit 0)
 ```
 
 
 ---
 
-## Output: `python -m emva.eval.report` on v1 (v2 features, horizon labels; exit 1, collinearity)
+## Output: `python -m emva.eval.report` on v1 (v2 features, horizon labels)
 
 ## EMVA standard report
 
@@ -425,9 +419,9 @@ Share of leads in the 10% of each population with the lowest p that are *ghosted
 | all mature leads, every label_source | 6278 | 19.2% | 30.6% | 31.3% | 19.2% | 30.6% | 31.3% |
 | mature leads created on or after 2026-05-01, every label_source | 650 | 21.7% | 29.2% | 27.7% | 21.7% | 29.2% | 27.7% |
 
-### Design collinearity (plan 2.7)
+### Design collinearity (plan 2.7): FAIL
 
-Candidate design (`v2` features, 39 columns) on its 4049 training rows; fails when two columns have |corr| > 0.95.
+Candidate design (`v2` features, 39 columns) on its 4049 training rows; fails when two columns have |corr| > 0.95. The report exits 1 on a failure only with `--strict`; `python -m emva.eval.collinearity` always does.
 
 - FAIL (1 pairs with |corr| > 0.95): max |corr| = 1.000 between channel=meta_leadads and session_missing=yes
   - channel=meta_leadads ~ session_missing=yes: +1.000
@@ -443,7 +437,7 @@ formula 0.814 0.1006       0.571          0.795
 
 ---
 
-## Output: `python -m emva.eval.report --label-mode legacy` on v1 (v2 features, legacy labels; exit 1)
+## Output: `python -m emva.eval.report --label-mode legacy` on v1 (v2 features, legacy labels)
 
 ## EMVA standard report
 
@@ -608,9 +602,9 @@ Share of leads in the 10% of each population with the lowest p that are *ghosted
 | all mature leads, every label_source | 6278 | 19.2% | 30.6% | 30.6% | 19.2% | 30.6% | 30.6% |
 | mature leads created on or after 2026-05-01, every label_source | 650 | 21.7% | 29.2% | 29.2% | 21.7% | 29.2% | 29.2% |
 
-### Design collinearity (plan 2.7)
+### Design collinearity (plan 2.7): FAIL
 
-Candidate design (`v2` features, 39 columns) on its 5588 training rows; fails when two columns have |corr| > 0.95.
+Candidate design (`v2` features, 39 columns) on its 5588 training rows; fails when two columns have |corr| > 0.95. The report exits 1 on a failure only with `--strict`; `python -m emva.eval.collinearity` always does.
 
 - FAIL (1 pairs with |corr| > 0.95): max |corr| = 1.000 between channel=meta_leadads and session_missing=yes
   - channel=meta_leadads ~ session_missing=yes: +1.000
@@ -746,8 +740,8 @@ Log-odds per design column. Empty = the column does not exist in that design. Th
 
 - baseline (weights.csv): email=free = no_company=yes (-0.391; corr +1.000); business_hours=wkday_9-18 = channel=organic_direct (0.160; corr +0.068)
 - legacy features, horizon labels: email=free = no_company=yes (-0.394; corr +1.000); viewed_pricing=yes = channel=linkedin (0.229; corr +0.027)
-- v2, legacy labels: channel=meta_leadads = session_missing=yes (-0.273; corr +1.000)
-- v2, horizon labels (default): channel=meta_leadads = session_missing=yes (-0.345; corr +1.000); hiring=hiring = band=1000+ (0.382; corr +0.217)
+- v2, legacy labels: session_missing=yes = channel=meta_leadads (-0.273; corr +1.000)
+- v2, horizon labels (default): session_missing=yes = channel=meta_leadads (-0.345; corr +1.000); hiring=hiring = band=1000+ (0.382; corr +0.217)
 
 ### 2.7 Collinearity
 
@@ -797,29 +791,29 @@ Exact match after normalisation (lower-case, dots/apostrophes dropped, other pun
 
 | quantity | value |
 |---|---|
-| cleaned leads | 9212 |
-| email-domain misses (no companies.csv row by domain) | 4772 |
-| ... with a typed company name (company_name or the company answer) | 2496 (52.3%) |
-| ... matched by exact normalised name | 2079 (43.6%) |
-| ... of which the historical_leads.company_name column matched | 2079 |
-| still without enrichment (enrichment_missing=yes) | 2693 (29.2%) |
-| truth: matched company's employee band = generator's band (ground truth) | 2079 (100.0%) |
-| truth: matched company's sector = generator's sector (ground truth) | 2079 (100.0%) |
-| truth: generator has_company among the matched | 2079 (100.0%) |
-| truth: generator has_company among unmatched domain misses | 1612 (59.9%) |
+| cleaned leads | 9209 |
+| email-domain misses (no companies.csv row by domain) | 4763 |
+| ... with a typed company name (company_name or the company answer) | 2494 (52.4%) |
+| ... matched by exact normalised name | 2081 (43.7%) |
+| ... of which the historical_leads.company_name column matched | 2081 |
+| still without enrichment (enrichment_missing=yes) | 2682 (29.1%) |
+| truth: matched company's employee band = generator's band (ground truth) | 2081 (100.0%) |
+| truth: matched company's sector = generator's sector (ground truth) | 2081 (100.0%) |
+| truth: generator has_company among the matched | 2081 (100.0%) |
+| truth: generator has_company among unmatched domain misses | 1612 (60.1%) |
 
-Most common unmatched typed names among domain misses: (blank) (2401), Self-employed (117), Freelance (109), Lindenwood Digital Incorporated (2), Brightwater Industries, Incorporated (1).
+Most common unmatched typed names among domain misses: (blank) (2390), Self-employed (116), Freelance (109), Lindenwood Digital Incorporated (2), Brightwater Industries, Incorporated (1).
 
 ### 2.5 Boilerplate detector
 
-Cleaned leads (9212); truth = the generator's `text_category == copy_paste` (ground truth, evaluation only). Similarity = token-set Jaccard with the closest of the snippets in `emva/boilerplate.py`.
+Cleaned leads (9209); truth = the generator's `text_category == copy_paste` (ground truth, evaluation only). Similarity = token-set Jaccard with the closest of the snippets in `emva/boilerplate.py`.
 
 | detector | flagged | true copy_paste | TP | FP | FN | precision | recall |
 |---|---|---|---|---|---|---|---|
-| v2 similarity (Jaccard >= 0.6) | 53 | 817 | 53 | 0 | 764 | 1.000 | 0.065 |
-| legacy prefix rule | 13 | 817 | 13 | 0 | 804 | 1.000 | 0.016 |
+| v2 similarity (Jaccard >= 0.6) | 50 | 812 | 50 | 0 | 762 | 1.000 | 0.062 |
+| legacy prefix rule | 10 | 812 | 10 | 0 | 802 | 1.000 | 0.012 |
 
-Similarity margin: lowest similarity among true copy_paste texts 0.000; highest among all other texts 0.214. The two overlap: no threshold separates boilerplate from other text on this data.
+Similarity margin: lowest similarity among true copy_paste texts 0.000; highest among all other texts 0.243. The two overlap: no threshold separates boilerplate from other text on this data.
 
 ### 2.1 Meta lead-ads leads: behavioural buckets
 
@@ -850,62 +844,62 @@ Log-odds per design column. Empty = the column does not exist in that design. Th
 
 | column | baseline (weights.csv) | legacy features, horizon labels | v2, legacy labels | v2, horizon labels (default) |
 |---|---|---|---|---|
-| band=1000+ | 0.703 | 0.591 | 1.254 | 0.798 |
-| band=11-50 | 0.193 | 0.287 | 0.433 | 0.389 |
-| band=201-1000 | 0.873 | 1.045 | 1.427 | 1.305 |
-| band=51-200 | 1.078 | 1.101 | 1.412 | 1.281 |
-| band=missing |  |  | 1.176 | 1.128 |
-| business_hours=wkday_9-18 | 0.160 | 0.476 | 0.321 | 0.449 |
-| c_budget=Under £5k | 0.122 | 0.144 |  |  |
-| c_budget=£20k-£50k | 0.152 | 0.103 |  |  |
-| c_budget=£50k+ | 0.149 | -0.142 |  |  |
-| c_budget=£5k-£20k | -0.082 | 0.193 |  |  |
-| c_timeline=Just researching | 0.126 | -0.194 |  |  |
-| c_timeline=Next 6 months | 0.019 | 0.274 |  |  |
-| c_timeline=This month | 0.002 | 0.217 |  |  |
-| c_timeline=This quarter | 0.195 | 0.001 |  |  |
-| channel=chatgpt | 0.053 | 0.079 | 0.022 | 0.098 |
-| channel=linkedin | 0.226 | 0.748 | 0.604 | 0.778 |
-| channel=meta | -0.259 | -0.279 | -0.287 | -0.261 |
-| channel=meta_leadads | -0.489 | -0.851 | -0.762 | -0.933 |
-| channel=organic_direct | 0.160 | 0.197 | 0.244 | 0.202 |
-| crm=hubspot_sf | 0.131 | 0.273 | 0.260 | 0.285 |
-| edits_1_4=yes | 0.050 | -0.080 |  |  |
-| email=free | -0.391 | -1.555 | -1.390 | -1.500 |
-| enrichment_missing=yes |  |  | 0.018 | 0.039 |
-| form_variant=B | 0.213 | 0.023 | 0.195 | 0.094 |
-| form_variant=C | 0.342 | 0.297 | 0.661 | 0.584 |
-| form_variant=D | -0.381 | -0.286 | -0.460 | -0.452 |
-| hesitation_90s=yes | -0.312 | -0.402 | -0.388 | -0.409 |
-| hiring=hiring | 0.360 | 0.081 | 0.100 | 0.096 |
-| ip_country=mismatch | -0.331 | -0.261 | -0.057 | -0.087 |
-| ip_type=dc | 0.022 | 0.381 |  |  |
-| no_company=yes | -0.391 | 0.781 |  |  |
-| search_term=brand | 0.155 | 0.593 | 0.462 | 0.641 |
-| search_term=not_google | -0.310 | -0.106 | -0.180 | -0.117 |
-| seniority=mid | 0.077 | 0.119 | 0.137 | 0.126 |
-| seniority=not_asked/blank | -0.277 | -0.104 | -0.537 | -0.273 |
-| seniority=senior | 0.481 | 0.155 | 0.418 | 0.196 |
-| seniority=student | -1.471 | -0.776 | -1.062 | -0.836 |
-| session_missing=yes |  |  | 0.559 | 0.632 |
-| sessions_3plus=yes | 0.406 | 0.200 | 0.211 | 0.231 |
-| spend=none | -0.571 | -0.469 | -0.347 | -0.368 |
-| spend=£100k+ | 0.429 | 0.606 | 0.336 | 0.292 |
-| spend=£25k-£100k | 0.484 | 0.476 | 0.443 | 0.498 |
-| spend=£5k-£25k | 0.246 | 0.271 | 0.141 | 0.224 |
-| text=copy_paste | -0.950 | 0.385 | 0.124 | 0.246 |
-| text=specific | 0.507 | 0.872 | 0.804 | 0.913 |
-| text=vague | -0.899 | -0.600 | -0.401 | -0.609 |
-| time_on_page=300-600s | -0.090 | -0.504 | -0.252 | -0.403 |
-| time_on_page=60-300s | 0.508 | -0.048 | 0.123 | 0.068 |
-| time_on_page=>600s | -0.214 | -0.343 | 0.005 | -0.146 |
-| viewed_pricing=yes | 0.229 | 0.406 | 0.463 | 0.443 |
+| band=1000+ | 0.703 | 0.817 | 1.144 | 0.798 |
+| band=11-50 | 0.193 | 0.310 | 0.480 | 0.431 |
+| band=201-1000 | 0.873 | 1.152 | 1.233 | 1.121 |
+| band=51-200 | 1.078 | 1.070 | 1.282 | 1.254 |
+| band=missing |  |  | 1.173 | 0.981 |
+| business_hours=wkday_9-18 | 0.160 | 0.312 | 0.296 | 0.281 |
+| c_budget=Under £5k | 0.122 | 0.113 |  |  |
+| c_budget=£20k-£50k | 0.152 | 0.011 |  |  |
+| c_budget=£50k+ | 0.149 | -0.141 |  |  |
+| c_budget=£5k-£20k | -0.082 | 0.287 |  |  |
+| c_timeline=Just researching | 0.126 | 0.004 |  |  |
+| c_timeline=Next 6 months | 0.019 | 0.184 |  |  |
+| c_timeline=This month | 0.002 | 0.297 |  |  |
+| c_timeline=This quarter | 0.195 | -0.215 |  |  |
+| channel=chatgpt | 0.053 | -0.096 | -0.144 | -0.078 |
+| channel=linkedin | 0.226 | 0.707 | 0.623 | 0.717 |
+| channel=meta | -0.259 | -0.344 | -0.339 | -0.355 |
+| channel=meta_leadads | -0.489 | -0.768 | -0.679 | -0.775 |
+| channel=organic_direct | 0.160 | 0.137 | 0.164 | 0.125 |
+| crm=hubspot_sf | 0.131 | 0.102 | 0.156 | 0.190 |
+| edits_1_4=yes | 0.050 | -0.095 |  |  |
+| email=free | -0.391 | -1.315 | -1.308 | -1.282 |
+| enrichment_missing=yes |  |  | -0.159 | -0.066 |
+| form_variant=B | 0.213 | -0.024 | 0.187 | 0.035 |
+| form_variant=C | 0.342 | 0.270 | 0.641 | 0.500 |
+| form_variant=D | -0.381 | -0.414 | -0.575 | -0.589 |
+| hesitation_90s=yes | -0.312 | -0.376 | -0.402 | -0.375 |
+| hiring=hiring | 0.360 | 0.077 | 0.062 | 0.082 |
+| ip_country=mismatch | -0.331 | -0.422 | -0.314 | -0.238 |
+| ip_type=dc | 0.022 | 0.380 |  |  |
+| no_company=yes | -0.391 | 0.495 |  |  |
+| search_term=brand | 0.155 | 0.305 | 0.162 | 0.312 |
+| search_term=not_google | -0.310 | -0.364 | -0.376 | -0.367 |
+| seniority=mid | 0.077 | 0.280 | 0.263 | 0.285 |
+| seniority=not_asked/blank | -0.277 | 0.107 | -0.264 | -0.040 |
+| seniority=senior | 0.481 | 0.275 | 0.506 | 0.300 |
+| seniority=student | -1.471 | -0.629 | -0.691 | -0.670 |
+| session_missing=yes |  |  | 0.530 | 0.536 |
+| sessions_3plus=yes | 0.406 | 0.041 | 0.062 | 0.070 |
+| spend=none | -0.571 | -0.531 | -0.479 | -0.515 |
+| spend=£100k+ | 0.429 | 0.200 | 0.428 | 0.368 |
+| spend=£25k-£100k | 0.484 | 0.329 | 0.426 | 0.421 |
+| spend=£5k-£25k | 0.246 | 0.193 | 0.236 | 0.292 |
+| text=copy_paste | -0.950 | 0.334 | -0.228 | -0.258 |
+| text=specific | 0.507 | 0.780 | 0.674 | 0.805 |
+| text=vague | -0.899 | -0.404 | -0.495 | -0.404 |
+| time_on_page=300-600s | -0.090 | -0.021 | 0.109 | 0.110 |
+| time_on_page=60-300s | 0.508 | 0.192 | 0.244 | 0.311 |
+| time_on_page=>600s | -0.214 | -0.069 | 0.046 | 0.123 |
+| viewed_pricing=yes | 0.229 | 0.499 | 0.568 | 0.534 |
 
 #### Coefficients equal to three decimals
 
-- baseline (weights.csv): email=free = no_company=yes (-0.391; corr +0.626); business_hours=wkday_9-18 = channel=organic_direct (0.160; corr +0.048)
-- legacy features, horizon labels: spend=£25k-£100k = business_hours=wkday_9-18 (0.476; corr +0.020)
-- v2, legacy labels: none
+- baseline (weights.csv): email=free = no_company=yes (-0.391; corr +0.626); business_hours=wkday_9-18 = channel=organic_direct (0.160; corr +0.049)
+- legacy features, horizon labels: none
+- v2, legacy labels: sessions_3plus=yes = hiring=hiring (0.062; corr +0.000)
 - v2, horizon labels (default): none
 
 ### 2.7 Collinearity
@@ -914,10 +908,10 @@ Threshold |corr| > 0.95 on the training rows of each model's design.
 
 | model | design columns | training rows | max |corr| | check | pairs above threshold |
 |---|---|---|---|---|---|
-| legacy features, legacy labels (baseline) | 47 | 5507 | 0.693 | pass | none |
-| legacy features, horizon labels | 47 | 3787 | 0.690 | pass | none |
-| v2, legacy labels | 39 | 5507 | 0.814 | pass | none |
-| v2, horizon labels (default) | 39 | 3787 | 0.820 | pass | none |
+| legacy features, legacy labels (baseline) | 47 | 5509 | 0.686 | pass | none |
+| legacy features, horizon labels | 47 | 3789 | 0.690 | pass | none |
+| v2, legacy labels | 39 | 5509 | 0.813 | pass | none |
+| v2, horizon labels (default) | 39 | 3789 | 0.817 | pass | none |
 
 ### Feature change alone: v2 vs legacy features, same labels
 
@@ -925,10 +919,10 @@ Paired bootstrap (1000 resamples, seed 0) of AUC(v2) − AUC(legacy features), b
 
 | labels | test set | AUC legacy features | AUC v2 features | v2 − legacy [95% CI] | bootstrap p |
 |---|---|---|---|---|---|
-| legacy | (a) legacy test set (n=2336) | 0.785 | 0.802 | +0.018 [+0.010, +0.026] | 0.000 |
-| legacy | (b) mature test set (n=448) | 0.787 | 0.804 | +0.017 [+0.001, +0.036] | 0.038 |
-| horizon H=120 | (a) legacy test set (n=2336) | 0.785 | 0.803 | +0.019 [+0.011, +0.027] | 0.000 |
-| horizon H=120 | (b) mature test set (n=448) | 0.791 | 0.805 | +0.014 [-0.002, +0.031] | 0.088 |
+| legacy | (a) legacy test set (n=2309) | 0.789 | 0.804 | +0.015 [+0.007, +0.024] | 0.000 |
+| legacy | (b) mature test set (n=441) | 0.776 | 0.790 | +0.014 [-0.003, +0.030] | 0.100 |
+| horizon H=120 | (a) legacy test set (n=2309) | 0.791 | 0.806 | +0.015 [+0.007, +0.024] | 0.000 |
+| horizon H=120 | (b) mature test set (n=441) | 0.781 | 0.795 | +0.014 [-0.003, +0.029] | 0.088 |
 
 ### 2.4 Deal-value model: residual sd
 
@@ -936,10 +930,10 @@ The correction is exp(sd²/2). It multiplies every lead's expected deal value by
 
 | model | residual sd | sd | correction | training deals | top-20% revenue by p×value (a) | top-20% revenue by p×value (b) | mean predicted / mean recorded deal value, won test leads | baseline-style top20_revenue (imputes blanks) |
 |---|---|---|---|---|---|---|---|---|
-| v2, legacy labels | fixed (baseline constant) | 0.4500 | 1.1066 | 753 | 0.7810 | 0.6875 | 0.975 | 0.7900 |
-| v2, legacy labels | estimated from training residuals | 0.5516 | 1.1643 | 753 | 0.7810 | 0.6875 | 1.026 | 0.7904 |
-| v2, horizon labels (default) | fixed (baseline constant) | 0.4500 | 1.1066 | 753 | 0.7503 | 0.6866 | 0.899 | 0.7112 |
-| v2, horizon labels (default) | estimated from training residuals | 0.5516 | 1.1643 | 753 | 0.7503 | 0.6866 | 0.945 | 0.7124 |
+| v2, legacy labels | fixed (baseline constant) | 0.4500 | 1.1066 | 760 | 0.7672 | 0.7231 | 0.970 | 0.7662 |
+| v2, legacy labels | estimated from training residuals | 0.5505 | 1.1636 | 760 | 0.7672 | 0.7231 | 1.020 | 0.7661 |
+| v2, horizon labels (default) | fixed (baseline constant) | 0.4500 | 1.1066 | 760 | 0.7785 | 0.7408 | 0.910 | 0.7287 |
+| v2, horizon labels (default) | estimated from training residuals | 0.5505 | 1.1636 | 760 | 0.7785 | 0.7408 | 0.957 | 0.7282 |
 
 
 ---
@@ -953,13 +947,13 @@ Data `data/v1`, labels `horizon H=120`, v2 design with every candidate feature, 
 | feature | level | log-odds [95% CI] | excludes 0 | n train |
 |---|---|---|---|---|
 | c_budget | c_budget=Under £5k | 0.069 [-0.305, 0.413] | no | 169 |
+| c_budget | c_budget=£5k-£20k | 0.058 [-0.313, 0.426] | no | 120 |
 | c_budget | c_budget=£20k-£50k | 0.105 [-0.272, 0.486] | no | 82 |
 | c_budget | c_budget=£50k+ | 0.027 [-0.464, 0.460] | no | 36 |
-| c_budget | c_budget=£5k-£20k | 0.058 [-0.313, 0.426] | no | 120 |
-| c_timeline | c_timeline=Just researching | 0.288 [-0.099, 0.672] | no | 121 |
-| c_timeline | c_timeline=Next 6 months | -0.079 [-0.496, 0.341] | no | 101 |
 | c_timeline | c_timeline=This month | -0.079 [-0.644, 0.432] | no | 41 |
 | c_timeline | c_timeline=This quarter | 0.129 [-0.225, 0.474] | no | 144 |
+| c_timeline | c_timeline=Next 6 months | -0.079 [-0.496, 0.341] | no | 101 |
+| c_timeline | c_timeline=Just researching | 0.288 [-0.099, 0.672] | no | 121 |
 | ip_type | ip_type=dc | 0.171 [-0.482, 0.741] | no | 104 |
 | edits_1_4 | edits_1_4=yes | -0.008 [-0.229, 0.240] | no | 2933 |
 
