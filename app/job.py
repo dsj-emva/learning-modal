@@ -14,7 +14,7 @@ import shlex
 import subprocess
 import sys
 
-from app.storage import get_run, update_run
+from app.storage import Run, get_run, update_run
 from app.training import TrainingConfig, finish_run, report_command, rules_available, training_command
 from emva.eval.bootstrap import N_RESAMPLES
 
@@ -41,17 +41,24 @@ def main(argv: list[str] | None = None) -> int:
     return rc
 
 
+def _display(cmd: list[str], run: Run) -> str:
+    """``cmd`` as a shell line for the log, with the dataset and run directories shown by name (the log is shown
+    in the app, which has no business printing server paths)."""
+    names = {run.dataset_path: f"<dataset {run.dataset}>", run.out_dir: f"<run {run.run_id}>"}
+    return shlex.join(["python", *(names.get(a, a) for a in cmd[1:])])
+
+
 def _train_and_report(root: str, run_id: str, report_resamples: int) -> int:
     """Run the training command and, when possible, the report; return the training exit code."""
     run = get_run(root, run_id)
     config = TrainingConfig(**run.args)
     cmd = training_command(run.dataset_path, run.out_dir, config)
-    _say(f"$ {shlex.join(['python', *cmd[1:]])}")
+    _say(f"$ {_display(cmd, run)}")
     rc = subprocess.run(cmd, stdin=subprocess.DEVNULL).returncode
     _say(f"[train] exit code {rc}")
     if rc == 0 and rules_available(run.dataset_path):
         rep = report_command(run.dataset_path, config, n_resamples=report_resamples)
-        _say(f"$ {shlex.join(['python', *rep[1:]])} > report.txt")
+        _say(f"$ {_display(rep, run)} > report.txt")
         with open(run.report_path, "w", encoding="utf-8") as out:
             rrc = subprocess.run(rep, stdout=out, stdin=subprocess.DEVNULL).returncode
         _say(f"[report] exit code {rrc}" + ("" if rrc == 0 else " (the model is fine; the report failed)"))

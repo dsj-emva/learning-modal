@@ -129,7 +129,8 @@ def stage_chart(counts: dict[str, int]) -> go.Figure:
                          textfont=dict(family=FONT_MONO, size=11, color=PALETTE["muted"]),
                          hovertemplate="%{y}: %{x:,} leads<extra></extra>"))
     fig.update_yaxes(autorange="reversed", showgrid=False, ticks="")
-    fig.update_xaxes(showgrid=False, showticklabels=False, showline=False, ticks="")
+    fig.update_xaxes(showgrid=False, showticklabels=False, showline=False, ticks="",
+                     range=[0, max((v for _, v in items), default=1) * 1.18])
     return fig
 
 

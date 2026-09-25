@@ -195,7 +195,7 @@ def _live(root: Path, run_id: str) -> None:
     run = training.reconcile(root, run) if proc is None else run
     ui.html(f'<div style="display:flex;gap:12px;align-items:center;margin:16px 0 8px">{C.status_pill(run.status)}'
             f'<span style="font-family:var(--mono);font-size:13px;color:var(--muted)">run {run.run_id}</span></div>')
-    st.code(_tail(run.log_path) or "Starting…", language="text", height=280)
+    st.code(_tail(run.log_path) or "Starting…", language="text", height=280, wrap_lines=True)
     if run.is_done:
         st.rerun(scope="app")
 
@@ -218,7 +218,7 @@ def _progress(root: Path, run_id: str) -> None:
     else:
         ui.html(C.callout(f"<b>Training failed.</b> {run.error or ''}", "bad"))
     with st.expander("Training log"):
-        st.code(_tail(run.log_path), language="text")
+        st.code(_tail(run.log_path), language="text", wrap_lines=True)
 
 
 def _history(root: Path) -> None:

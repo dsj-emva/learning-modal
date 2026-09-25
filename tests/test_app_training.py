@@ -62,7 +62,7 @@ def test_training_job_end_to_end(app_trained) -> None:
     assert run.has_report and "# EMVA standard report" in run.report_path.read_text()
     assert set(run.metrics) == {"auc", "brier", "top20_wins", "top20_revenue"} and 0.5 < run.metrics["auc"] < 1
     log = Path(run.log_path).read_text()
-    assert "$ python -m emva --data" in log and "[done] succeeded" in log
+    assert "$ python -m emva --data '<dataset v1-sample-1000>' --out '<run " in log and "[done] succeeded" in log
     assert [r.run_id for r in storage.list_runs(root)] == [run.run_id]
 
 
