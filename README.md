@@ -69,3 +69,7 @@ With every option off the generator's v1 output is byte-identical (pinned in `te
 
 The context agent (`python -m emva.context.agent`, needs `ANTHROPIC_API_KEY`) writes a CSV that
 `python -m emva --context FILE` uses for the context-layer ablation.
+
+## Context for agents and engineers
+
+Start with [CLAUDE.md](CLAUDE.md), then [docs/CONTEXT.md](docs/CONTEXT.md) (glossary, headline numbers), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (data flow, module ownership) and [docs/adr/](docs/adr/) (every orchestrator ruling).

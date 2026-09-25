@@ -1,6 +1,6 @@
 # 0008. Persona must always be readable from text; assigned only to non-vague, non-copy-paste texts
 
-- Status: Accepted, implementation in progress
+- Status: Accepted, implemented (merged 01c56f4)
 - Date: 2026-09-25
 - Source: orchestrator ruling on Phase 5.2-5.8, branch `phase5-generator-v2` (in progress). The report
   on that branch at ae5b7c6 (`reports/phase5.md`, "Deviations and judgement calls") still describes the

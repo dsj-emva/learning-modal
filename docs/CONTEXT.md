@@ -58,7 +58,7 @@ wins and this file is wrong: fix it in the same PR. State: `main` 92168cf, 2026-
     2026-05-27T00:00Z; the latest is 2026-05-26T20:06Z), labelled by the default horizon definition:
     **458 leads, 80 won** on v1 (650 cleaned leads minus 141 ghosted and 51 stalled). Fixed to the default
     flags whatever the candidate uses (`emva.eval.report.FROZEN_HORIZON`). Horizon training: 4,049 rows,
-    752 wins. On v2: 448 leads, 75 won (in progress).
+    752 wins. On v2: 441 leads, 78 won.
 - **Baseline**: the frozen `baseline/emva_score.py`, run fresh by the report. Never edited.
 - **Candidate**: the current `emva` pipeline with the options under test (default: horizon labels).
 - **Status quo**: the advertiser's existing rule-based value, reconstructed from `status_quo_rules.json`
@@ -95,7 +95,7 @@ wins and this file is wrong: fix it in the same PR. State: `main` 92168cf, 2026-
 - **Generator v1**: `scripts/generate_data_v1.py`, the seeded rewrite of the lost original; reproduces v1
   distributions, not rows (ADR 0003). Its close model is additive logistic, which is why a correctly
   specified LR and the exact regex match it perfectly.
-- **Generator v2** (in progress): the same generator with plan 5.2-5.8 switched on: Haiku paraphrase,
+- **Generator v2** (merged 01c56f4): the same generator with plan 5.2-5.8 switched on: Haiku paraphrase,
   typos, DE/FR/NL language mixing, wider boilerplate (5.2); 30% enrichment domain dropout and noisy typed
   company names (5.3); 15% consent-declined website sessions with blank telemetry (5.4); two interactions,
   LinkedIn × 51+ employees +0.8 and senior × form D −0.8 (5.5); ghosting driven by status-quo tier (5.6);
@@ -112,7 +112,7 @@ Claims policy: nothing from v1 is quoted externally. Internally, always with the
 | Baseline and horizon candidate AUC, mature test set (v1) | **0.778 [0.726, 0.827]**; paired diff −0.001 [−0.013, +0.010] | `reports/phase1.md` |
 | Horizon candidate AUC, legacy test set (v1) | 0.812 [0.788, 0.836] | `reports/phase1.md` |
 | Regenerated v1, 8 seeds | AUC 0.805 ± 0.013 | `reports/phase5-1.md` |
-| Baseline AUC on v2, legacy test set | 0.785 [0.758, 0.810] (in progress, may change) | `phase5-generator-v2:reports/phase5.md` |
+| Baseline AUC on v2, legacy test set | 0.789 [0.763, 0.815] | `reports/phase5.md` |
 
 The mature test set spans 26 days, so its CI is about ±0.05, twice the legacy width; compare models on
 it with the paired bootstrap.
@@ -125,7 +125,7 @@ it with the paired bootstrap.
 | 5.1 generator v1 rewrite | merged ed3f54b | `phase5-generator-v1` | `reports/phase5-1.md` |
 | 1 labels | merged 92168cf | `phase1-labels` | `reports/phase1.md` |
 | 2 features and leakage | in progress: indicator encoding after ruling (ADR 0009), report being updated | `phase2-features` | `reports/phase2.md` |
-| 5.2-5.8 generator v2 | in progress: persona assignment fix (ADR 0008), report being updated | `phase5-generator-v2` | `reports/phase5.md` |
+| 5.2-5.8 generator v2 | merged (01c56f4) | `phase5-generator-v2` | `reports/phase5.md` |
 | 3 value layer and platform contract | pending (needs 2) | | |
 | 4 evaluation hardening | pending (needs 2) | | |
 | 6 context agent v2 | pending (needs 2 and 5) | | |

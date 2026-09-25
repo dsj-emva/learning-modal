@@ -13,7 +13,7 @@ form, enrichment and on-site features, plus a ridge deal-value model; an optiona
 
 **Status: proof of concept on synthetic data.** v1 data (`data/v1/`) came from a generator with seed
 20260924, as-of 2026-09-24; the original generator was lost and rewritten (`scripts/generate_data_v1.py`,
-distributional fidelity only, ADR 0003). Generator v2 (`data/v2/`) is in progress. No real customer data
+distributional fidelity only, ADR 0003). Generator v2 (`data/v2/`, merged 01c56f4) adds paraphrased text, missing enrichment, consent gaps, interactions and a hidden persona (ADR 0008). No real customer data
 exists in this repo. The frozen POC lives in `baseline/`; the package being fixed is `emva/`.
 
 **Why the plan exists.** The 2026-09-25 review found: labels were right-censored (slow or neglected
@@ -163,9 +163,9 @@ reports/             one write-up per task; docs/ context layer (this set of fil
 |---|---|---|---|
 | 0 freeze and instrument | merged (15f90fc) | `phase0-freeze-instrument` | `reports/phase0.md` |
 | 5.1 generator v1 rewrite | merged (ed3f54b) | `phase5-generator-v1` | `reports/phase5-1.md` |
-| 1 labels | merged (92168cf, `main` head) | `phase1-labels` | `reports/phase1.md` |
+| 1 labels | merged (92168cf) | `phase1-labels` | `reports/phase1.md` |
 | 2 features and leakage | in progress, fix round after ruling (ADR 0009) | `phase2-features` | `reports/phase2.md` |
-| 5.2-5.8 generator v2 | in progress, persona fix (ADR 0008) | `phase5-generator-v2` | `reports/phase5.md` |
+| 5.2-5.8 generator v2 | merged (01c56f4) | `phase5-generator-v2` | `reports/phase5.md` |
 | 3 value layer, 4 evaluation hardening | pending (need Phase 2) | | |
 | 6 context agent v2 | pending (needs 2 and 5) | | |
 | 7 production readiness doc | pending (needs all) | | |
