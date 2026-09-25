@@ -36,10 +36,20 @@ def test_horizon_sensitivity_handles_horizons_with_no_mature_test_leads(data_v1,
 
 @pytest.mark.parametrize("module", ["emva.eval.ground_truth_reference"])
 def test_ground_truth_reference_reproduces_the_plan_figure(module, data_v1):
-    proc = subprocess.run([sys.executable, "-m", module, "--data", str(data_v1)], cwd=REPO,
+    # Run as a script (nothing may import it). Few refits: only deterministic numbers are asserted.
+    proc = subprocess.run([sys.executable, "-m", module, "--data", str(data_v1), "--n-refits", "5"], cwd=REPO,
                           capture_output=True, text=True, check=True)
-    legacy = next(line for line in proc.stdout.splitlines() if line.startswith("| training rows labelled by legacy"))
+    lines = proc.stdout.splitlines()
+    legacy = next(line for line in lines if line.startswith("| training rows labelled by legacy"))
     assert "| 39.4% (n=692) |" in legacy
+    # R1: the planted time to close gives P(close within 120 d | Won) = 0.843, or 0.680 for 1000+ ...
+    assert "= 0.843 (other bands), 0.680 (1000+)" in proc.stdout
+    # ... and the derived 120-day rate matches the observed horizon label by band (the derivation check).
+    assert "| 1000+ | 275 | 37.0% | 25.2% | 25.1% |" in lines
+    # True conditional 120-day effects, then the legacy and horizon weights with their CIs, per band.
+    for band, true_eff in [("11-50", "0.378"), ("51-200", "1.099"), ("201-1000", "1.043"), ("1000+", "0.532")]:
+        row = next(line for line in lines if line.startswith(f"| {band} | {true_eff} | "))
+        assert row.count("[") == 2
 
 
 def test_nothing_imports_the_ground_truth_reference():

@@ -22,7 +22,7 @@ import numpy as np
 import pandas as pd
 
 from emva.constants import TEST_FROM
-from emva.eval.bootstrap import N_RESAMPLES, SEED, auc_ci, coef_bootstrap
+from emva.eval.bootstrap import N_RESAMPLES, SEED, BootstrapCI, auc_ci, coef_bootstrap
 from emva.eval.report import md_table, frozen_test_labels
 from emva.io import load
 from emva.labels import HORIZON, LEGACY, LabelConfig
@@ -47,20 +47,29 @@ def _rate(y: pd.Series) -> str:
     return f"{y.mean():.1%} (n={len(y)})"
 
 
+def size_weight_cis(data: str | Path, configs: tuple[LabelConfig, ...], n_refits: int,
+                    seed: int) -> dict[LabelConfig, tuple[int, dict[str, BootstrapCI]]]:
+    """For each config: training-set size and a bootstrap CI for every ``band=<size>`` weight in ``BANDS``."""
+    out = {}
+    for cfg in configs:
+        r = run(data, labels=cfg)
+        D, tr = r.design, r.train
+        cis = coef_bootstrap(D[tr].values, r.X.y[tr].values, _lr_coef, n_resamples=n_refits, seed=seed)
+        by_name = dict(zip(D.columns, cis, strict=True))
+        out[cfg] = (int(tr.sum()), {b: by_name[f"band={b}"] for b in BANDS})
+    return out
+
+
+def fmt_ci(ci: BootstrapCI) -> str:
+    """``"0.971 [0.680, 1.275]"``."""
+    return f"{ci.point:.3f} [{ci.lo:.3f}, {ci.hi:.3f}]"
+
+
 def band_weight_cis(data: str | Path, n_refits: int, seed: int) -> str:
     """Section 1: size weights with bootstrap CIs under legacy and default horizon labels."""
     rows = []
-    for cfg in (LEGACY, HORIZON):
-        r = run(data, labels=cfg)
-        D, tr = r.design, r.train
-        cols = [f"band={b}" for b in BANDS]
-        cis = coef_bootstrap(D[tr].values, r.X.y[tr].values, _lr_coef, n_resamples=n_refits, seed=seed)
-        by_name = dict(zip(D.columns, cis, strict=True))
-        row = {"labels": cfg.describe(), "train n": int(tr.sum())}
-        for c in cols:
-            ci = by_name[c]
-            row[c] = f"{ci.point:.3f} [{ci.lo:.3f}, {ci.hi:.3f}]"
-        rows.append(row)
+    for cfg, (n, cis) in size_weight_cis(data, (LEGACY, HORIZON), n_refits, seed).items():
+        rows.append({"labels": cfg.describe(), "train n": n, **{f"band={b}": fmt_ci(ci) for b, ci in cis.items()}})
     return "\n".join([
         "## 1. Company-size weights with bootstrap CIs", "",
         f"Log-odds vs band 1-10. 95% percentile CI from {n_refits} refits of the formula model on training rows "
