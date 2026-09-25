@@ -37,7 +37,7 @@ flowchart TD
 | design | `emva/design.py` | Legacy `design()`: levels absent from the data make no column; a missing reference level is silently kept (baseline behaviour). v2 `fixed_design()`: exactly the columns declared in `constants.V2_LEVELS` (39), absent level = zero column, undeclared value raises (ADR 0009). `FeatureSpec.design` picks by feature set |
 | fit | `emva/model.py` | `make_lr` is the unfitted estimator, reused by the coefficient bootstrap |
 | value | `emva/value.py` | `DealValueModel`: ridge on log value; lognormal correction exp(sd²/2) with sd estimated from training residuals (plan 2.4), or the baseline's fixed sd (`eval.regression.BASELINE_DEAL_LOG_RESIDUAL_SD`) for `--feature-set legacy`. Deal-value design: `deal_value_design` (legacy, data-driven) or `fixed_deal_value_design` (v2, every level of `constants.DEAL_VALUE_LEVELS`, unknown level raises; `FeatureSpec.value_design`). `value_at_close` (plan 3.3) |
-| value transform | `emva/value_transform.py` | `ValueTransform` (cap percentile, compression, floor, tiers) `.fit(training values)` -> `FittedValueTransform.apply`; the pipeline writes `value_at_submit` with it in horizon mode (Phase 3, ADR 0012 proposed default) |
+| value transform | `emva/value_transform.py` | `ValueTransform` (cap percentile, compression, floor, tiers) `.fit(training values)` -> `FittedValueTransform.apply`; the pipeline writes `value_at_submit` with it in horizon mode (Phase 3, ADR 0012 default; step order cap, compression, floor, tiers) |
 | tROAS | `emva/troas.py` | `python -m emva.troas`: conversions per campaign per 30 days / week at submit and close stage vs Google (30 / 30 days) and Meta (50 / week) thresholds (verify) |
 | orchestration | `emva/pipeline.py` | `PipelineResult` (X, masks, design, weights, summary, labels, messages); `scores()` adds horizon label columns only in horizon mode (ADR 0007) |
 | CLI | `emva/__main__.py`, `emva/cli.py` | `cli.py` holds the label flags and `--feature-set`, shared with the report and `eval.collinearity` |
@@ -157,7 +157,7 @@ From `REBUILD_PLAN.md`, with state on 2026-09-25:
 flowchart LR
     P0["Phase 0<br/>freeze + instrument<br/>merged"] --> P1["Phase 1<br/>labels<br/>merged"]
     P1 --> P2["Phase 2<br/>features + leakage<br/>ready for review"]
-    P2 --> P3["Phase 3<br/>value layer<br/>ready for review"]
+    P2 --> P3["Phase 3<br/>value layer<br/>ready for merge"]
     P2 --> P4["Phase 4<br/>evaluation hardening<br/>pending"]
     P0 --> P51["Phase 5.1<br/>generator v1 rewrite<br/>merged"]
     P51 --> P5["Phase 5.2-5.8<br/>generator v2<br/>in progress"]

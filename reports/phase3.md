@@ -4,11 +4,28 @@ Branch `phase3-value` from `origin/main` c349833. Plan items 3.1 to 3.5. All num
 data** (v1 and v2); nothing here is for external quotation. `make baseline` passes (legacy mode byte-identical);
 the value columns exist only in horizon mode.
 
+## Orchestrator decisions (review of Phase 3)
+
+- **R9. ADR 0012 accepted:** the default transform is cap p97 + log + floor £25, with the total-preserving
+  rescale fitted on the training rows. The individual-value consequence is stated below ("What an individual
+  lead is sent") and in the ADR.
+- **R10. Wins with no recorded deal value:** `value_at_close` is blank (unknown) and `value_at_close_ts` stays
+  `won_at` (the event is known, the amount is not). New column `value_at_close_status` ∈ {`known`,
+  `unknown_amount`, `pending`} (pending = immature, not Won) makes the upload rule explicit. ADR 0002's
+  blank-as-0 stays an evaluation convention only. Recorded in ADR 0012.
+- **R11. Floor before tiers accepted.** Step order, documented in `ValueTransform`'s docstring: cap, then
+  compression (with the rescale), then floor, then tiers; tier edges and means are computed on floored values.
+- Review fixes: `python -m emva.troas --data` range-checks `--positive-rate`; a platform with no leads shows
+  0 volume instead of raising; tables print conversions to 2 dp (29.97 no longer reads "30.0 BELOW"); the value
+  report refuses zero denominators with a clear `ValueError`; `fixed_deal_value_design` now reuses
+  `design.fixed_design` (a reference of None keeps every level); compression is one module-level dispatch
+  table; `VALUE_COMPRESSION` is coerced to the enum once (`value_transform.DEFAULT_COMPRESSION`).
+
 ## Acceptance
 
 | criterion | result | evidence |
 |---|---|---|
-| A transform keeps ≥ 95% of the baseline's top-20% revenue capture and cuts max/median below 20× (v1 legacy test set, v1 mature test set, v2) | **pass**: cap p97 + log + floor £25 (proposed default, ADR 0012); also cap p97 + sqrt, cap p97 + log, 5 tiers | table below; full tables in the pasted reports |
+| A transform keeps ≥ 95% of the baseline's top-20% revenue capture and cuts max/median below 20× (v1 legacy test set, v1 mature test set, v2) | **pass**: cap p97 + log + floor £25 (default, ADR 0012 accepted); also cap p97 + sqrt, cap p97 + log, 5 tiers | table below; full tables in the pasted reports |
 | `scores.csv` (horizon) carries `value_at_submit`, `value_at_close`, `label_source`, `matured_at` and the two timestamps | **pass** | columns `value_at_submit`, `value_at_submit_ts`, `value_at_close`, `value_at_close_ts` after `won_within_h, label_source, matured_at`; `tests/test_integration.py::test_cli_default_is_horizon_and_writes_label_columns`, `tests/test_value_two_stage.py` |
 | `make baseline` passes | **pass** | legacy `scores.csv` / `weights.csv` byte-identical to the baseline run |
 | `grep -rn "0.45\|ground_truth" emva/` only under `emva/eval/` | **pass** | no other lines (test-enforced) |
@@ -31,13 +48,13 @@ both max/median < 20×.
 | cap p97 + log | 102.5%, 5.5× | 103.0%, 4.7× | 5.2× | 108.3%, 5.3× | 111.7%, 4.7× | 5.0× | PASS |
 | tiers 5 | 99.5%, 16.5× | 98.7%, 16.5× | 16.5× | 106.6%, 13.4× | 109.4%, 13.4× | 13.4× | PASS |
 | tiers 10 | 100.8%, 32.2× | 99.3%, 17.7× | 32.2× | 107.6%, 25.8× | 109.5%, 25.8× | 25.8× | fail |
-| **cap p97 + log + floor £25 (proposed default)** | 102.5%, 5.5× | 103.0%, 4.7× | 5.2× | 108.3%, 5.3× | 111.7%, 4.7× | 5.0× | **PASS** |
+| **cap p97 + log + floor £25 (default)** | 102.5%, 5.5× | 103.0%, 4.7× | 5.2× | 108.3%, 5.3× | 111.7%, 4.7× | 5.0× | **PASS** |
 
-Top-1% share of value (v1 all leads): baseline 11.5%, candidate identity 10.6%, proposed default 3.1%.
+Top-1% share of value (v1 all leads): baseline 11.5%, candidate identity 10.6%, default 3.1%.
 The baseline figures reproduce Phase 0 (121.7× / 11.5% over all scored v1 leads; the plan's 116× / 11% do not
 reproduce, as Phase 0 noted).
 
-**Recommended default: cap p97 + log + floor £25 (ADR 0012, status Proposed).** Why:
+**Default: cap p97 + log + floor £25 (ADR 0012, accepted as R9).** Why:
 
 - Top-20% capture is rank-based, so every strictly monotone transform keeps it exactly; it cannot choose
   between them. The choice rests on the value's scale.
@@ -49,9 +66,11 @@ reproduce, as Phase 0 noted).
   against 1.30 / 1.11 and 1.40 / 1.19 for the identity.
 - log beats sqrt at the low end: after the rescale the p1 of v1 test values is £23-25 under log vs £152-156
   under sqrt (identity £6), so junk leads are not sold to the platform as £150 leads.
-- Cost: values are no longer proportional to expected revenue (a lead at the cap gets about 0.5× its
-  expected value, low values about 2.5 to 4×). Fitted parameters: v1 cap £13,221, anchor £505, scale 2.771;
-  v2 cap £15,259, anchor £680, scale 2.453.
+- Cost: values are no longer proportional to expected revenue. Fitted parameters: v1 cap £13,221, anchor £505,
+  scale 2.771; v2 cap £15,259, anchor £680, scale 2.453.
+- Step order (R11): cap, compression, floor, tiers.
+
+**What an individual lead is sent (R9).** The rescale preserves the training total, not each lead's value. A lead at the training median is sent exactly `scale` × its expected value: **2.77× on v1** (anchor £505, scale 2.771) and **2.45× on v2** (anchor £680, scale 2.453); a lead at the cap is sent about **0.50×** its expected value (0.504 / 0.497), and leads above the cap less. (The review's "~2.25×" for the median lead does not match these fitted parameters; the figures here are measured.) The sent value is a bidding signal, not revenue: **ROAS reporting must use recorded revenue, never `value_at_submit`.**
 
 ## tROAS eligibility (plan 3.4)
 
@@ -107,24 +126,24 @@ which matters for how long a Google conversion adjustment is accepted (contract 
   test set and over all scored leads, the PASS/fail table, click-ID coverage.
 - **3.3** `emva.value.value_at_close` and the pipeline (horizon mode): `value_at_submit` = `value_formula`
   through the transform fitted on the training leads, `value_at_submit_ts` = `created_at`; `value_at_close` =
-  recorded deal value if Won by AS_OF (blank = 0) at `won_at`, 0 at `matured_at` for a mature non-win, NaN /
-  empty while immature. `value_formula` is unchanged (the report still ranks by it). v1: 6,545 of 9,311 leads
-  (70.3%) have a known `value_at_close`, 1,087 of them positive.
+  recorded deal value if Won by AS_OF at `won_at` (blank amount: blank value, status `unknown_amount`, R10),
+  0 at `matured_at` for a mature non-win, blank while immature (status `pending`). `value_formula` is unchanged
+  (the report still ranks by it). `value_at_close_status` counts: **v1** known 6,433 (1,087 positive, 5,346
+  zero), unknown_amount 112, pending 2,766 (of 9,311); **v2** known 6,330 (1,032 positive, 5,298 zero),
+  unknown_amount 96, pending 2,783 (of 9,209).
 - **3.4** `emva/troas.py`, `python -m emva.troas` (by numbers, `--campaigns` or `--split`, or `--data DIR`).
 - **3.5** `docs/platform_contract.md`.
 - Tests: `tests/test_value_transform.py`, `tests/test_value_two_stage.py`, `tests/test_troas.py`,
-  `tests/test_value_report.py`, new cases in `tests/test_integration.py`. **389 passed.**
-- Docs: status rows in `CLAUDE.md` and `docs/CONTEXT.md` ("ready for review"; `CLAUDE.md`'s combined
-  "3, 4" row is split in two), glossary, `docs/ARCHITECTURE.md`, ADR 0012 (Proposed).
+  `tests/test_value_report.py`, new cases in `tests/test_integration.py`. **397 passed** after the review fixes.
+- Docs: status rows in `CLAUDE.md` and `docs/CONTEXT.md` ("ready for merge"; `CLAUDE.md`'s combined
+  "3, 4" row is split in two), glossary, `docs/ARCHITECTURE.md`, ADR 0012 (accepted, with R10).
 
 ## Deviations, not done, open questions
 
-1. **Won with a blank deal value** (112 of 1,199 v1 wins, 96 of 1,128 v2): `value_at_close` = 0, following
-   ADR 0002's revenue convention. Uploaded as is this would retract real wins; the contract tells the upload job
-   to hold such rows. Alternative for the orchestrator: NaN (close value unknown). Needs a ruling.
+1. **Won with a blank deal value** (112 of 1,199 v1 wins, 96 of 1,128 v2): ruled R10. `value_at_close` is
+   blank with status `unknown_amount` at `won_at`; the upload job holds these rows (contract §2.4).
 2. **The default is not the plan's.** The plan names cap p97 + floor £25 as defaults; that fails the plan's own
-   max/median criterion, so the code default adds log compression (ADR 0012, Proposed). Rejecting the ADR is a
-   one-constant change (`VALUE_COMPRESSION = "none"`).
+   max/median criterion, so the default adds log compression (ADR 0012, accepted as R9).
 3. **Rescaled compression** is my addition (not in the plan): without it log/sqrt pass the acceptance equally
    but put values at 0.36-0.45 × revenue. It changes no acceptance number (max/median and capture are
    scale-invariant).
@@ -133,8 +152,9 @@ which matters for how long a Google conversion adjustment is accepted (contract 
 5. In `--context` mode `value_at_submit` is still based on `value_formula`, not `value_combined` (the context
    model scores only leads with a context score). Phase 6 should decide.
 6. The plan's 29.7% click-ID figure is not reproduced exactly (28.8-29.0% on the closest definition).
-7. `feature_spec.py` and `constants.py` were edited (a `value_design` field; `DEAL_VALUE_LEVELS` and the value
-   defaults) in addition to the files listed for this phase; both edits are additive.
+7. `feature_spec.py`, `constants.py` and (review smell 5) `design.py` were edited (a `value_design` field; `DEAL_VALUE_LEVELS` and the value
+   defaults; `fixed_design` accepts a reference of None) in addition to the files listed for this phase; all
+   additive.
 8. Platform limits in `emva/troas.py` and `docs/platform_contract.md` are from memory and marked verify; no
    platform call or doc fetch was made.
 
@@ -480,21 +500,21 @@ Google Ads tROAS: threshold 30 conversions per campaign per 30 days (verify)
 
 | campaign | leads / month | lead conversions per 30 days | win conversions per 30 days | submit stage | close stage | close volume needed × |
 |---|---|---|---|---|---|---|
-| attribution_software | 60.5 | 59.6 | 7.9 | ok | BELOW | 3.8 |
-| brand_search | 59.4 | 58.6 | 7.8 | ok | BELOW | 3.9 |
-| competitor_terms | 54.4 | 53.6 | 7.1 | ok | BELOW | 4.2 |
-| generic_lead_scoring | 55.9 | 55.1 | 7.3 | ok | BELOW | 4.1 |
-| all campaigns pooled (portfolio) | 230.2 | 226.9 | 30.1 | ok | ok | 1.0 |
+| attribution_software | 60.5 | 59.63 | 7.90 | ok | BELOW | 3.80 |
+| brand_search | 59.4 | 58.56 | 7.76 | ok | BELOW | 3.87 |
+| competitor_terms | 54.4 | 53.63 | 7.11 | ok | BELOW | 4.22 |
+| generic_lead_scoring | 55.9 | 55.11 | 7.30 | ok | BELOW | 4.11 |
+| all campaigns pooled (portfolio) | 230.2 | 226.94 | 30.08 | ok | ok | 1.00 |
 
 Meta value optimisation: threshold 50 conversions per ad set per 7 days (verify)
 
 | campaign | leads / month | lead conversions per 7 days | win conversions per 7 days | submit stage | close stage | close volume needed × |
 |---|---|---|---|---|---|---|
-| guide_download | 76.5 | 17.6 | 2.3 | BELOW | BELOW | 21.4 |
-| prospecting_lookalike | 77.2 | 17.7 | 2.4 | BELOW | BELOW | 21.3 |
-| retargeting_30d | 76.2 | 17.5 | 2.3 | BELOW | BELOW | 21.5 |
-| uk_leadgen_q | 75.6 | 17.4 | 2.3 | BELOW | BELOW | 21.7 |
-| all campaigns pooled (portfolio) | 305.4 | 70.2 | 9.3 | ok | BELOW | 5.4 |
+| guide_download | 76.5 | 17.59 | 2.33 | BELOW | BELOW | 21.44 |
+| prospecting_lookalike | 77.2 | 17.75 | 2.35 | BELOW | BELOW | 21.26 |
+| retargeting_30d | 76.2 | 17.52 | 2.32 | BELOW | BELOW | 21.54 |
+| uk_leadgen_q | 75.6 | 17.38 | 2.30 | BELOW | BELOW | 21.70 |
+| all campaigns pooled (portfolio) | 305.4 | 70.24 | 9.31 | ok | BELOW | 5.37 |
 
 ### v2: `python -m emva.troas --data data/v2`
 
@@ -504,21 +524,21 @@ Google Ads tROAS: threshold 30 conversions per campaign per 30 days (verify)
 
 | campaign | leads / month | lead conversions per 30 days | win conversions per 30 days | submit stage | close stage | close volume needed × |
 |---|---|---|---|---|---|---|
-| attribution_software | 57.4 | 56.6 | 7.4 | ok | BELOW | 4.0 |
-| brand_search | 56.7 | 55.9 | 7.3 | ok | BELOW | 4.1 |
-| competitor_terms | 57.6 | 56.8 | 7.4 | ok | BELOW | 4.0 |
-| generic_lead_scoring | 54.1 | 53.3 | 7.0 | ok | BELOW | 4.3 |
-| all campaigns pooled (portfolio) | 225.8 | 222.5 | 29.1 | ok | BELOW | 1.0 |
+| attribution_software | 57.4 | 56.59 | 7.41 | ok | BELOW | 4.05 |
+| brand_search | 56.7 | 55.85 | 7.31 | ok | BELOW | 4.10 |
+| competitor_terms | 57.6 | 56.76 | 7.43 | ok | BELOW | 4.04 |
+| generic_lead_scoring | 54.1 | 53.31 | 6.98 | ok | BELOW | 4.30 |
+| all campaigns pooled (portfolio) | 225.8 | 222.51 | 29.14 | ok | BELOW | 1.03 |
 
 Meta value optimisation: threshold 50 conversions per ad set per 7 days (verify)
 
 | campaign | leads / month | lead conversions per 7 days | win conversions per 7 days | submit stage | close stage | close volume needed × |
 |---|---|---|---|---|---|---|
-| guide_download | 75.7 | 17.4 | 2.3 | BELOW | BELOW | 21.9 |
-| prospecting_lookalike | 75.2 | 17.3 | 2.3 | BELOW | BELOW | 22.1 |
-| retargeting_30d | 71.9 | 16.5 | 2.2 | BELOW | BELOW | 23.1 |
-| uk_leadgen_q | 76.9 | 17.7 | 2.3 | BELOW | BELOW | 21.6 |
-| all campaigns pooled (portfolio) | 299.8 | 68.9 | 9.0 | ok | BELOW | 5.5 |
+| guide_download | 75.7 | 17.40 | 2.28 | BELOW | BELOW | 21.94 |
+| prospecting_lookalike | 75.2 | 17.31 | 2.27 | BELOW | BELOW | 22.06 |
+| retargeting_30d | 71.9 | 16.54 | 2.17 | BELOW | BELOW | 23.09 |
+| uk_leadgen_q | 76.9 | 17.69 | 2.32 | BELOW | BELOW | 21.59 |
+| all campaigns pooled (portfolio) | 299.8 | 68.94 | 9.03 | ok | BELOW | 5.54 |
 
 ### 2,000 leads a year, one campaign: `--leads-per-month 166.67 --positive-rate 0.132 --campaigns 1`
 
@@ -526,13 +546,13 @@ Google Ads tROAS: threshold 30 conversions per campaign per 30 days (verify)
 
 | campaign | leads / month | lead conversions per 30 days | win conversions per 30 days | submit stage | close stage | close volume needed × |
 |---|---|---|---|---|---|---|
-| campaign 1 | 166.7 | 164.3 | 21.7 | ok | BELOW | 1.4 |
+| campaign 1 | 166.7 | 164.27 | 21.68 | ok | BELOW | 1.38 |
 
 Meta value optimisation: threshold 50 conversions per ad set per 7 days (verify)
 
 | campaign | leads / month | lead conversions per 7 days | win conversions per 7 days | submit stage | close stage | close volume needed × |
 |---|---|---|---|---|---|---|
-| campaign 1 | 166.7 | 38.3 | 5.1 | BELOW | BELOW | 9.9 |
+| campaign 1 | 166.7 | 38.33 | 5.06 | BELOW | BELOW | 9.88 |
 
 ### 2,000 leads a year, three campaigns: `--campaigns 3`
 
@@ -540,15 +560,15 @@ Google Ads tROAS: threshold 30 conversions per campaign per 30 days (verify)
 
 | campaign | leads / month | lead conversions per 30 days | win conversions per 30 days | submit stage | close stage | close volume needed × |
 |---|---|---|---|---|---|---|
-| campaign 1 | 55.6 | 54.8 | 7.2 | ok | BELOW | 4.2 |
-| campaign 2 | 55.6 | 54.8 | 7.2 | ok | BELOW | 4.2 |
-| campaign 3 | 55.6 | 54.8 | 7.2 | ok | BELOW | 4.2 |
+| campaign 1 | 55.6 | 54.76 | 7.23 | ok | BELOW | 4.15 |
+| campaign 2 | 55.6 | 54.76 | 7.23 | ok | BELOW | 4.15 |
+| campaign 3 | 55.6 | 54.76 | 7.23 | ok | BELOW | 4.15 |
 
 Meta value optimisation: threshold 50 conversions per ad set per 7 days (verify)
 
 | campaign | leads / month | lead conversions per 7 days | win conversions per 7 days | submit stage | close stage | close volume needed × |
 |---|---|---|---|---|---|---|
-| campaign 1 | 55.6 | 12.8 | 1.7 | BELOW | BELOW | 29.6 |
-| campaign 2 | 55.6 | 12.8 | 1.7 | BELOW | BELOW | 29.6 |
-| campaign 3 | 55.6 | 12.8 | 1.7 | BELOW | BELOW | 29.6 |
+| campaign 1 | 55.6 | 12.78 | 1.69 | BELOW | BELOW | 29.65 |
+| campaign 2 | 55.6 | 12.78 | 1.69 | BELOW | BELOW | 29.65 |
+| campaign 3 | 55.6 | 12.78 | 1.69 | BELOW | BELOW | 29.65 |
 

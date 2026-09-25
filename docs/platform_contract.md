@@ -11,10 +11,11 @@ where a limit or field name must be checked against the platform documentation b
 
 | column | meaning | when known |
 |---|---|---|
-| `value_at_submit` | `p × E[deal value] × margin` through the fitted value transform (default cap p97 + log + floor £25, ADR 0012), GBP | at submit |
+| `value_at_submit` | `p × E[deal value] × margin` through the fitted value transform (default cap p97 + log + floor £25, ADR 0012). It is a bidding signal, not revenue: a median lead is sent about 2.5 to 2.8× its expected value, a capped lead about 0.5×, so ROAS reporting must use recorded revenue, never this value, GBP | at submit |
 | `value_at_submit_ts` | `created_at` (the conversion time of the lead event) | at submit |
-| `value_at_close` | recorded deal value if Won (blank deal value = 0, ADR 0002), 0 for a mature non-win, NaN while immature | at close or at maturity |
-| `value_at_close_ts` | `won_at` for a win, `matured_at` for a mature non-win, empty while immature | same |
+| `value_at_close` | recorded deal value if Won; blank for a win with no recorded amount; 0 for a mature non-win; blank while immature | at close or at maturity |
+| `value_at_close_ts` | `won_at` for a win (also when the amount is unknown), `matured_at` for a mature non-win, empty while immature | same |
+| `value_at_close_status` | `known` (send), `unknown_amount` (Won, amount blank: hold), `pending` (immature, not Won: wait) | every run |
 | `label_source` | CRM state at the snapshot: `won`, `crm_lost`, `stalled`, `ghosted`, `open` | every run |
 | `matured_at` | `created_at + H` (H = 120 days) | at submit |
 
@@ -29,8 +30,8 @@ training leads' total value (section 4 of `reports/phase3.md`).
 1. **Submit stage.** When the lead is created (or at the next batch), send one conversion per lead with
    value `value_at_submit` and conversion time `value_at_submit_ts`, keyed by the lead's click id or hashed
    identifiers (section 3) and by an order / transaction id = `lead_id` so later stages can refer to it.
-2. **Close stage.** On each run, for every lead whose `value_at_close` became known since the previous run
-   (a new `value_at_close_ts`), send the adjustment:
+2. **Close stage.** On each run, for every lead whose `value_at_close_status` became `known` since the previous
+   run, send the adjustment:
    - **Google Ads**: a conversion adjustment of type RESTATEMENT on the original conversion (matched by
      `order_id` = `lead_id`) to `value_at_close`; a mature non-win (value 0) is a RETRACTION. Adjustments
      are accepted only for a limited time after the original conversion (**verify**; historically bounded by
@@ -47,9 +48,11 @@ training leads' total value (section 4 of `reports/phase3.md`).
    re-run never double-counts. A lead that moves from 0 (matured, not won) to Won later (a late win) gets a
    new close-stage row with `value_at_close_ts = won_at`; on Google this is a second restatement, on Meta a
    new close event.
-4. **Blank deal values.** 112 of 1,199 wins on v1 (96 of 1,128 on v2) have no recorded deal value, so
-   `value_at_close` is 0 for them under ADR 0002. An upload job should **hold** these rows (send nothing and
-   alert) rather than retract a real win; this is open question 1 in `reports/phase3.md`.
+4. **Unknown amounts (R10).** 112 of 1,199 wins on v1 (96 of 1,128 on v2) have no recorded deal value:
+   `value_at_close` is blank, `value_at_close_ts` = `won_at` and `value_at_close_status` = `unknown_amount`.
+   The upload job **holds** these rows (sends nothing, alerts the CRM owner) and sends the adjustment once an
+   amount is recorded (the status then becomes `known`). It never sends 0 for them, which would retract a real
+   win; ADR 0002's blank-as-0 is an evaluation convention only.
 
 Which stage the platforms bid on: the submit-stage value is the bidding signal (every lead carries a value,
 so there is volume, section 5). The close stage corrects the account's reported value and, where the

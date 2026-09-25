@@ -1,8 +1,8 @@
 # 0012. Default value transform: cap at p97, log compression rescaled to the training total, floor £25
 
-- Status: Proposed
+- Status: Accepted (R9, with R10 and R11)
 - Date: 2026-09-25
-- Source: `reports/phase3.md` (plan 3.1 / 3.2), branch `phase3-value`; `emva/value_transform.py`,
+- Source: `reports/phase3.md` (plan 3.1 / 3.2, "Orchestrator decisions" R9-R11), branch `phase3-value`; `emva/value_transform.py`,
   `emva.constants.VALUE_CAP_PERCENTILE` / `VALUE_COMPRESSION` / `VALUE_FLOOR_GBP`
 
 ## Context
@@ -36,13 +36,26 @@ The default value transform (`ValueTransform()`, used for `value_at_submit` in h
 1. cap at the 97th percentile of the training leads' expected values (£13,221 on v1, £15,259 on v2);
 2. log compression `m × log2(1 + v / m)`, `m` = median of the capped training values, then rescaled so the
    training leads' capped total is unchanged;
-3. floor at £25.
+3. floor at £25;
+4. tiers (off by default) come last: the order is cap, compression, floor, tiers (R11), so tier edges and means
+   are computed on floored values.
 
 The cap, anchor and scale are learned once from the training leads and fixed for scoring. The CLI can
 switch any step off or choose sqrt or tiers (`--no-value-cap`, `--value-compression {none,log,sqrt}`,
 `--no-value-floor`, `--value-tiers N`).
 
+**R10 (close-stage amounts).** A win without a recorded deal value has `value_at_close` blank (unknown) and
+`value_at_close_ts` = `won_at`: the event is known, the amount is not. `value_at_close_status` ∈ {`known`,
+`unknown_amount`, `pending`} (pending = immature and not Won) tells the upload job what to do: send `known`,
+hold `unknown_amount`, wait on `pending`. ADR 0002's blank-as-0 remains an evaluation convention only
+(revenue in the standard report), not an upload value. v1: 112 `unknown_amount` of 1,199 wins; v2: 96 of 1,128.
+
 ## Consequences
+
+- **Individual values (R9).** The rescale preserves the training total, not each lead's value: a lead at the
+  training median is sent `scale` × its expected value, 2.77× on v1 and 2.45× on v2, and a lead at the cap about
+  0.50×. The sent value is a bidding signal, not revenue: ROAS reporting must use recorded revenue, never the
+  sent value.
 
 - Passes plan 3.2 on v1 (legacy and mature test sets) and on v2: max/median 4.7× to 5.5×, top-20% capture
   equal to the untransformed candidate's (102.5% / 103.0% of the baseline on v1, 108.3% / 111.7% on v2).
