@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from emva.model import scorecard
+from emva.model import coefficients, scorecard
 from emva.value import (
     DealValueModel,
     expected_value,
@@ -22,6 +22,22 @@ def test_scorecard_points_and_order():
     assert w.index.tolist() == ["b", "c", "a"]
     assert w.loc["a", "points"] == 20 and w.loc["a", "odds_multiplier"] == 2.0
     assert w.loc["b", "log_odds"] == -0.5
+
+
+def test_coefficients_are_the_unrounded_scorecard():
+    lr = _FakeLR()
+    lr.coef_ = np.array([[np.log(2) + 1e-7, -0.5004, 0.0]])
+    c = coefficients(lr, pd.Index(["a", "b", "c"]))
+    assert c.index.tolist() == ["a", "b", "c"] and c.loc["a", "log_odds"] == np.log(2) + 1e-7
+    assert c.loc["a", "points"] == pytest.approx(20) and c.loc["a", "points"] != 20
+    assert c.loc["b", "odds_multiplier"] == np.exp(-0.5004)
+    w = scorecard(lr, pd.Index(["a", "b", "c"]))
+    pd.testing.assert_frame_equal(w, c.round({"log_odds": 3, "odds_multiplier": 2, "points": 0}).sort_values("log_odds"))
+
+
+def test_pipeline_result_keeps_the_fitted_model(v1_horizon):
+    assert v1_horizon.model.coef_.shape == (1, v1_horizon.design.shape[1])
+    assert list(v1_horizon.model.feature_names_in_) == list(v1_horizon.design.columns)
 
 
 class _FakeRidge:

@@ -42,7 +42,8 @@ class PipelineResult:
     ``train``/``test`` are boolean masks over ``X``; ``summary`` is the printed metrics table
     (empty when there are no labelled test leads, with a line in ``messages`` saying so);
     ``messages`` are the context-mode lines printed before it; ``labels`` and ``features`` are
-    the label definition and feature set used; ``deal_value`` is the fitted value model;
+    the label definition and feature set used; ``model`` is the fitted formula model (its columns are
+    ``design.columns``); ``deal_value`` is the fitted value model;
     ``value_transform`` the transform fitted on the training leads' values (None in legacy mode).
     """
 
@@ -54,6 +55,7 @@ class PipelineResult:
     summary: pd.DataFrame
     labels: LabelConfig
     features: FeatureSet
+    model: LogisticRegression
     deal_value: DealValueModel
     value_transform: FittedValueTransform | None = None
     messages: list[str] = field(default_factory=list)
@@ -146,7 +148,8 @@ def run(data: str | Path, margin: float = 1.0, context: str | Path | None = None
         X["value_combined"] = expected_value(X.p_combined, X.deal_value_hat, margin)
 
     return PipelineResult(X=X, train=tr, test=te, design=D, weights=weights, summary=pd.DataFrame(rows),
-                          labels=labels, features=features, deal_value=dv, value_transform=fitted, messages=messages)
+                          labels=labels, features=features, model=lr, deal_value=dv, value_transform=fitted,
+                          messages=messages)
 
 
 def write_outputs(result: PipelineResult, out: str | Path) -> None:
