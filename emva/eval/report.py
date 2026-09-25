@@ -102,7 +102,7 @@ def run_baseline(data: str | Path, out: str | Path) -> tuple[pd.DataFrame, str]:
     return pd.read_csv(Path(out) / "scores.csv", index_col="lead_id"), proc.stdout
 
 
-def _md_table(df: pd.DataFrame) -> str:
+def md_table(df: pd.DataFrame) -> str:
     """Render a DataFrame as a GitHub markdown table (all cells as given)."""
     cols = [str(c) for c in df.columns]
     lines = ["| " + " | ".join(cols) + " |", "|" + "|".join("---" for _ in cols) + "|"]
@@ -136,14 +136,14 @@ def standard_sections(ts: TestSet, models: list[ScoredModel], n_resamples: int, 
             "top-20% revenue (by p)": _fmt_num(top_share(revenue, s)),
             "top-20% revenue (by p×value)": _fmt_num(top_share(revenue, m.value.loc[ids].values)),
         })
-    out += [_md_table(pd.DataFrame(head)), "", "### Paired AUC comparison vs baseline", ""]
+    out += [md_table(pd.DataFrame(head)), "", "### Paired AUC comparison vs baseline", ""]
 
     paired = []
     for m in models[1:]:
         c = paired_auc(y.values, models[0].rank_score(ids), m.rank_score(ids), n_resamples, seed=seed)
         paired.append({"model": m.name, "AUC − baseline": f"{c.diff.point:+.3f}",
                        "95% CI": f"[{c.diff.lo:+.3f}, {c.diff.hi:+.3f}]", "bootstrap p": f"{c.p_value:.3f}"})
-    out += [_md_table(pd.DataFrame(paired)), "", "### Calibration by decile of p", ""]
+    out += [md_table(pd.DataFrame(paired)), "", "### Calibration by decile of p", ""]
 
     cal = None
     for m in models:
@@ -155,7 +155,7 @@ def standard_sections(ts: TestSet, models: list[ScoredModel], n_resamples: int, 
     for c in cal.columns:
         if c.endswith(("mean p", "observed")):
             cal[c] = cal[c].map(_fmt_num)
-    out += [_md_table(cal), "", "Status quo has no probability, so it has no Brier score or calibration.",
+    out += [md_table(cal), "", "Status quo has no probability, so it has no Brier score or calibration.",
             "", "### AUC by test month", ""]
 
     month = None
@@ -164,7 +164,7 @@ def standard_sections(ts: TestSet, models: list[ScoredModel], n_resamples: int, 
         month = d if month is None else month.merge(d[["month", m.name]], on="month")
     for m in models:
         month[m.name] = month[m.name].map(_fmt_num)
-    out += [_md_table(month), "", "### Value scale", ""]
+    out += [md_table(month), "", "### Value scale", ""]
 
     scale = []
     for m in models:
@@ -173,7 +173,7 @@ def standard_sections(ts: TestSet, models: list[ScoredModel], n_resamples: int, 
             scale.append({"model": m.name, "scope": scope, "n": len(v), "median": f"{s['p50']:.0f}",
                           "p99": f"{s['p99']:.0f}", "max": f"{s['max']:.0f}",
                           "max/median": f"{s['max_over_median']:.1f}×", "top-1% share": f"{s['top1pct_share']:.1%}"})
-    out += [_md_table(pd.DataFrame(scale)), "", "Value = p × expected deal value (models), "
+    out += [md_table(pd.DataFrame(scale)), "", "Value = p × expected deal value (models), "
             "rule-based bucket value in GBP (status quo). All scored leads = leads left after bot/duplicate removal.",
             "", "### Notes", ""]
 
@@ -214,11 +214,11 @@ def label_sections(X: pd.DataFrame, legacy_y: pd.Series, test_a: TestSet, test_b
         f"{AS_OF.date()}. legacy y = baseline rules. won_within_h = Won within {HORIZON.horizon_days} days of "
         "created_at (NaN if younger and not Won). horizon y = won_within_h with ghosted-at-H leads excluded and "
         "stalled leads censored (the default training and test label).", "",
-        _md_table(pd.DataFrame(rows)), "",
+        md_table(pd.DataFrame(rows)), "",
         f"Mature = created_at + {HORIZON.horizon_days} days <= {AS_OF.isoformat()}: the latest mature lead was created "
         f"{last.isoformat()}. Train = created before {TEST_FROM} (all mature); test = created on or after {TEST_FROM}.",
         "",
-        _md_table(sizes), "",
+        md_table(sizes), "",
         f"Candidate trained with: `{candidate_labels.describe()}`.", "",
     ]
 
@@ -246,7 +246,22 @@ def ghosted_share_section(X: pd.DataFrame, legacy_y: pd.Series, test_a: TestSet,
     return ["## Bottom-decile ghosted share", "",
             "Share of leads still at stage New (`label_source == ghosted`) among the 10% of each population with the "
             "lowest p. The horizon test set (b) excludes ghosted leads, so the comparison uses populations that "
-            "keep them.", "", _md_table(pd.DataFrame(rows)), ""]
+            "keep them.", "", md_table(pd.DataFrame(rows)), ""]
+
+
+def frozen_test_labels(L: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series, pd.Series, pd.Series]:
+    """Both frozen test definitions, independent of any candidate's label options.
+
+    Returns ``(X, legacy_y, y_a, y_b)``: the cleaned leads with default horizon labels
+    (``emva.labels.assign_labels(..., HORIZON)``), the legacy label for every cleaned lead,
+    and the labels of the (a) legacy and (b) horizon test sets, indexed by their ``lead_id``s.
+    """
+    X = assign_labels(clean(L), HORIZON)
+    legacy_y = label(X)
+    window = X.created_at >= TEST_FROM
+    y_a = legacy_y[legacy_y.notna() & window]
+    y_b = X.y[X.y.notna() & is_mature(X, HORIZON.horizon_days) & window]
+    return X, legacy_y, y_a, y_b
 
 
 def build_report(data: str | Path, n_resamples: int = N_RESAMPLES, seed: int = SEED,
@@ -257,13 +272,10 @@ def build_report(data: str | Path, n_resamples: int = N_RESAMPLES, seed: int = S
         base, base_stdout = run_baseline(data, tmp)
     cand = run(data, labels=labels).X
 
-    # Both test definitions are computed here from the cleaned leads, independent of the candidate's options.
-    X = assign_labels(clean(L), HORIZON)
-    legacy_y = label(X)
+    X, legacy_y, y_a, y_b = frozen_test_labels(L)
     if not X.index.equals(base.index) or not legacy_y.equals(base.y):
         raise ValueError("legacy labels computed here differ from the baseline script's")
-    ids_a = X.index[legacy_y.notna() & (X.created_at >= TEST_FROM)]
-    ids_b = X.index[X.y.notna() & is_mature(X, HORIZON.horizon_days) & (X.created_at >= TEST_FROM)]
+    ids_a, ids_b = y_a.index, y_b.index
     for name, ids in [("legacy", ids_a), ("horizon", ids_b)]:
         missing = ids.difference(cand.index[cand.p_formula.notna()])
         if len(missing):
@@ -273,13 +285,13 @@ def build_report(data: str | Path, n_resamples: int = N_RESAMPLES, seed: int = S
         "(a) Legacy labels, legacy test set",
         f"{len(ids_a)} leads labelled by the baseline rules, created on or after {TEST_FROM} "
         f"({int(legacy_y[ids_a].sum())} won). Label = legacy y.",
-        legacy_y.loc[ids_a], L.loc[ids_a])
+        y_a, L.loc[ids_a])
     test_b = TestSet(
         "(b) Horizon labels, mature test set",
         f"{len(ids_b)} mature leads created on or after {TEST_FROM} and up to {last_mature.isoformat()} that the "
         f"default horizon definition labels ({int(X.y[ids_b].sum())} won). Label = won within "
         f"{HORIZON.horizon_days} days; ghosted-at-H leads excluded, stalled leads censored.",
-        X.y.loc[ids_b], L.loc[ids_b])
+        y_b, L.loc[ids_b])
 
     sq = status_quo_value(L.loc[X.index], load_rules(Path(data) / "status_quo_rules.json")).sq_value
     models = [
