@@ -94,7 +94,9 @@ The report also takes `--strict` (exit 1 when the candidate design fails the col
 
 The same label flags work on `python -m emva.eval.report`, where they change only the candidate.
 Other entry points: `python -m emva.eval.label_study`, `python -m emva.eval.ground_truth_reference`
-(reads ground truth), `python -m emva.context.agent --data data/v1 --out FILE [--limit N]`.
+(reads ground truth), `python -m emva.context.agent --data data/v2 [--ids FILE] [--limit N] [--dry-run]`
+(judgments CSV + committed cache in `data/v2/context/`), `python scripts/run_context_agent.py [--probe N]`,
+`python -m emva.eval.context_harness {sample,evaluate}` (reads ground truth).
 
 **Generator.**
 ```sh
@@ -141,9 +143,10 @@ emva/value_transform.py  ValueTransform: cap / log-sqrt compression / floor / ti
 emva/troas.py        tROAS eligibility calculator, python -m emva.troas (plan 3.4)
 emva/pipeline.py     run(): load -> clean -> label -> features -> design -> fit -> value -> summary
 emva/cli.py          label flags shared by python -m emva and the report;  emva/__main__.py: the CLI
-emva/context/        agent.py (Haiku call + cache), contract.py (JSON shape), features.py (context_logit)
+emva/context/        card.py (lead card), contract.py (enum judgments), agent.py (SDK runtime), cache.py, features.py (ctx_ dummies)
 emva/eval/           bootstrap, metrics, regression, status_quo, report, label_study, ground_truth_reference,
-                     collinearity, feature_selection, phase2_study, value_report (value transforms, click-ID coverage)
+                     collinearity, feature_selection, phase2_study, value_report (value transforms, click-ID coverage),
+                     context_harness
 scripts/             check_baseline (make baseline), run_experiments, generate_data_v1, ground_truth_report, compare_to_v1
 tests/               pytest, one file per module + integration; conftest runs v1 in legacy and horizon mode
 reports/             one write-up per task; docs/ context layer (this set of files); docs/platform_contract.md (upload design)
@@ -178,7 +181,7 @@ reports/             one write-up per task; docs/ context layer (this set of fil
 | 5.2-5.8 generator v2 | merged (01c56f4) | `phase5-generator-v2` | `reports/phase5.md` |
 | 3 value layer | merged (a13491d) | `phase3-value` | `reports/phase3.md` |
 | 4 evaluation hardening | pending (needs Phase 2) | | |
-| 6 context agent v2 | pending (needs 2 and 5) | | |
+| 6 context agent v2 | ready for merge | `phase6-context-agent` | `reports/phase6.md` |
 | 7 production readiness doc | pending (needs all) | | |
 
 ## Do not

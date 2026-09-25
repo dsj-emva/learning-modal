@@ -30,8 +30,10 @@ not be passed off with placeholder text.
 ## Consequences
 
 - `scripts/paraphrase_cache.json` holds 62 templates × 5 paraphrases; `data/v2/` is generated from it.
-- `emva/context/agent.py` (moved unchanged from the baseline) uses `requests` with `x-api-key` only and
-  does not yet send the workspace header; its cache key is sha256(system prompt + lead card) without the
-  model id. Phase 6 (Anthropic SDK, `(brief_hash, prompt_version, model_id)` stamped per row) must bring
-  it in line with this ADR.
+- `emva/context/agent.py` (Phase 0: `requests` with `x-api-key` only, cache keyed without the model id) was
+  brought in line in Phase 6 (`phase6-context-agent`, ADR 0014): it uses the Anthropic SDK, sends the
+  `anthropic-workspace-id` header on every request (refusing to run without `ANTHROPIC_WORKSPACE_ID`),
+  and its cache key is sha256 of (card hash, brief hash, prompt version, prompt fingerprint, model id), so a model change is a
+  miss. `data/v2/context/cache.json` is committed; `(brief_hash, prompt_version, model_id)` is stamped on
+  every output row.
 - Using another model needs a new ADR.
