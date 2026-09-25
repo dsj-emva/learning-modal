@@ -13,7 +13,7 @@ against the customer's brief, with no fitted outcome model.
 What the POC shows, all on simulated data:
 
 - Per-customer L2 logistic regression beats a monotone GBDT at every training size on both datasets (v2, N = 2,000:
-  0.789 ± 0.005 vs 0.756 ± 0.012; full pool 0.794 vs 0.783; `origin/phase4-eval-hardening:reports/phase4.md` §4.2).
+  0.789 ± 0.005 vs 0.756 ± 0.012; full pool 0.794 vs 0.783; `reports/phase4.md` §4.2).
   The generators are additive logistic, so this comparison favours LR by construction.
 - Customer-sized pools are small: 1,000 to 4,000 labelled rows a year for the customers `reports/production.md`
   section 6 would accept, and calibration is over-confident at small N (slope 0.70 to 0.91, Phase 4 §4.5).

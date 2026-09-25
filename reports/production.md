@@ -5,13 +5,12 @@ to build and sell, and a data scientist who has to run it.
 
 **Read this first.** Every number below comes from a report in this repo and is **on simulated data** (generator
 v1 or v2; no real customer data exists here). v2 is the headline dataset. v1 numbers are marked *(v1, internal)*:
-the claims policy forbids quoting them externally. Phase 4 is not yet merged: its numbers are cited from
-`origin/phase4-eval-hardening` (head bd60559, `reports/phase4.md`, ADR 0013 status Proposed); they have been
-independently reproduced and are treated as final. Anything proposed here that is not measured is labelled
+the claims policy forbids quoting them externally. Phase 4 numbers are from `reports/phase4.md` on `main` (merged
+at 9396ba1; ADR 0013 Accepted). Anything proposed here that is not measured is labelled
 **proposal** or **assumption**; platform limits that come from memory are labelled **verify**.
 
 Source keys: P0 to P6 = `reports/phase0.md` ... `reports/phase6.md` (P5.1 = `reports/phase5-1.md`), P4 =
-`origin/phase4-eval-hardening:reports/phase4.md`, PC = `docs/platform_contract.md`, ADR NNNN = `docs/adr/NNNN-*.md`.
+`reports/phase4.md`, PC = `docs/platform_contract.md`, ADR NNNN = `docs/adr/NNNN-*.md`.
 
 ---
 
@@ -160,8 +159,8 @@ segment, the platform shifts spend toward it, and nothing corrects this for at l
 only become labels at maturity. Three things make it worse:
 
 1. **Spurious effects look real.** On v1, where nothing is planted, the LinkedIn × 51+ interaction comes out
-   +0.56 [+0.18, +0.98] *(v1, internal)*, mostly sampling chance amplified by the 120-day truncation (P4, open
-   finding). A model that shipped such a term would tell the platform to buy LinkedIn enterprise traffic.
+   +0.56 [+0.18, +0.98] *(v1, internal)*, outside its simulated null distribution and so far unexplained (P4, open
+   finding; section 11). A model that shipped such a term would tell the platform to buy LinkedIn enterprise traffic.
 2. **The training population follows the model.** Next year's training leads are the ones the platform bought on
    EMVA's values, so segments EMVA undervalued become rare and their weights stop being re-estimated.
 3. **Sales neglect hides the errors.** On v2 ghosting tracks the old tier more than true quality (correlation 0.240
@@ -370,7 +369,7 @@ its CI, never extrapolated to other customers.
 | # | risk or unknown | source | consequence |
 |---|---|---|---|
 | 1 | Synthetic data only; both generators additive logistic; seed alone moves AUC ±0.015 | CLAUDE.md, ADR 0003, P5.1 | every number here is an upper bound on how well LR fits, not a forecast |
-| 2 | Spurious significant interaction: LinkedIn × 51+ +0.56 [+0.18, +0.98] on v1 where nothing is planted; on v2 the planted +0.8 is not detected (+0.27 [−0.11, +0.67]) | P4 open finding, §interactions | one significant coefficient is not evidence; model changes need paired held-out gains |
+| 2 | LinkedIn × 51+ on v1, where nothing is planted: observed +0.561 vs simulated null +0.123 ± 0.189 (central 95% [−0.254, +0.478]; 2.3% of 1,000 draws as extreme) under the planted truth and the 120-day label. Recorded as **unexplained**; follow-ups: regenerate v1 with 20+ seeds, trace the training-set win-rate gap, audit the generator's LinkedIn × 51+ code path. On v2 both interaction coefficients sit inside their simulated distributions (LinkedIn × 51+ +0.268, planted +0.8, not significant) | P4 open finding, §interactions | until explained, a significant coefficient is not evidence of a real effect, and a generator or label artefact is not ruled out; model changes need paired held-out gains |
 | 3 | Boilerplate detection: Jaccard recall 0.062 on v2 (0.026 on the P6 sample); the LLM reaches 0.88 recall at 0.583 precision | P2, ADR 0011, P6 | copy-paste leads are mostly unflagged without the context agent |
 | 4 | Young `crm_lost` leads are NaN rather than 0 (1,391 on v1, 1,244 on v2); not ruled | P1 open question 3, CONTEXT, P3 deviation 4 | affects `scores.csv` and `value_at_close` (pending instead of a retraction) |
 | 5 | Platform limits from memory: Google 30 conversions / 30 days, Meta ~50 / week, Google adjustment window (≤ 90 days), Meta 7-day `event_time`, email normalisation, consent signals | `emva/troas.py`, PC, P3 deviation 8 | section 6's table and the upload design must be re-checked against current docs before building |
@@ -387,8 +386,7 @@ its CI, never extrapolated to other customers.
 | 16 | GBDT compared at defaults, untuned | P4 deviations | the LR choice must be re-tested in each pilot |
 | 17 | Rolling splits read stalled censoring from CRM state at AS_OF (no stage history) | ADR 0013 | a small look-ahead that can drop, never relabel, a training row; a production backtest should use stage history |
 | 18 | Context agent cost: about $1 per 1,000 leads, estimated (token usage not logged) | P6 | unverified; log usage in production |
-| 19 | Phase 4 and ADR 0013 not yet merged (Proposed) | P4 | this document's headline and section 2/6 evidence depend on it |
-| 20 | Plan figures that did not reproduce: 29.7% no-click-id (28.8-29.0%), 116× / 11% value scale (121.7× / 11.5%) | PC §3, P0 | minor; quote the reproduced figures |
+| 19 | Plan figures that did not reproduce: 29.7% no-click-id (28.8-29.0%), 116× / 11% value scale (121.7× / 11.5%) | PC §3, P0 | minor; quote the reproduced figures |
 
 ---
 
