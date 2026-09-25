@@ -27,7 +27,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 CACHE_PATH = os.path.join(HERE, "paraphrase_cache.json")
 MODEL_ID = "claude-haiku-4-5-20251001"
-PROMPT_VERSION = "v1"
+PROMPT_VERSION = "v2"   # v1 named "{team}" as an example and Haiku copied it into answers without placeholders
 N_PARAPHRASES = 5
 POPULATE_CMD = "python scripts/paraphrase_templates.py --populate"
 
@@ -37,7 +37,7 @@ that a person typed into the free-text box "What do you want to solve?" on a web
 Write {n} different paraphrases of it, as {n} different real people might have typed the same thing. Rules:
 - Keep the meaning, tone and level of detail. Do not add facts, numbers, names or requests that are not there.
 - Vary wording and sentence structure; casual, terse and formal styles are all fine.
-- Keep every placeholder in curly braces (for example {{team}}) exactly as written, once each.
+- {placeholder_rule}
 - If the answer is a short fragment, keep the paraphrases short too.
 - Write in the same language as the original.
 
@@ -166,9 +166,12 @@ def paraphrase(client: "anthropic.Anthropic", template: str, n: int = N_PARAPHRA
     """One API call: ``n`` validated paraphrases of ``template`` from MODEL_ID at temperature 0."""
     schema = {"type": "object", "additionalProperties": False, "required": ["paraphrases"],
               "properties": {"paraphrases": {"type": "array", "items": {"type": "string"}}}}
+    names = sorted(placeholders(template))
+    rule = ("Keep the placeholders " + ", ".join("{" + x + "}" for x in names) + " exactly as written, once each."
+            if names else "Do not use curly braces or placeholders.")
     resp = client.messages.create(
         model=MODEL_ID, max_tokens=2048,
-        messages=[{"role": "user", "content": PROMPT.format(n=n, template=template)}],
+        messages=[{"role": "user", "content": PROMPT.format(n=n, template=template, placeholder_rule=rule)}],
         output_config={"format": {"type": "json_schema", "schema": schema}},
         extra_body={"temperature": 0},      # anthropic 1.x dropped the typed parameter; Haiku 4.5 still honours it
     )

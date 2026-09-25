@@ -40,8 +40,13 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:          # ground_truth_report, v2_text, paraphrase_templates are siblings in scripts/
     sys.path.insert(0, _HERE)
 
+_ROOT = os.path.dirname(_HERE)
+if _ROOT not in sys.path:          # emva.features.text_cat: the regex the 5.7 persona sentences must not trigger
+    sys.path.insert(0, _ROOT)
+
 import paraphrase_templates  # noqa: E402
 import v2_text  # noqa: E402
+from emva.features import text_cat  # noqa: E402
 
 # ---------------------------------------------------------------------------------------------
 # Configuration: every planted effect and every distribution constant lives here.
@@ -932,10 +937,20 @@ def all_text_templates() -> list[str]:
     """Every free-text template the v2 text stage can emit and that has words to paraphrase (sorted, unique).
 
     This is the list ``paraphrase_templates.py --populate`` sends to the API: v1 neutral / specific / vague /
-    copy-paste templates, the boilerplate pool and the persona sentences. Empty and "?" answers are skipped."""
+    copy-paste templates, the boilerplate pool and the persona sentences. Empty and "?" answers are skipped, and
+    so is the Lorem ipsum filler: it is pasted verbatim, and Haiku (rightly) returns it unchanged five times."""
     pool = NEUTRAL_TEXTS + SPECIFIC_TEMPLATES + VAGUE_TEXTS + COPY_PASTE_TEXTS + v2_text.BOILERPLATE_POOL
     pool += [t for ts in v2_text.PERSONA_SENTENCES.values() for t in ts]
-    return sorted({t for t in pool if any(ch.isalpha() for ch in t)})
+    return sorted({t for t in pool if any(ch.isalpha() for ch in t) and not t.startswith("Lorem ipsum")})
+
+
+def persona_safe(paraphrases: dict[str, list[str]]) -> dict[str, list[str]]:
+    """Drop persona-sentence paraphrases that the POC regex would not call neutral.
+
+    The persona must be readable only from meaning (5.7), but a paraphrase can add a keyword (Haiku turned
+    "money is tight" into "our budget is limited"). Paraphrases of every other template are kept as they are."""
+    persona = {t for ts in v2_text.PERSONA_SENTENCES.values() for t in ts}
+    return {t: [q for q in ps if text_cat(q) == "neutral"] if t in persona else ps for t, ps in paraphrases.items()}
 
 
 def assign_personas(cfg: Config, leads: pd.DataFrame, people: pd.DataFrame) -> pd.DataFrame:
@@ -992,7 +1007,7 @@ def rewrite_texts(cfg: Config, leads: pd.DataFrame, people: pd.DataFrame) -> pd.
                  cfg.text_typo_share > 0, cfg.context_only_signal]
     if not any(text_opts):
         return leads
-    paraphrases = paraphrase_templates.lookup(all_text_templates()) if cfg.text_paraphrase else {}
+    paraphrases = persona_safe(paraphrase_templates.lookup(all_text_templates())) if cfg.text_paraphrase else {}
     prng = rng_for(cfg, "v2_paraphrase") if cfg.text_paraphrase else None
     brng, lrng, trng = rng_for(cfg, "v2_boilerplate"), rng_for(cfg, "v2_language"), rng_for(cfg, "v2_typos")
     lang_mode = []

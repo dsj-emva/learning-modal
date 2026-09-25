@@ -253,6 +253,22 @@ def test_paraphrase_uses_cache_entries(monkeypatch, tmp_path, base):
     assert (stripped == what(base["historical_leads"])).all()    # placeholders were filled with the same values
 
 
+def test_committed_cache_covers_every_template():
+    paras = pt.lookup(gen.all_text_templates())          # raises MissingParaphraseError if the cache is incomplete
+    assert all(len(v) == pt.N_PARAPHRASES for v in paras.values())
+    safe = gen.persona_safe(paras)
+    for sentences in v2_text.PERSONA_SENTENCES.values():
+        for s in sentences:
+            assert safe[s] and all(text_cat(q) == "neutral" for q in safe[s]), s
+
+
+def test_persona_safe_drops_regex_keywords():
+    s = v2_text.PERSONA_SENTENCES["nonprofit"][0]
+    out = gen.persona_safe({s: ["We are a charity with a tiny budget.", "We are a charity."],
+                            gen.NEUTRAL_TEXTS[0]: ["Our budget is small."]})
+    assert out[s] == ["We are a charity."] and out[gen.NEUTRAL_TEXTS[0]] == ["Our budget is small."]
+
+
 def test_cache_validation_rejects_lost_placeholders():
     t = gen.SPECIFIC_TEMPLATES[0]
     with pytest.raises(ValueError, match="placeholder"):
