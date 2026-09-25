@@ -48,3 +48,11 @@ def test_makefile_has_app_and_docker_targets() -> None:
     assert re.search(r"^docker:", makefile, re.M)
     phony = re.search(r"^\.PHONY:(.*)$", makefile, re.M)
     assert phony and {"app", "docker"} <= set(phony.group(1).split())
+
+
+def test_makefile_docker_recipe_never_echoes_the_password() -> None:
+    recipe = re.search(r"^docker:\n((?:\t.*\n?)+)", _read("Makefile"), re.M).group(1)
+    for line in recipe.splitlines():
+        if "APP_PASSWORD" in line:
+            assert line.startswith("\t@"), line
+    assert '-e APP_PASSWORD="' not in recipe  # not on the docker command line either

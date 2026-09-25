@@ -38,8 +38,10 @@ app:
 	"$(PY)" -m streamlit run app/main.py --server.port 8501
 
 ## docker APP_PASSWORD=...: build learning-modal:local and run it on :8080, data in runs/docker-data
+## (the password is passed through the environment, never echoed or put on the docker command line)
 docker:
 	@test -n "$(APP_PASSWORD)" || (echo "usage: make docker APP_PASSWORD=<password>" && exit 1)
 	docker build -t learning-modal:local .
 	mkdir -p runs/docker-data
-	docker run --rm -p 8080:8080 -e PORT=8080 -e APP_PASSWORD="$(APP_PASSWORD)" -v "$(CURDIR)/runs/docker-data:/data" learning-modal:local
+	@echo "docker run --rm -p 8080:8080 -e PORT=8080 -e APP_PASSWORD -v runs/docker-data:/data learning-modal:local"
+	@APP_PASSWORD="$(APP_PASSWORD)" docker run --rm -p 8080:8080 -e PORT=8080 -e APP_PASSWORD -v "$(CURDIR)/runs/docker-data:/data" learning-modal:local

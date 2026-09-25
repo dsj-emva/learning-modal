@@ -101,6 +101,19 @@ def pre_training_summary(dataset_path: str | Path, config: TrainingConfig) -> di
             "label_counts": counts, "labels": labels.describe()}
 
 
+# Environment variables the job and ``python -m emva`` may see; everything else (APP_PASSWORD, ANTHROPIC_*, cloud
+# credentials) stays in the server process.
+CHILD_ENV_KEYS: frozenset[str] = frozenset({"PATH", "HOME", "LANG", "PYTHONPATH", "TMPDIR", "DATA_DIR"})
+
+
+def child_env(env: dict[str, str] | None = None) -> dict[str, str]:
+    """The training job's environment: ``CHILD_ENV_KEYS`` and ``LC_*`` from ``env`` (default ``os.environ``),
+    plus ``PYTHONUNBUFFERED=1`` so the log streams."""
+    src = os.environ if env is None else env
+    out = {k: v for k, v in src.items() if k in CHILD_ENV_KEYS or k.startswith("LC_")}
+    return {**out, "PYTHONUNBUFFERED": "1"}
+
+
 def start_training(root: str | Path, run: Run, python: str = sys.executable, cwd: str | Path = REPO_ROOT,
                    report_resamples: int = N_RESAMPLES) -> subprocess.Popen:
     """Launch the job for the registered ``run`` (``python -m app.job``) and return its process at once.
@@ -114,7 +127,7 @@ def start_training(root: str | Path, run: Run, python: str = sys.executable, cwd
             [python, "-m", "app.job", "--root", str(Path(root).resolve()), "--run-id", run.run_id,
              "--report-resamples", str(report_resamples)],
             cwd=str(cwd), stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-            env={**os.environ, "PYTHONUNBUFFERED": "1"}, start_new_session=True)
+            env=child_env(), start_new_session=True)
     finally:
         log.close()  # the child holds its own copy of the descriptor
 
@@ -181,6 +194,6 @@ def label_counts_frame(summary: dict[str, object]) -> pd.DataFrame:
     return pd.DataFrame([{"label_source": k, **v} for k, v in summary["label_counts"].items()])
 
 
-__all__ = ["RUN_OUTPUTS", "TrainingConfig", "finish_run", "label_counts_frame", "parse_summary",
+__all__ = ["CHILD_ENV_KEYS", "RUN_OUTPUTS", "TrainingConfig", "child_env", "finish_run", "label_counts_frame", "parse_summary",
            "pre_training_summary", "process_alive", "reconcile", "report_command", "rules_available",
            "start_training", "training_command"]

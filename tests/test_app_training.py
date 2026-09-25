@@ -108,3 +108,33 @@ def test_results_frames_agree_with_the_run(app_trained) -> None:
     vd = results.value_distribution(run.out_dir).set_index("column")
     assert list(vd.index) == ["value_at_submit", "value_formula"] and (vd.max_over_median >= 1).all()
     assert results.evaluate(run.out_dir, run.dataset_path, "legacy") is not None
+
+
+def test_child_env_drops_secrets() -> None:
+    env = {"PATH": "/bin", "HOME": "/h", "LANG": "C", "LC_ALL": "C", "DATA_DIR": "/d", "TMPDIR": "/t",
+           "PYTHONPATH": "/p", "APP_PASSWORD": "s3cret", "ANTHROPIC_API_KEY": "k", "ANTHROPIC_WORKSPACE_ID": "w",
+           "AWS_SECRET_ACCESS_KEY": "x"}
+    got = training.child_env(env)
+    assert got == {"PATH": "/bin", "HOME": "/h", "LANG": "C", "LC_ALL": "C", "DATA_DIR": "/d", "TMPDIR": "/t",
+                   "PYTHONPATH": "/p", "PYTHONUNBUFFERED": "1"}
+
+
+def test_training_job_does_not_see_the_password(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The spawned job's environment has no APP_PASSWORD (it fails fast on an empty dataset; only env matters)."""
+    import subprocess
+    import sys
+
+    monkeypatch.setenv("APP_PASSWORD", "s3cret")
+    seen = {}
+    real = subprocess.Popen
+
+    def spy(*args, **kwargs):
+        seen.update(kwargs["env"])
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "Popen", spy)
+    root = storage.init_root(tmp_path)
+    ds = storage.Dataset(name="bad", path=str(tmp_path), created_at=storage.utc_now(), rows={})
+    run = storage.register_run(root, storage.new_run(root, ds, TrainingConfig().as_dict()))
+    training.start_training(root, run, python=sys.executable).wait(timeout=60)
+    assert "APP_PASSWORD" not in seen and "PATH" in seen
