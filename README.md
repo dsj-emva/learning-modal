@@ -29,6 +29,7 @@ make test                   # pytest + compile check
 make experiment NAME=baseline   # pipeline outputs + report into runs/baseline/
 
 .venv/bin/python -m emva --data data/v1 --out OUT_DIR    # writes weights.csv, scores.csv
+.venv/bin/python scripts/generate_data_v1.py --seed 20260924 --out DIR && .venv/bin/python scripts/compare_to_v1.py --gen DIR   # regenerate v1-like data, compare with data/v1
 ```
 
 The context agent (`python -m emva.context.agent`, needs `ANTHROPIC_API_KEY`) writes a CSV that
