@@ -37,8 +37,11 @@ import numpy as np
 import pandas as pd
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-if _HERE not in sys.path:          # ground_truth_report is a sibling module in scripts/
+if _HERE not in sys.path:          # ground_truth_report, v2_text, paraphrase_templates are siblings in scripts/
     sys.path.insert(0, _HERE)
+
+import paraphrase_templates  # noqa: E402
+import v2_text  # noqa: E402
 
 # ---------------------------------------------------------------------------------------------
 # Configuration: every planted effect and every distribution constant lives here.
@@ -118,15 +121,29 @@ class Config:
     messy_stage_share: float = 0.15
     click_id_missing_share: float = 0.30
 
-    # Phase 5.2-5.8 options (v1 behaviour = all off). Declared so later phases have a fixed place to
-    # add them; generate() refuses any non-default value until the option is implemented.
-    text_paraphrase: bool = field(default=False, metadata={"v2": "5.2"})
+    # Phase 5.2-5.8 options (v1 behaviour = all off; scripts/generate_data_v2.py turns them on). Every option
+    # draws from its own RNG stream, so switching one on never shifts the random draws of a v1 stage.
+    text_paraphrase: bool = field(default=False, metadata={"v2": "5.2"})         # Haiku paraphrases (cache)
+    text_typo_share: float = field(default=0.0, metadata={"v2": "5.2"})          # share of texts with typos
+    text_language_mix_share: float = field(default=0.0, metadata={"v2": "5.2"})  # share of DE/FR/NL texts
+    text_boilerplate_pool: bool = field(default=False, metadata={"v2": "5.2"})   # copy-paste from a wide pool
     enrichment_dropout: float = field(default=0.0, metadata={"v2": "5.3"})
     consent_missing_share: float = field(default=0.0, metadata={"v2": "5.4"})
     interactions: bool = field(default=False, metadata={"v2": "5.5"})
     ghosting_follows_tier: bool = field(default=False, metadata={"v2": "5.6"})
     context_only_signal: bool = field(default=False, metadata={"v2": "5.7"})
     fast_human_share: float = field(default=0.0, metadata={"v2": "5.8"})
+
+    # Parameters of the v2 options (ignored while the matching option is off)
+    typo_char_rate: float = 0.015             # 5.2: per-letter typo probability in a text chosen for typos
+    company_name_variation_share: float = 0.7  # 5.3: typed company names given suffix/case/punctuation noise
+    linkedin_51plus_eff: float = 0.8          # 5.5: LinkedIn lead from a company with 51+ employees
+    senior_guide_eff: float = -0.8            # 5.5: senior title on form D (guide download)
+    ghost_intercept: float = -5.3             # 5.6: never-contacted log-odds = intercept + tier term only
+    ghost_tier_eff: dict = field(default_factory=lambda: {"A": 0.0, "B": 2.8, "C": 4.4})
+    stall_by_tier: dict = field(default_factory=lambda: {"A": 0.05, "B": 0.10, "C": 0.17})
+    persona_share: float = 0.08               # 5.7: share of genuine-human original leads with a persona
+    persona_eff: float = -1.0                 # 5.7: persona effect on close log-odds
 
     @property
     def as_of_dt(self) -> datetime:
@@ -136,6 +153,11 @@ class Config:
 
 # Phase 5.2-5.8 options and their v1 (off) values, read from the Config field metadata.
 V2_OPTIONS = {f.name: f.default for f in fields(Config) if "v2" in f.metadata}
+
+
+def v2_on(cfg: Config) -> list[str]:
+    """Names of the Phase 5.2-5.8 options that are switched on in ``cfg`` (empty list = pure v1)."""
+    return [k for k, off in V2_OPTIONS.items() if getattr(cfg, k) != off]
 
 
 def _present(x: Any) -> bool:
@@ -301,6 +323,8 @@ LABEL_COLUMNS = ["lead_id", "duplicate_of", "outcome", "p_close_true", "channel"
                  "is_free_email", "has_company", "employee_band", "sector", "company_domain", "seniority",
                  "text_category", "country", "click_id_missing", "never_contacted", "stalled", "deal_value",
                  "reply_hours"]
+# Hidden truth added by the v2 options (only written when at least one is on, so v1 keeps its schema).
+V2_LABEL_COLUMNS = ["context_persona", "consent_declined", "fast_human", "domain_in_companies", "language_mix"]
 INT_COLUMNS = ["field_edit_count", "hesitation_ms", "pages_visited", "sessions_before_convert",
                "days_since_first_visit", "scroll_depth_pct"]
 
@@ -489,6 +513,82 @@ def typed_company(rng: np.random.Generator, name: str) -> str:
     if rng.random() < 0.1:
         name = name.lower()
     return name
+
+
+SUFFIX_VARIANTS = {"Ltd": ["Ltd", "Ltd.", "LTD", "Limited", "ltd"], "Inc": ["Inc", "Inc.", "INC", "Incorporated", "inc."],
+                   "GmbH": ["GmbH", "Gmbh", "GMBH", "G.m.b.H."], "SAS": ["SAS", "S.A.S.", "sas", "S.A.S"],
+                   "BV": ["BV", "B.V.", "bv", "B.V"]}
+
+
+def vary_company_name(rng: np.random.Generator, typed: str, legal_suffix: str) -> str:
+    """5.3: typing noise on a company name that a normalising matcher can still undo.
+
+    Suffix spelling (Ltd / Ltd. / LTD / Limited, Inc. / Incorporated, Gmbh, B.V., ...), sometimes a comma before
+    it or a suffix added where the user left it off; an ampersand or hyphen between the two name words; upper or
+    lower case; stray leading, trailing or doubled spaces."""
+    words = typed.split(" ")
+    has_suffix = words[-1].lower() == legal_suffix.lower()
+    stem = words[:-1] if has_suffix else words
+    if has_suffix or rng.random() < 0.3:
+        suffix = pick(rng, SUFFIX_VARIANTS[legal_suffix])
+        if rng.random() < 0.2:
+            stem = stem[:-1] + [stem[-1] + ","]
+        name_words = stem + [suffix]
+    else:
+        name_words = stem
+    u = rng.random()
+    joiner = " & " if u < 0.10 else "-" if u < 0.16 else " "
+    name = joiner.join(name_words[:2]) + ("" if len(name_words) <= 2 else " " + " ".join(name_words[2:]))
+    u = rng.random()
+    name = name.upper() if u < 0.10 else name.lower() if u < 0.25 else name
+    u = rng.random()
+    if u < 0.15:
+        name += " " * int(rng.integers(1, 3))
+    elif u < 0.20:
+        name = " " + name
+    elif u < 0.28:
+        name = name.replace(" ", "  ", 1)
+    return name
+
+
+def vary_company_names(cfg: Config, leads: pd.DataFrame, people: pd.DataFrame, companies: pd.DataFrame) -> pd.DataFrame:
+    """5.3: apply ``vary_company_name`` to ``company_name_variation_share`` of typed names of real companies."""
+    if cfg.enrichment_dropout <= 0:
+        return leads
+    rng = rng_for(cfg, "v2_company_names")
+    for i, l in leads.iterrows():
+        k = people.at[l.person, "company_idx"]
+        typed = l.answers.get("company")
+        if k < 0 or not typed or rng.random() >= cfg.company_name_variation_share:
+            continue
+        legal = SUFFIX[companies.at[k, "country"]]
+        ans = dict(l.answers)
+        ans["company"] = vary_company_name(rng, typed, legal)
+        leads.at[i, "answers"] = ans
+        leads.at[i, "company_name"] = ans["company"]
+    return leads
+
+
+def drop_enrichment(cfg: Config, companies: pd.DataFrame, people: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """5.3: hide ``enrichment_dropout`` of the business-email domains from the emitted companies.csv.
+
+    The company row stays (so a typed-name match can still find it) but carries a legacy domain that no lead's
+    email uses. Returns (emitted companies.csv, hidden full table with ``emitted_domain`` and
+    ``domain_in_companies_csv``)."""
+    rng = rng_for(cfg, "v2_dropout")
+    used = sorted(set(people.company_idx[(~people.is_free_email) & (~people.is_bot) & (people.company_idx >= 0)]))
+    n_drop = int(round(cfg.enrichment_dropout * len(used)))
+    drop = set(int(k) for k in rng.choice(used, size=n_drop, replace=False))
+    emitted = companies.copy()
+    for k in sorted(drop):
+        w1, w2 = companies.at[k, "domain"].removesuffix(".example").split("-")
+        emitted.at[k, "domain"] = f"{w1}{w2[:4]}-group.example"
+    if emitted.domain.duplicated().any():
+        raise ValueError("legacy domains collide; change the legacy-domain rule in drop_enrichment")
+    hidden = companies.copy()
+    hidden["emitted_domain"] = emitted.domain
+    hidden["domain_in_companies_csv"] = ~companies.index.isin(sorted(drop))
+    return emitted, hidden
 
 
 def typed_band(rng: np.random.Generator, band: str) -> str:
@@ -698,15 +798,56 @@ def session_behaviour(rng: np.random.Generator, cfg: Config, channel: str, lead_
     return b
 
 
+# Telemetry that a consent-declined visit does not record (5.4): everything set by the analytics script or
+# derived from its cookies and geolocation. User agent, device, referrer, landing URL and click IDs (which
+# come from the request and the URL) are kept.
+CONSENT_COLUMNS = ["time_on_page_s", "hesitation_ms", "field_edit_count", "fields_edited", "pasted_text",
+                   "sessions_before_convert", "days_since_first_visit", "returned_visitor", "pages_visited",
+                   "viewed_pricing", "scroll_depth_pct", "fbp", "ip", "ip_country", "ip_city", "is_datacenter_ip"]
+# Session values the planted close log-odds read; kept as the truth when 5.4 or 5.8 changes what is recorded.
+TRUE_BEHAVIOUR = ["time_on_page_s", "hesitation_ms", "field_edit_count", "viewed_pricing", "sessions_before_convert",
+                  "ip_country"]
+
+
+def observe_session(cfg: Config, b: dict[str, Any], lead_ads: bool, bot: bool, crng: np.random.Generator,
+                    frng: np.random.Generator) -> None:
+    """Turn the true session ``b`` into what is recorded (in place): 5.4 consent declined, 5.8 fast humans.
+
+    Adds ``consent_declined``, ``fast_human`` and ``true_behaviour`` (the TRUE_BEHAVIOUR values before any change,
+    None when nothing changed). Consent is drawn for every website session (bots included: a script that never
+    runs the analytics tag looks the same); fast humans are drawn among genuine humans whose telemetry was
+    recorded. Fast humans get 5-14.9s on the page and a pause share of at most 25% of it, but keep the close
+    odds of their real session, so the bot rule's under-15s cut is wrong for them."""
+    b["consent_declined"], b["fast_human"], b["true_behaviour"] = False, False, None
+    if lead_ads:
+        return
+    truth = {c: b[c] for c in TRUE_BEHAVIOUR}
+    if cfg.consent_missing_share > 0 and crng.random() < cfg.consent_missing_share:
+        for c in CONSENT_COLUMNS:
+            b[c] = None
+        b["consent_declined"] = True
+    elif not bot and cfg.fast_human_share > 0 and frng.random() < cfg.fast_human_share:
+        top = round(float(frng.uniform(5.0, 14.9)), 1)
+        b["time_on_page_s"] = top
+        b["hesitation_ms"] = int(frng.uniform(0.0, 0.25) * top * 1000)
+        b["fast_human"] = True
+    if b["consent_declined"] or b["fast_human"]:
+        b["true_behaviour"] = truth
+
+
 def add_behaviour(cfg: Config, leads: pd.DataFrame, people: pd.DataFrame) -> pd.DataFrame:
-    """Append website telemetry, click IDs, IP and device columns (``session_behaviour``) to every lead."""
+    """Append website telemetry, click IDs, IP and device columns (``session_behaviour``) to every lead, then
+    what the v2 options change about what is recorded (``observe_session``)."""
     rng = rng_for(cfg, "behaviour")
+    crng, frng = rng_for(cfg, "v2_consent"), rng_for(cfg, "v2_fast_humans")
     rows = []
     for _, l in leads.iterrows():
         p = people.loc[l.person]
         attrib = {k: (l[k] if isinstance(l[k], str) else None) for k in ["utm_source", "utm_medium", "utm_campaign", "utm_content"]}
-        rows.append(session_behaviour(rng, cfg, p.channel, p.is_lead_ads, p.is_bot, p.country, p.city, l.form_variant,
-                                      isinstance(l.phone, str), attrib, l.created))
+        b = session_behaviour(rng, cfg, p.channel, p.is_lead_ads, p.is_bot, p.country, p.city, l.form_variant,
+                              isinstance(l.phone, str), attrib, l.created)
+        observe_session(cfg, b, p.is_lead_ads, p.is_bot, crng, frng)
+        rows.append(b)
     return pd.concat([leads.reset_index(drop=True), pd.DataFrame(rows)], axis=1)
 
 
@@ -718,29 +859,39 @@ TEXT_CATS = ["copy_paste", "neutral", "specific", "vague"]
 TEXT_LOGIT = {"intercept": [-0.96, 0.73, 0.04, 0.18], "C": [-0.52, 0.05, 0.94, -0.46], "meta": [0.24, -0.19, -0.32, 0.26]}
 
 
-def specific_text(rng: np.random.Generator, team: int) -> str:
-    """A "specific" what_to_solve answer (budget, timeline or team size), matched by the POC regex."""
+SPECIFIC_TEMPLATES = [
+    "Looking for pricing for {team} seats, want to go live within {weeks} weeks.",
+    "Budget of around £{k}k approved for a new attribution setup this quarter.",
+    "Our paid budget is £{k}k a month and we can't tell which leads turn into revenue.",
+    "We have a team of {team} SDRs and need better lead scoring before {when}.",
+    "Replacing our current tool when the contract ends in {month}. {team} users.",
+    "Need to fix our ad conversion tracking by {month}, team of {team} marketers.",
+]
+
+
+def specific_template(rng: np.random.Generator, team: int) -> tuple[str, dict[str, Any]]:
+    """A "specific" what_to_solve answer (budget, timeline or team size) as (template, placeholder values).
+
+    ``template.format(**values)`` is the v1 text, which the POC regex matches. The draws (and their order) are
+    exactly those of the original v1 ``specific_text``."""
     k = int(rng.integers(0, 6))
     if k == 0:
-        return f"Looking for pricing for {team} seats, want to go live within {int(rng.integers(2, 10))} weeks."
-    if k == 1:
-        return f"Budget of around £{int(rng.integers(3, 60))}k approved for a new attribution setup this quarter."
-    if k == 2:
-        return f"Our paid budget is £{int(rng.integers(3, 60))}k a month and we can't tell which leads turn into revenue."
+        return SPECIFIC_TEMPLATES[0], {"team": team, "weeks": int(rng.integers(2, 10))}
+    if k in (1, 2):
+        return SPECIFIC_TEMPLATES[k], {"k": int(rng.integers(3, 60))}
     if k == 3:
         when = pick(rng, ["Q1", "Q2", "Q3", "Q4", "end of quarter", "the new year"], [48, 47, 60, 60, 64, 69])
-        return f"We have a team of {team} SDRs and need better lead scoring before {when}."
-    if k == 4:
-        return f"Replacing our current tool when the contract ends in {pick(rng, MONTHS)}. {team} users."
-    return f"Need to fix our ad conversion tracking by {pick(rng, MONTHS)}, team of {team} marketers."
+        return SPECIFIC_TEMPLATES[3], {"team": team, "when": when}
+    return SPECIFIC_TEMPLATES[k], {"team": team, "month": pick(rng, MONTHS)}
 
 
 def add_text(cfg: Config, leads: pd.DataFrame, people: pd.DataFrame) -> pd.DataFrame:
     """Draw the text category and what_to_solve answer (plus the C-form timeline) for every lead.
 
-    Hook for Phase 5.2 (paraphrase, typos, languages, boilerplate) and 5.7 (context-only signal)."""
+    Also records the template and placeholder values behind each answer (``text_template``, ``text_params``)
+    so the v2 text stage (``v2text.rewrite_texts``) can paraphrase and perturb it without new draws here."""
     rng = rng_for(cfg, "text")
-    cats = []
+    cats, templates, params = [], [], []
     for i, l in leads.iterrows():
         p = people.loc[l.person]
         if p.is_bot:
@@ -751,21 +902,133 @@ def add_text(cfg: Config, leads: pd.DataFrame, people: pd.DataFrame) -> pd.DataF
             pr = np.exp(z) / np.exp(z).sum()
             cat = TEXT_CATS[int(rng.choice(4, p=pr))]
         if cat == "specific":
-            txt = specific_text(rng, int(p.team_size))
+            tpl, val = specific_template(rng, int(p.team_size))
         elif cat == "neutral":
-            txt = pick(rng, NEUTRAL_TEXTS)
+            tpl, val = pick(rng, NEUTRAL_TEXTS), {}
         elif cat == "vague":
-            txt = pick(rng, VAGUE_TEXTS)
+            tpl, val = pick(rng, VAGUE_TEXTS), {}
         else:
-            txt = pick(rng, COPY_PASTE_TEXTS)
+            tpl, val = pick(rng, COPY_PASTE_TEXTS), {}
         ans = dict(l.answers)
-        ans["what_to_solve"] = txt
+        ans["what_to_solve"] = tpl.format(**val) if val else tpl
         if "timeline" in ans:
             ans["timeline"] = pick(rng, ["This month", "This quarter", "Next 6 months"], [0.22, 0.56, 0.22]) if cat == "specific" \
                 else pick(rng, ["Just researching", "This quarter", "Next 6 months"], [0.49, 0.26, 0.25])
         leads.at[i, "answers"] = ans
         cats.append(cat)
+        templates.append(tpl)
+        params.append(val)
     leads["text_category"] = cats
+    leads["text_template"] = templates
+    leads["text_params"] = params
+    return leads
+
+
+# ---------------------------------------------------------------------------------------------
+# Stage 5b (v2 only): hidden personas (5.7) and free-text rewriting (5.2)
+# ---------------------------------------------------------------------------------------------
+
+def all_text_templates() -> list[str]:
+    """Every free-text template the v2 text stage can emit and that has words to paraphrase (sorted, unique).
+
+    This is the list ``paraphrase_templates.py --populate`` sends to the API: v1 neutral / specific / vague /
+    copy-paste templates, the boilerplate pool and the persona sentences. Empty and "?" answers are skipped."""
+    pool = NEUTRAL_TEXTS + SPECIFIC_TEMPLATES + VAGUE_TEXTS + COPY_PASTE_TEXTS + v2_text.BOILERPLATE_POOL
+    pool += [t for ts in v2_text.PERSONA_SENTENCES.values() for t in ts]
+    return sorted({t for t in pool if any(ch.isalpha() for ch in t)})
+
+
+def assign_personas(cfg: Config, leads: pd.DataFrame, people: pd.DataFrame) -> pd.DataFrame:
+    """5.7: give ``persona_share`` of genuine-human leads a hidden persona (and which persona sentence they write)."""
+    leads["context_persona"] = None
+    leads["persona_sentence"] = None
+    if not cfg.context_only_signal:
+        return leads
+    rng = rng_for(cfg, "v2_persona")
+    for i, l in leads.iterrows():
+        if people.at[l.person, "is_bot"] or rng.random() >= cfg.persona_share:
+            continue
+        persona = pick(rng, v2_text.PERSONAS)
+        leads.at[i, "context_persona"] = persona
+        leads.at[i, "persona_sentence"] = pick(rng, v2_text.PERSONA_SENTENCES[persona])
+    return leads
+
+
+def _variant(rng: np.random.Generator | None, template: str, paraphrases: dict[str, list[str]]) -> str:
+    """The template itself or, when paraphrasing, one of [template] + its cached paraphrases chosen uniformly."""
+    if rng is None or template not in paraphrases:
+        return template
+    options = [template] + paraphrases[template]
+    return options[int(rng.integers(0, len(options)))]
+
+
+def boilerplate_text(rng: np.random.Generator, prng: np.random.Generator | None,
+                     paraphrases: dict[str, list[str]]) -> str:
+    """5.2 (iv): pasted marketing copy from the v1 texts plus the wider pool, with a varied opening; 35% sit
+    mid-text between a human lead-in and tail, 15% paste two snippets."""
+    pool = COPY_PASTE_TEXTS + v2_text.BOILERPLATE_POOL
+    body = _variant(prng, pick(rng, pool), paraphrases)
+    if rng.random() < 0.15:
+        body += " " + _variant(prng, pick(rng, pool), paraphrases)
+    if rng.random() < 0.35:
+        return f"{pick(rng, v2_text.BOILERPLATE_LEAD_INS)} {body} {pick(rng, v2_text.BOILERPLATE_TAILS)}"
+    return pick(rng, v2_text.BOILERPLATE_OPENERS) + body
+
+
+def native_text(rng: np.random.Generator, country: str, cat: str, team: int) -> str:
+    """5.2 (iii): a hand-written DE/FR/NL answer with the same meaning class as ``cat``."""
+    bank = v2_text.LANG_BANK[country]
+    tpl = pick(rng, bank[cat])
+    return tpl.format(team=team, month=pick(rng, bank["months"]), k=int(rng.integers(3, 60)))
+
+
+def rewrite_texts(cfg: Config, leads: pd.DataFrame, people: pd.DataFrame) -> pd.DataFrame:
+    """v2 free text: paraphrase, boilerplate pool, persona sentence, language mixing, typos (in that order).
+
+    Each step has its own RNG stream and runs only when its option is on; the true ``text_category`` never
+    changes, only the words. Persona sentences are appended to non-vague answers (a one-word answer such as
+    "pricing" cannot carry a persona), so the persona never changes which regex category a text falls in."""
+    text_opts = [cfg.text_paraphrase, cfg.text_boilerplate_pool, cfg.text_language_mix_share > 0,
+                 cfg.text_typo_share > 0, cfg.context_only_signal]
+    if not any(text_opts):
+        return leads
+    paraphrases = paraphrase_templates.lookup(all_text_templates()) if cfg.text_paraphrase else {}
+    prng = rng_for(cfg, "v2_paraphrase") if cfg.text_paraphrase else None
+    brng, lrng, trng = rng_for(cfg, "v2_boilerplate"), rng_for(cfg, "v2_language"), rng_for(cfg, "v2_typos")
+    lang_mode = []
+    for i, l in leads.iterrows():
+        p = people.loc[l.person]
+        cat = l.text_category
+        if cat == "copy_paste" and cfg.text_boilerplate_pool:
+            base = boilerplate_text(brng, prng, paraphrases)
+        else:
+            tpl = _variant(prng, l.text_template, paraphrases)
+            base = tpl.format(**l.text_params) if l.text_params else tpl
+        persona = ""
+        if _present(l.persona_sentence) and cat != "vague":
+            persona = _variant(prng, l.persona_sentence, paraphrases)
+        mode, closer = None, ""
+        if cfg.text_language_mix_share > 0 and p.country in v2_text.LANG_BANK and \
+                lrng.random() < cfg.text_language_mix_share:
+            bank = v2_text.LANG_BANK[p.country]
+            if lrng.random() < 0.5:
+                mode = "wrap"
+                base = pick(lrng, bank["openers"]) + base
+                if lrng.random() < 0.5:
+                    closer = pick(lrng, bank["closers"])
+            else:
+                mode = "native"
+                base = native_text(lrng, p.country, cat, int(p.team_size))
+        txt = " ".join(x for x in (base, persona) if x) + closer
+        if mode:
+            txt = txt.strip()
+        if cfg.text_typo_share > 0 and trng.random() < cfg.text_typo_share:
+            txt = v2_text.add_typos(trng, txt, cfg.typo_char_rate)
+        ans = dict(l.answers)
+        ans["what_to_solve"] = txt
+        leads.at[i, "answers"] = ans
+        lang_mode.append(mode)
+    leads["language_mix"] = lang_mode
     return leads
 
 
@@ -797,8 +1060,9 @@ def top_bucket(t: float | None) -> str | None:
 def close_log_odds(cfg: Config, l: pd.Series, p: pd.Series, co: pd.Series | None, reply: float | None) -> float:
     """Planted close log-odds of one lead before noise: intercept plus every effect in ground_truth.md.
 
-    ``l`` is the lead row, ``p`` its persona, ``co`` its company row (None for individuals), ``reply`` the first
-    reply time in hours (None when never contacted)."""
+    ``l`` is the lead row (with the true, not the recorded, session values), ``p`` its persona, ``co`` its company
+    row (None for individuals), ``reply`` the first reply time in hours (None when never contacted). With the v2
+    options on it adds the two 5.5 interaction terms and the 5.7 persona effect."""
     z = cfg.intercept + cfg.band_eff[p.employee_band] + cfg.free_eff * _flag(p.is_free_email) + cfg.text_eff[l.text_category]
     tb = top_bucket(l.time_on_page_s)
     if tb:
@@ -820,14 +1084,21 @@ def close_log_odds(cfg: Config, l: pd.Series, p: pd.Series, co: pd.Series | None
         z += cfg.hiring_eff * _flag(co.is_hiring)
     if reply is not None:
         z += cfg.reply_fast_eff * (reply < 1) + cfg.reply_slow_eff * (reply > 48)
+    if cfg.interactions:
+        z += cfg.linkedin_51plus_eff * (p.channel == "linkedin" and p.employee_band in ("51-200", "201-1000", "1000+"))
+        z += cfg.senior_guide_eff * (p.seniority == "senior" and l.form_variant == "D")
+    if cfg.context_only_signal and _present(l.get("context_persona")):
+        z += cfg.persona_eff
     return float(z)
 
 
 def hidden_log_odds(cfg: Config, leads: pd.DataFrame, people: pd.DataFrame, companies: pd.DataFrame) -> pd.DataFrame:
     """Contact decision, reply time and the hidden close log-odds (the planted truth).
 
-    Hooks: 5.5 (interaction terms), 5.6 (ghosting driven by tier), 5.7 (context-only effect)."""
+    The status-quo tier is computed from what sales can see (recorded pages visited). With
+    ``ghosting_follows_tier`` the contact decision depends on that tier alone (5.6)."""
     rng = rng_for(cfg, "hidden")
+    grng = rng_for(cfg, "v2_ghosting")
     out = []
     for _, l in leads.iterrows():
         p = people.loc[l.person]
@@ -835,19 +1106,32 @@ def hidden_log_odds(cfg: Config, leads: pd.DataFrame, people: pd.DataFrame, comp
         tier = status_quo_tier(a, l.pages_visited)
         free_or_vague = [p.is_free_email, l.text_category in ("vague", "copy_paste")]
         z_nc = -4.2 + 1.7 * (tier == "B") + 2.7 * (tier == "C") + 0.5 * free_or_vague[0] + 0.45 * free_or_vague[1]
-        never = bool(rng.random() < 1 / (1 + np.exp(-z_nc)))
+        never = never_v1 = bool(rng.random() < 1 / (1 + np.exp(-z_nc)))
+        mu = np.log(1.5) + {"A": 0.0, "B": 1.03, "C": 1.89}[tier]
         reply = None
         if not never:
-            mu = np.log(1.5) + {"A": 0.0, "B": 1.03, "C": 1.89}[tier]
             reply = round(float(np.clip(np.exp(rng.normal(mu, 1.2)), 0.05, 240.0)), 2)
+        if cfg.ghosting_follows_tier:
+            # 5.6: sales neglect follows the old score only. The v1 draws above are still consumed so the rest of
+            # this stage's stream (noise, deal value) is unchanged; the v2 decision has its own stream.
+            never = bool(grng.random() < 1 / (1 + np.exp(-(cfg.ghost_intercept + cfg.ghost_tier_eff[tier]))))
+            if never:
+                reply = None
+            elif reply is None:
+                reply = round(float(np.clip(np.exp(grng.normal(mu, 1.2)), 0.05, 240.0)), 2)
         co = companies.loc[p.company_idx] if p.company_idx >= 0 else None
+        tb = l.get("true_behaviour")
+        if _present(tb):                       # 5.4 / 5.8 changed the record, not the behaviour
+            l = l.copy()
+            for k, v in tb.items():
+                l[k] = v
         z = close_log_odds(cfg, l, p, co, reply) + rng.normal(0, cfg.noise_sd)
         # deal value (drawn for every lead; only realised on Won)
         spend = co.monthly_ad_spend_band if co is not None else None
         mu_v = cfg.deal_base[p.employee_band] * (cfg.deal_sector[co.sector] if co is not None else 1.0) * \
             cfg.deal_channel[p.channel] * (cfg.deal_spend[spend] if spend else 1.0)
         dv = float(np.clip(round(mu_v * np.exp(rng.normal(0, cfg.deal_noise_sd)) / 50) * 50, 500, 60000))
-        out.append({"tier": tier, "never_contacted": never, "reply_hours": reply, "log_odds": z,
+        out.append({"tier": tier, "never_contacted": never, "never_contacted_v1": never_v1, "reply_hours": reply, "log_odds": z,
                     "p_close_true": 1 / (1 + np.exp(-z)), "deal_value_true": dv})
     return pd.concat([leads, pd.DataFrame(out, index=leads.index)], axis=1)
 
@@ -859,11 +1143,14 @@ def hidden_log_odds(cfg: Config, leads: pd.DataFrame, people: pd.DataFrame, comp
 def draw_outcome(cfg: Config, leads: pd.DataFrame, people: pd.DataFrame) -> pd.DataFrame:
     """Draw win/lose from ``p_close_true``, the stall flag, time to close and the stage path for every lead."""
     rng = rng_for(cfg, "outcome")
+    srng = rng_for(cfg, "v2_stalls")
     res = []
     for _, l in leads.iterrows():
         p = people.loc[l.person]
         won = bool(rng.random() < l.p_close_true)
-        stalled = (not l.never_contacted) and bool(rng.random() < cfg.stall_share)
+        stalled = (not l.never_contacted_v1) and bool(rng.random() < cfg.stall_share)
+        if cfg.ghosting_follows_tier:          # 5.6: stalls follow the tier too (own stream, v1 draw kept above)
+            stalled = (not l.never_contacted) and bool(srng.random() < cfg.stall_by_tier[l.tier])
         if won:
             days = float(np.exp(rng.normal(np.log(cfg.won_median_days), cfg.won_sd)))
             days *= cfg.won_1000_mult if p.employee_band == "1000+" else 1.0
@@ -887,6 +1174,7 @@ def add_duplicates(cfg: Config, leads: pd.DataFrame, people: pd.DataFrame, n_dup
     """Append ``n_dup`` repeat submissions: same person and answers, 1-45 days later, in a fresh session."""
     rng = rng_for(cfg, "duplicates")
     brng = rng_for(cfg, "duplicates_behaviour")
+    crng, frng = rng_for(cfg, "v2_consent_duplicates"), rng_for(cfg, "v2_fast_humans_duplicates")
     as_of = cfg.as_of_dt
     is_bot = people.is_bot.reindex(leads.person).to_numpy(dtype=bool)
     eligible = leads.index[~is_bot & (leads.created < as_of - timedelta(days=2)).to_numpy()]
@@ -912,8 +1200,10 @@ def add_duplicates(cfg: Config, leads: pd.DataFrame, people: pd.DataFrame, n_dup
         lead_ads = channel == "meta" and rng.random() < LEAD_ADS_SHARE_OF_META
         attrib = session_attribution(rng, channel, lead_ads)
         d.update(attrib)
-        d.update(session_behaviour(brng, cfg, channel, lead_ads, False, p.country, p.city, o.form_variant,
-                                   isinstance(o.phone, str), attrib, created))
+        b = session_behaviour(brng, cfg, channel, lead_ads, False, p.country, p.city, o.form_variant,
+                              isinstance(o.phone, str), attrib, created)
+        observe_session(cfg, b, lead_ads, False, crng, frng)
+        d.update(b)
         d["dup_channel"] = channel
         email = p.email
         if rng.random() < 0.35:
@@ -1079,17 +1369,20 @@ def make_vendor_people(cfg: Config, people: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------------------------------------
 
 def generate(cfg: Config) -> dict[str, pd.DataFrame | dict]:
-    """Run every stage and return the six v1 tables keyed by file stem (status_quo_rules is a dict)."""
-    pending = [k for k, off in V2_OPTIONS.items() if getattr(cfg, k) != off]
-    if pending:
-        raise NotImplementedError(f"Phase 5.2-5.8 options not implemented yet: {pending}")
+    """Run every stage and return the six v1 tables keyed by file stem (status_quo_rules is a dict).
+
+    With any v2 option on, ground_truth_labels gets the V2_LABEL_COLUMNS, and with enrichment dropout a hidden
+    ``ground_truth_companies`` table (the full firmographics, since companies.csv then misses some domains)."""
     n_dup = int(round(cfg.n * cfg.dup_share))
     n_orig = cfg.n - n_dup
     companies = make_companies(cfg)
     people = make_people(cfg, companies, n_orig)
     leads = make_leads(cfg, people, companies)
+    leads = vary_company_names(cfg, leads, people, companies)
     leads = add_behaviour(cfg, leads, people)
     leads = add_text(cfg, leads, people)
+    leads = assign_personas(cfg, leads, people)
+    leads = rewrite_texts(cfg, leads, people)
     leads = hidden_log_odds(cfg, leads, people, companies)
     leads = draw_outcome(cfg, leads, people)
     leads = add_duplicates(cfg, leads, people, n_dup)
@@ -1150,16 +1443,27 @@ def generate(cfg: Config) -> dict[str, pd.DataFrame | dict]:
         "reply_hours": np.where(is_dup, np.nan, leads.reply_hours.astype(float)),
     })[LABEL_COLUMNS]
 
-    vendor = make_vendor_people(cfg, people)
-    return {"historical_leads": H, "crm_history": crm_out, "companies": companies, "people": vendor,
-            "ground_truth_labels": labels, "status_quo_rules": STATUS_QUO_RULES}
+    out = {"historical_leads": H, "crm_history": crm_out, "companies": companies, "people": make_vendor_people(cfg, people),
+           "ground_truth_labels": labels, "status_quo_rules": STATUS_QUO_RULES}
+    if cfg.enrichment_dropout > 0:
+        out["companies"], out["ground_truth_companies"] = drop_enrichment(cfg, companies, people)
+    if v2_on(cfg):
+        in_csv = out.get("ground_truth_companies", companies.assign(domain_in_companies_csv=True))
+        in_csv = in_csv.set_index("domain").domain_in_companies_csv
+        labels["context_persona"] = orig.context_persona.values
+        labels["consent_declined"] = leads.consent_declined.astype(bool).values
+        labels["fast_human"] = leads.fast_human.astype(bool).values
+        labels["domain_in_companies"] = [bool(in_csv[d]) if _present(d) else None for d in labels.company_domain]
+        labels["language_mix"] = orig.language_mix.values if "language_mix" in orig else None
+    return out
 
 
 def write(out: dict[str, pd.DataFrame | dict], out_dir: str, cfg: Config) -> None:
     """Write the tables from ``generate`` plus ground_truth.md (measured on the written files) into ``out_dir``."""
     os.makedirs(out_dir, exist_ok=True)
-    for name in ["historical_leads", "crm_history", "companies", "people", "ground_truth_labels"]:
-        out[name].to_csv(os.path.join(out_dir, f"{name}.csv"), index=False)
+    for name in ["historical_leads", "crm_history", "companies", "people", "ground_truth_labels", "ground_truth_companies"]:
+        if name in out:
+            out[name].to_csv(os.path.join(out_dir, f"{name}.csv"), index=False)
     with open(os.path.join(out_dir, "status_quo_rules.json"), "w") as f:
         json.dump(out["status_quo_rules"], f, indent=2, ensure_ascii=False)
     from ground_truth_report import render_ground_truth  # sibling module in scripts/ (path set at import)
