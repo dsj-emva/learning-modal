@@ -1,6 +1,7 @@
 # Phase 1: labels
 
-Branch `phase1-labels` (from `main` 15f90fc). Plan items 1.1 to 1.6.
+Branch `phase1-labels` (from `main` 15f90fc, `origin/main` 869805a merged in after review). Plan items 1.1
+to 1.6, then the review fixes and rulings below.
 
 ## Acceptance
 
@@ -10,14 +11,81 @@ Branch `phase1-labels` (from `main` 15f90fc). Plan items 1.1 to 1.6.
 | `band=1000+` weight moves toward 1.0 | **fail** (moves away) | 0.703 [0.331, 1.060] | 0.419 [0.046, 0.806] | planted 1.0 |
 | labelled win rate, band 201-1000, training | **pass** | 27.7% (n=692) | 33.5% (n=514) | 39.4% true (mean `p_close_true`, same 692 rows); 39.5% on the 514 horizon rows |
 | AUC on mature leads within baseline CI or higher | **pass** | 0.778 [0.726, 0.827] | 0.778 [0.726, 0.827]; paired diff −0.001 [−0.013, +0.010], p = 0.98 | same 458 mature test leads |
-| bottom-decile ghosted share reported for both | **reported** | 27.5% | 26.5% | population: all leads labelled by the legacy rules (8,041) |
+| bottom-decile ghosted share reported for both | **reported** | 27.5% still New, 24.5% ghosted | 26.5% still New, 23.9% ghosted | population: all leads labelled by the legacy rules (8,041) |
+| **R1 (restated):** horizon size weights consistent with the true 120-day effects | **pass, all four bands** (see below) | | | true conditional 120-day effects |
 
 Weight CIs: 95% percentile, 1,000 refits of the formula model on bootstrap resamples of each
 definition's training rows (`python -m emva.eval.label_study`, seed 0, ~50 s for the whole
 study). AUC CIs: 1,000 resamples (`make report`). On the legacy test set the candidate also sits
 inside the baseline CI: 0.812 vs 0.814 [0.789, 0.836], paired diff −0.001 [−0.005, +0.003].
 
-### Why `band=1000+` moves the wrong way
+## Orchestrator decisions (review of Phase 1)
+
+- **R1.** The size criteria as written target eventual-close effects (1.3, 1.0); a 120-day label
+  estimates the 120-day effect. Restated: the learned horizon weights must be consistent with the
+  *true 120-day* effects. Pass per band = the horizon weight's 95% CI contains the true effect, or
+  the horizon point is closer to it than the legacy point. Result below.
+- **R2.** Mature non-wins still open at AS_OF are 0 under the fixed horizon (they demonstrably did
+  not win within H). Stalled leads are in the same position but stay censored by default (plan
+  1.4), because stalling is read as sales neglect rather than a buyer decision; that is a
+  deliberate asymmetry, and the `--stalled-as-lost` row in the flag table shows its effect
+  (+513 training zeros, 201-1000 rate 33.5% to 29.2%, AUC unchanged). No code change; the
+  paragraph is also in the `emva/labels.py` docstring.
+- **R3.** The mature test set (458 leads, 26 days) is frozen per ground rule 4. Phase 4's
+  rolling-origin evaluation becomes the headline number. No code change.
+- **R4.** Leaving `label_source` (and the other label columns) out of legacy `scores.csv` to keep
+  byte-identity is accepted.
+- Review fixes applied: legacy mode no longer computes `label_source`, so an unrecognised final
+  stage is unlabelled as in the baseline instead of raising; `label_source == ghosted` now needs a
+  mature lead (not contacted by `matured_at`), so the 528 still-New leads younger than 120 days
+  are `open`; `LabelMode` enum and `LabelConfig.eligible()` / `extra_score_columns()` replace the
+  string switches; one `_idle_days` / `_stalled` helper serves both label rules (legacy output
+  still byte-identical); `FROZEN_HORIZON` in `report.py`; the `make baseline` test passes `PY`
+  so it runs in a worktree; `ground_truth_reference` builds the leads once.
+
+### R1: true 120-day size effects vs learned weights
+
+From `python -m emva.eval.ground_truth_reference` (1,000 refits, seed 0). **Which truth:** the
+hidden truth gives only the eventual close probability `p_close_true`, so each lead's planted
+120-day probability is derived from the planted timing, not from the observed labels:
+`p120 = p_close_true × P(time to close ≤ 120 d)`. Time to close is the generator's lognormal
+(median 40 days, log-sd 1.09, ×1.8 for true band 1000+), parsed from `ground_truth.md`, giving
+0.843 (0.680 for 1000+). The derived rates match the observed won-within-120 labels by band:
+
+| band | rows | mean p_close_true (eventual) | derived p120 | observed won within 120 d (horizon label) |
+|---|---|---|---|---|
+| 1-10 | 1615 | 8.5% | 7.2% | 7.8% |
+| 11-50 | 922 | 18.9% | 16.0% | 15.7% |
+| 51-200 | 723 | 36.9% | 31.1% | 33.2% |
+| 201-1000 | 514 | 39.5% | 33.2% | 33.5% |
+| 1000+ | 275 | 37.0% | 25.2% | 25.1% |
+
+The true effect is computed on the horizon training rows in two ways. *Conditional* (the
+like-for-like one): the same formula model, design, rows and regularisation fitted to `p120` as
+soft labels, i.e. the weight a noise-free 120-day label would give. Fitting `p_close_true` the
+same way returns 0.38 / 1.17 / 1.11 / 0.88 against the planted 0.5 / 1.3 / 1.3 / 1.0, so the method
+recovers the planted effects up to feature mismatch and regularisation. *Marginal*, the ruling's
+literal wording: logit(mean `p120` in band) − logit(mean `p120` in 1-10). It absorbs every feature
+correlated with size (free email, missing company, ad spend), so it is 0.5 to 0.9 higher than any
+multivariable weight and is shown for completeness only.
+
+| band | true 120-day effect, conditional | true 120-day effect, marginal | legacy weight [95% CI] | horizon weight [95% CI] | R1 (conditional) | R1 (marginal) | eventual-close effect, conditional (check) |
+|---|---|---|---|---|---|---|---|
+| 11-50 | 0.378 | 0.898 | 0.193 [-0.064, 0.417] | 0.235 [-0.008, 0.500] | pass (in CI) | pass (closer) | 0.379 |
+| 51-200 | 1.099 | 1.766 | 1.078 [0.851, 1.328] | 1.146 [0.894, 1.412] | pass (in CI) | pass (closer) | 1.172 |
+| 201-1000 | 1.043 | 1.862 | 0.873 [0.591, 1.162] | 0.971 [0.680, 1.275] | pass (in CI) | pass (closer) | 1.105 |
+| 1000+ | 0.532 | 1.471 | 0.703 [0.331, 1.060] | 0.419 [0.046, 0.806] | pass (in CI) | fail | 0.883 |
+
+Per band, on the conditional truth: **pass for all four**; each horizon CI contains the true
+120-day effect. Caveat: each legacy CI contains it as well, so the CI test alone does not
+separate the two definitions. On point distance, horizon is closer than legacy for 11-50
+(0.143 vs 0.185), 201-1000 (0.072 vs 0.170) and 1000+ (0.113 vs 0.171), and legacy is closer
+for 51-200 (0.021 vs 0.047). On the marginal truth, 11-50 to 201-1000 pass (closer) and 1000+
+fails. The 1000+ result reverses the original criterion: the true 120-day 1000+ effect (0.53) is
+well below the eventual one (1.0), and the horizon weight (0.42) sits nearer to it than the legacy
+weight (0.70) does.
+
+### Why `band=1000+` moves the wrong way (original criterion)
 
 `won_within_H` measures "won within 120 days", not "eventually won". The generator makes 1000+
 deals close 1.8× slower (median 48 days to Won vs 31 to 35 for the other bands), so 19.8% of
@@ -40,17 +108,19 @@ the planted probability of *eventually* closing, and 10.4% of 201-1000 wins arri
 
 - **1.1** `emva/labels.py::label_source`, from the CRM state at AS_OF (2026-09-24T00:00Z):
   `won` (last stage Won), `crm_lost` (last stage Lost), `stalled` (last stage Contacted /
-  Qualified / Demo booked / Proposal, unchanged for ≥ 90 whole days), `ghosted` (last stage
-  still New, any age), `open` (open stage changed < 90 days ago). An unrecognised final stage
-  raises instead of guessing. `emva/io.py::load` now also returns `won_at` and
+  Qualified / Demo booked / Proposal, unchanged for ≥ 90 whole days), `ghosted` (mature and not
+  contacted by `matured_at`; takes precedence over stalled/open), `open` (everything else
+  undecided: open stage changed < 90 days ago, or still New but younger than H). Horizon mode
+  only; there an unrecognised final stage raises instead of guessing, while legacy mode leaves it
+  unlabelled like the baseline. `emva/io.py::load` now also returns `won_at` and
   `first_contact_at` (first change to a stage other than New) and rejects a lead with two Won
   rows.
 - **1.2** `won_within_h`: 1 if the Won change is at or before `created_at + H`; 0 if mature and
   not Won by then (late wins are 0); NaN if young and not Won. `matured_at = created_at + H`.
   `HORIZON_DAYS = 120` in `constants.py`; CLI `--horizon-days`.
 - **1.3** Ghosted = still at New at `matured_at` (no `first_contact_at` by then). Excluded by
-  default; `--include-ghosted` counts them as 0. On v1 this equals `label_source == ghosted` for
-  every mature lead (0 mismatches: first contact is never later than 10 days).
+  default; `--include-ghosted` counts them as 0. `label_source == ghosted` is the same group on
+  mature leads by construction.
 - **1.4** Stalled (`label_source == stalled`) censored by default; `--stalled-as-lost` counts
   them as 0. Neither flag ever labels a young lead ("never Lost").
 - **1.5** Horizon mode trains and evaluates on mature leads only (`split_masks(eligible=...)`).
@@ -97,8 +167,8 @@ From `make report` (all 9,311 scored leads; wins / losses / unlabelled):
 | won | 1199 | 1199 / 0 / 0 | 1099 / 100 / 0 | 1099 / 100 / 0 |
 | crm_lost | 4896 | 0 / 4896 / 0 | 0 / 3505 / 1391 | 0 / 3505 / 1391 |
 | stalled | 618 | 0 / 618 / 0 | 0 / 564 / 54 | 0 / 0 / 618 |
-| ghosted | 1735 | 0 / 1328 / 407 | 0 / 1207 / 528 | 0 / 0 / 1735 |
-| open | 863 | 0 / 0 / 863 | 0 / 70 / 793 | 0 / 70 / 793 |
+| ghosted | 1207 | 0 / 1207 / 0 | 0 / 1207 / 0 | 0 / 0 / 1207 |
+| open | 1391 | 0 / 121 / 1270 | 0 / 70 / 1321 | 0 / 70 / 1321 |
 | all | 9311 | 1199 / 6842 / 1270 | 1099 / 5446 / 2766 | 1099 / 3675 / 4537 |
 
 From `python -m emva.eval.label_study` (training = created before 2026-05-01; AUC of each
@@ -128,15 +198,15 @@ Deviations and choices made:
 
 - **Bottom-decile ghosted share population.** The plan's "baseline 27%" reproduces (27.5%) only
   on all leads labelled by the legacy rules, train and test together, ranked by the baseline's p.
-  On the legacy test set alone it is 19.2%. The horizon test set excludes ghosted leads by
-  definition, so "for both definitions" is reported as both models (legacy-trained baseline,
-  horizon-trained candidate) on four populations that keep ghosted leads; see the report section.
+  On the legacy test set alone it is 19.2%. That figure counts leads *still New at AS_OF, any
+  age*; with `ghosted` now meaning mature and not contacted by H, the same cell is 24.5%. The
+  report shows both flags. The horizon test set excludes ghosted leads by definition, so "for
+  both definitions" is reported as both models (legacy-trained baseline, horizon-trained
+  candidate) on four populations that keep ghosted leads.
 - **39.4% reference.** It is the mean planted `p_close_true` of the 692 training rows with
   `band == 201-1000` labelled by the legacy rules (39.5% on all training-period leads of that
   band and on the 514 horizon-labelled rows). It is an eventual-close probability, so it is an
   upper bound for a 120-day label.
-- **`label_source == ghosted` is "still New at AS_OF", any age**, as the brief defines it; the
-  1.3 exclusion uses "still New at `matured_at`". They agree on every mature v1 lead.
 - **Young `crm_lost` leads are unlabelled** (1,391 rows), as specified ("never Lost"), even
   though a CRM loss is terminal in v1. Young leads that are already Won are 1 (the Won change is
   before H). Neither reaches training or evaluation, which use mature leads only, so the
@@ -147,6 +217,9 @@ Deviations and choices made:
 - **`scores.csv` in legacy mode keeps the baseline's columns** so it stays byte-identical;
   `won_within_h`, `label_source` and `matured_at` are written in horizon mode only. `y` in
   horizon mode is the censored training label, `won_within_h` the raw outcome.
+- **`tests/test_generate_data_v1.py`** (merged from main): its baseline-pipeline smoke test now
+  asks for legacy labels explicitly, since `build()` defaults to horizon labels. One line; it
+  failed after the merge otherwise.
 - **Report test updated**: the Phase 0 check `"| candidate | 0.814 ["` is dropped because the
   candidate now trains on horizon labels by design (it scores 0.812 on the legacy test set); the
   legacy-mode 0.814 is still asserted by `test_pipeline_reproduces_baseline_metrics` and
@@ -161,7 +234,7 @@ Deviations and choices made:
 Not done (belongs to later phases): no feature or value-model changes (Phase 2/3), so the
 `emva/value.py:19` constant stays; `value_at_submit`/`value_at_close` (Phase 3).
 
-Open questions for the orchestrator:
+Open questions (1 and 2 resolved by rulings R1 and R3; 3 still open):
 
 1. **The `band=1000+` criterion conflicts with a 120-day horizon** on this generator (slow 1000+
    deals). Options: accept the fail as expected behaviour of the fixed-horizon label; restate
@@ -198,29 +271,34 @@ emva scores.csv vs baseline run: byte-identical
 PASS: baseline and emva/ both reproduce AUC 0.814, Brier 0.1006, top-20% wins 0.571, revenue 0.795 and the frozen weights.
 ```
 
-`make test`: **154 passed** (about 45 s), then `python -m compileall -q emva scripts baseline tests`
+`make test`: **193 passed** (about 60 s, including the 37 generator tests merged from main), then `python -m compileall -q emva scripts baseline tests`
 is clean. Every commit on the branch passes its own tests.
 
 New and changed tests:
 
 | file | covers |
 |---|---|
-| `test_labels.py` | 20 hand-built CRM histories run through `load`: Won exactly at H (1), at H+1 day and H+1 s (0), early win, CRM loss before and after H, ghosted mature, contacted after H vs exactly at H, stalled at 90 idle days, open at 89 and 89.99 days, young open/won/lost/New/stalled, maturity at exactly AS_OF − H and 1 s later; for each: `label_source`, `won_within_h`, `y` default / `--include-ghosted` / `--stalled-as-lost` / both, and legacy `y`; `matured_at`, H as a parameter, `LabelConfig` validation, `split_masks(eligible=...)` |
+| `test_labels.py` | 20 hand-built CRM histories run through `load`: Won exactly at H (1), at H+1 day and H+1 s (0), early win, CRM loss before and after H, ghosted mature, contacted after H vs exactly at H, stalled at 90 idle days, open at 89 and 89.99 days, young open/won/lost/New/stalled, contacted after H and still open (ghosted wins over open), maturity at exactly AS_OF − H and 1 s later; for each: `label_source`, `won_within_h`, `y` default / `--include-ghosted` / `--stalled-as-lost` / both, and legacy `y`; `matured_at`, H as a parameter, `LabelConfig` validation and enum coercion, `eligible()` / `extra_score_columns()`, legacy mode with an unrecognised stage (unlabelled, no error) vs horizon (error), `split_masks(eligible=...)` |
 | `test_io.py` | `won_at`, `first_contact_at`, two Won rows rejected |
-| `test_integration.py` | `--label-mode legacy` byte-equal stdout, `scores.csv`, `weights.csv` vs the baseline script; `make baseline` passes; default CLI writes the label columns; horizon-only flags rejected with legacy; horizon pipeline uses mature leads only (4,049 / 458); report has both definitions, label counts, the 27.5% ghosted share; no-mature-test-lead horizons |
+| `test_integration.py` | `--label-mode legacy` byte-equal stdout, `scores.csv`, `weights.csv` vs the baseline script; `make baseline` passes; default CLI writes the label columns; horizon-only flags rejected with legacy; horizon pipeline uses mature leads only (4,049 / 458); report has both definitions, the new ghosted/open counts, the 27.5% still-New and 24.5% ghosted shares; `make baseline` run with `PY=` so it works in a worktree; no-mature-test-lead horizons |
 | `test_bootstrap.py` | `coef_bootstrap` covers planted coefficients, is seeded, rejects bad input |
 | `test_metrics_regression.py` | `bottom_share` |
-| `test_label_study.py` | size weights reproduce 0.873 / 0.703 (legacy) and 0.971 (horizon); flag table sizes and rates; sensitivity with an empty test set; ground-truth reference prints 39.4%; nothing imports it; the ground rule 2 grep |
+| `test_label_study.py` | size weights reproduce 0.873 / 0.703 (legacy) and 0.971 (horizon); flag table sizes and rates; sensitivity with an empty test set; ground-truth reference prints 39.4%, the 0.843 / 0.680 timing, the derivation check and the true 120-day effects; nothing imports it; the ground rule 2 grep |
 
 Ground rule 2 grep (`grep -rn "0.45\|ground_truth" emva/`):
 
 ```
 emva/value.py:19:DEAL_LOG_RESIDUAL_SD_FROM_GENERATOR = 0.45
-emva/eval/ground_truth_reference.py:1:"""True close rates by company size, from ``ground_truth_labels.csv`` (evaluation only, ground rule 2).
-emva/eval/ground_truth_reference.py:3:``python -m emva.eval.ground_truth_reference [--data data/v1]`` prints the mean planted close
-emva/eval/ground_truth_reference.py:30:    truth = pd.read_csv(Path(data) / "ground_truth_labels.csv", index_col="lead_id").p_close_true
-emva/eval/ground_truth_reference.py:49:    ap = argparse.ArgumentParser(prog="python -m emva.eval.ground_truth_reference")
 emva/eval/label_study.py:14:``python -m emva.eval.ground_truth_reference``.
+emva/eval/ground_truth_reference.py:3:``python -m emva.eval.ground_truth_reference [--data data/v1] [--n-refits 1000]`` prints:
+emva/eval/ground_truth_reference.py:14:``ground_truth.md`` ("Time to close") states; those three numbers are parsed from that file.
+emva/eval/ground_truth_reference.py:65:    """Parse the time-to-close parameters from ``ground_truth.md``; raises if the sentence is not found."""
+emva/eval/ground_truth_reference.py:66:    text = (Path(data) / "ground_truth.md").read_text()
+emva/eval/ground_truth_reference.py:69:        raise ValueError(f"time-to-close sentence not found in {data}/ground_truth.md")
+emva/eval/ground_truth_reference.py:74:    """``ground_truth_labels.csv`` indexed by ``lead_id``."""
+emva/eval/ground_truth_reference.py:75:    return pd.read_csv(Path(data) / "ground_truth_labels.csv", index_col="lead_id")
+emva/eval/ground_truth_reference.py:154:        f"Time to close parsed from ground_truth.md: median {ttc.median_days:g} days, log-sd {ttc.log_sd:g}, "
+emva/eval/ground_truth_reference.py:177:    ap = argparse.ArgumentParser(prog="python -m emva.eval.ground_truth_reference")
 ```
 
 Only `emva/eval/` lines plus the known `emva/value.py:19` constant (Phase 2, plan 2.4).
@@ -239,8 +317,8 @@ Counts over all 9311 scored leads, as wins / losses / unlabelled. `label_source`
 | won | 1199 | 1199 / 0 / 0 | 1099 / 100 / 0 | 1099 / 100 / 0 |
 | crm_lost | 4896 | 0 / 4896 / 0 | 0 / 3505 / 1391 | 0 / 3505 / 1391 |
 | stalled | 618 | 0 / 618 / 0 | 0 / 564 / 54 | 0 / 0 / 618 |
-| ghosted | 1735 | 0 / 1328 / 407 | 0 / 1207 / 528 | 0 / 0 / 1735 |
-| open | 863 | 0 / 0 / 863 | 0 / 70 / 793 | 0 / 70 / 793 |
+| ghosted | 1207 | 0 / 1207 / 0 | 0 / 1207 / 0 | 0 / 0 / 1207 |
+| open | 1391 | 0 / 121 / 1270 | 0 / 70 / 1321 | 0 / 70 / 1321 |
 | all | 9311 | 1199 / 6842 / 1270 | 1099 / 5446 / 2766 | 1099 / 3675 / 4537 |
 
 Mature = created_at + 120 days <= 2026-09-24T00:00:00+00:00: the latest mature lead was created 2026-05-26T20:06:58+00:00. Train = created before 2026-05-01 (all mature); test = created on or after 2026-05-01.
@@ -380,14 +458,14 @@ Value = p × expected deal value (models), rule-based bucket value in GBP (statu
 
 #### Bottom-decile ghosted share
 
-Share of leads still at stage New (`label_source == ghosted`) among the 10% of each population with the lowest p. The horizon test set (b) excludes ghosted leads, so the comparison uses populations that keep them.
+Share of leads in the 10% of each population with the lowest p that are *ghosted* (`label_source`: mature and not contacted within 120 days) or *still New* at 2026-09-24 whatever their age (the definition behind the plan's baseline figure of 27%). The horizon test set (b) excludes ghosted leads, so the comparison uses populations that keep them.
 
-| population | n | ghosted share overall | baseline bottom decile | candidate bottom decile |
-|---|---|---|---|---|
-| all leads labelled by legacy rules (train + test) | 8041 | 16.5% | 27.5% | 26.5% |
-| (a) legacy test set | 2453 | 10.7% | 19.2% | 17.6% |
-| all mature leads, every label_source | 6278 | 19.2% | 30.6% | 30.0% |
-| mature leads created on or after 2026-05-01, every label_source | 650 | 21.7% | 29.2% | 27.7% |
+| population | n | ghosted: overall | ghosted: baseline bottom decile | ghosted: candidate bottom decile | still New: overall | still New: baseline bottom decile | still New: candidate bottom decile |
+|---|---|---|---|---|---|---|---|
+| all leads labelled by legacy rules (train + test) | 8041 | 15.0% | 24.5% | 23.9% | 16.5% | 27.5% | 26.5% |
+| (a) legacy test set | 2453 | 5.7% | 9.4% | 9.0% | 10.7% | 19.2% | 17.6% |
+| all mature leads, every label_source | 6278 | 19.2% | 30.6% | 30.0% | 19.2% | 30.6% | 30.0% |
+| mature leads created on or after 2026-05-01, every label_source | 650 | 21.7% | 29.2% | 27.7% | 21.7% | 29.2% | 27.7% |
 
 #### Baseline script output
 
@@ -455,12 +533,37 @@ Share of mature training leads that were eventually Won whose Won date is after 
 | 180 | 6.2% | 3.5% | 3.1% | 6.2% | 2.7% |
 | 240 | 2.5% | 0.0% | 2.7% | 1.0% | 2.0% |
 
-## Appendix C: `python -m emva.eval.ground_truth_reference`
+## Appendix C: `python -m emva.eval.ground_truth_reference` (1,000 refits)
 
-Mean planted close probability (p_close_true) by company size (band feature):
+#### Mean planted close probability (p_close_true) by company size (band feature)
 
 | population | 1-10 | 11-50 | 51-200 | 201-1000 | 1000+ |
 |---|---|---|---|---|---|
 | training rows labelled by legacy | 8.0% (n=2357) | 18.2% (n=1260) | 35.9% (n=944) | 39.4% (n=692) | 35.5% (n=335) |
 | training rows labelled by horizon H=120 | 8.5% (n=1615) | 18.9% (n=922) | 36.9% (n=723) | 39.5% (n=514) | 37.0% (n=275) |
 | all cleaned leads created before 2026-05-01 (every label_source) | 8.0% (n=2363) | 18.3% (n=1269) | 36.1% (n=955) | 39.5% (n=698) | 36.3% (n=343) |
+
+#### R1: true 120-day size effects vs learned weights
+
+Time to close parsed from ground_truth.md: median 40 days, log-sd 1.09, ×1.8 for 1000+. P(close within 120 d | Won) = 0.843 (other bands), 0.680 (1000+). p120 = p_close_true × that, per lead, using the true band. Rows: the horizon training set (4049 leads; the legacy weights come from its own 5588 training rows).
+
+Derivation check (horizon training rows, `band` feature):
+
+| band | rows | mean p_close_true (eventual) | derived p120 | observed won within 120 d (horizon label) |
+|---|---|---|---|---|
+| 1-10 | 1615 | 8.5% | 7.2% | 7.8% |
+| 11-50 | 922 | 18.9% | 16.0% | 15.7% |
+| 51-200 | 723 | 36.9% | 31.1% | 33.2% |
+| 201-1000 | 514 | 39.5% | 33.2% | 33.5% |
+| 1000+ | 275 | 37.0% | 25.2% | 25.1% |
+
+True effects are log-odds relative to band 1-10. *Conditional* = the formula model (same design, same rows, same regularisation) fitted to p120 as soft labels: the weight a noise-free 120-day label would give, holding the other features fixed, which is what the learned weights estimate. *Marginal* = logit(mean p120 in band) − logit(mean p120 in 1-10) on the same rows, as the ruling literally states; it includes every feature correlated with size (free email, missing company, spend), so it is not comparable with a multivariable weight. The last column fits p_close_true the same way, as a check that the conditional method recovers the planted eventual effects (11-50 +0.5, 51-200 and 201-1000 +1.3, 1000+ +1.0) up to feature mismatch and regularisation.
+
+Learned CIs: 1000 bootstrap refits, seed 0. R1 pass = the horizon CI contains the true effect, or the horizon point is closer to it than the legacy point.
+
+| band | true 120-day effect, conditional | true 120-day effect, marginal | legacy weight [95% CI] | horizon weight [95% CI] | R1 (conditional) | R1 (marginal) | eventual-close effect, conditional (check) |
+|---|---|---|---|---|---|---|---|
+| 11-50 | 0.378 | 0.898 | 0.193 [-0.064, 0.417] | 0.235 [-0.008, 0.500] | pass (in CI) | pass (closer) | 0.379 |
+| 51-200 | 1.099 | 1.766 | 1.078 [0.851, 1.328] | 1.146 [0.894, 1.412] | pass (in CI) | pass (closer) | 1.172 |
+| 201-1000 | 1.043 | 1.862 | 0.873 [0.591, 1.162] | 0.971 [0.680, 1.275] | pass (in CI) | pass (closer) | 1.105 |
+| 1000+ | 0.532 | 1.471 | 0.703 [0.331, 1.060] | 0.419 [0.046, 0.806] | pass (in CI) | fail | 0.883 |
