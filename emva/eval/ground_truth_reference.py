@@ -20,9 +20,9 @@ derived ones as a check.
 Models use the legacy feature set (``label_study.FEATURES``) so the numbers match
 ``reports/phase1.md``.
 
-This module and ``emva/eval/phase2_study.py`` (Phase 2 validation) are the only modules that read
-ground-truth files. Nothing imports either; they are run as scripts so the pipeline and the rest
-of ``emva/eval`` stay free of ground truth.
+The ground-truth readers are this module, ``emva/eval/phase2_study.py`` (Phase 2 validation) and
+``emva/eval/ceiling.py`` (Phase 4 oracle ceiling, used only by ``emva.eval.hardening``). The pipeline
+never imports any of them.
 """
 from __future__ import annotations
 

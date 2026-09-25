@@ -77,8 +77,14 @@ avoid a pipeline ↔ report import cycle. Nothing in `emva/` outside `eval/` imp
 
 ## 3. The evaluation package (`emva/eval/`)
 
-The only place that may read ground truth (ground rule 2), and even here only two modules do
-(`ground_truth_reference.py`, and `phase2_study.py` from Phase 2); both run as scripts only.
+The only place that may read ground truth (ground rule 2), and even here only three modules do
+(`ground_truth_reference.py`, `phase2_study.py` from Phase 2 and `ceiling.py` from Phase 4); the first
+two run as scripts only, `ceiling.py` is imported only by the `hardening.py` entry point.
+
+Phase 4 modules share one prepared frame (`rolling.EvalFrame`) and one split vocabulary
+(`rolling.RollingSpec`): `hardening.py` -> {`rolling`, `subsampling`, `ceiling`, `calibration_decay`,
+`regularisation`, `interactions`, `report`}; `calibration_decay` and `regularisation` reuse
+`rolling`'s windows and fitting; `ceiling` reads only the declared truth columns.
 
 | file | reads | purpose |
 |---|---|---|
@@ -93,7 +99,13 @@ The only place that may read ground truth (ground rule 2), and even here only tw
 | `feature_selection.py` | data CSVs (via the pipeline) | Plan 2.6: coefficient-bootstrap CIs (≥ 200 refits) for `c_budget`, `c_timeline`, `ip_type`, `edits_1_4` on the full v2 candidate design; evidence for `features.V2_DROPPED` |
 | `phase2_study.py` | data CSVs, **`ground_truth_labels.csv`** | Phase 2 evidence: name-match count and correctness, boilerplate precision/recall, lead-ads buckets, before/after weights and ties, collinearity table, paired v2-vs-legacy AUC, residual sd. Run as a script only |
 | `value_report.py` | pipeline result, leads | Phase 3: value-scale table per transform (p1/p50/p90/p99/max, max/median, top-1% share, tie-averaged top-20% revenue vs the baseline's, value / revenue) per test set and over all scored leads, the plan 3.2 PASS/fail table, and click-ID coverage per paid channel (plan 3.5). Called from `report.py` |
-| `rolling.py`, `ceiling.py` | (Phase 4, planned) | rolling-origin splits; oracle-feature ceiling (reads ground truth) |
+| `rolling.py` | data CSVs (via the pipeline) | Phase 4.1: `EvalFrame` (one dataset prepared once: horizon + legacy labels, v2 and legacy designs, frozen masks), `RollingSpec` (headline: training mature at S, one-month test windows mature at AS_OF; relaxed and legacy variants), `headline` / `paired_headline` (mean AUC over sufficient splits, independent per-split bootstrap). ADR 0013 |
+| `subsampling.py` | pipeline design | Phase 4.2/4.3: subsampling curve (same rows for every model per seed), `gbdt_design` + monotone constraint vector for `HistGradientBoostingClassifier`, customer-sized holdout CI width |
+| `ceiling.py` | **`ground_truth_labels.csv`, `ground_truth_companies.csv` (v2) / `companies.csv` (v1)**, raw session columns | Phase 4.4: oracle feature sets (truth only, formula, + interactions, + persona) fitted with the formula model; used only by `hardening.py`, never by the pipeline |
+| `calibration_decay.py` | pipeline design | Phase 4.5: fit through month M, Brier / slope / calibration-in-the-large on M+1..M+3, decile tables |
+| `regularisation.py` | pipeline design | Phase 4.6: C sweep on both frozen test sets and the rolling headline; flatness check |
+| `interactions.py` | pipeline features | Phase 5 hand-off: LinkedIn × band 51+ and senior × form D added to the v2 design; coefficient CIs and paired AUC |
+| `hardening.py` | all of the above, runs `report.py` | Phase 4 entry point (`make report-full`, `python -m emva.eval.hardening`): every section on data/v2 (headline) and data/v1, cached per (section, dataset) under `runs/phase4/cache/`, written between markers into `reports/phase4.md` |
 
 ## 4. The data generator (`scripts/`)
 
@@ -138,7 +150,7 @@ flowchart LR
     GEN["scripts/generate_data_v*.py"] -->|writes| GT["ground_truth_labels.csv<br/>ground_truth.md<br/>ground_truth_companies.csv (v2)"]
     GEN -->|writes| OBS["observable CSVs<br/>historical_leads, crm_history,<br/>companies, people, status_quo_rules.json"]
     GT --> GTR["scripts/ground_truth_report.py<br/>scripts/compare_to_v1.py<br/>scripts/v2_checks.py (v2)"]
-    GT --> EV["emva/eval/ground_truth_reference.py<br/>(Phase 2: phase2_study; Phase 4: ceiling)"]
+    GT --> EV["emva/eval/ground_truth_reference.py<br/>phase2_study.py, ceiling.py (Phase 4)"]
     OBS --> PIPE["emva/ pipeline, features, model, value"]
     GT -. "forbidden (ground rule 2, grep rule)" .-> PIPE
 ```
@@ -158,7 +170,7 @@ flowchart LR
     P0["Phase 0<br/>freeze + instrument<br/>merged"] --> P1["Phase 1<br/>labels<br/>merged"]
     P1 --> P2["Phase 2<br/>features + leakage<br/>merged"]
     P2 --> P3["Phase 3<br/>value layer<br/>merged"]
-    P2 --> P4["Phase 4<br/>evaluation hardening<br/>pending"]
+    P2 --> P4["Phase 4<br/>evaluation hardening<br/>ready for review"]
     P0 --> P51["Phase 5.1<br/>generator v1 rewrite<br/>merged"]
     P51 --> P5["Phase 5.2-5.8<br/>generator v2<br/>merged"]
     P3 --> P6["Phase 6<br/>context agent v2<br/>ready for merge"]
@@ -169,7 +181,7 @@ flowchart LR
 ```
 
 Phases 3, 4 and 5 can run in parallel once Phase 2 lands. Phase 6 waits for 2 and 5. Phase 7 waits for
-everything. Phase 4's rolling-origin evaluation becomes the headline number (ADR 0006).
+everything. Phase 4's rolling-origin evaluation becomes the headline number (ADR 0006; definition ADR 0013).
 
 ## 7. Context agent (Phase 6, ADR 0014)
 
