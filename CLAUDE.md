@@ -195,6 +195,7 @@ single leads through `emva.scoring` and computes its charts with `emva.eval`; it
 | 4 evaluation hardening | merged (3e374e8) | `phase4-eval-hardening` | `reports/phase4.md` |
 | 6 context agent v2 | merged (9e3dfae) | `phase6-context-agent` | `reports/phase6.md` |
 | 7 production readiness doc | merged (fa9bc4d) | `phase7-production-doc` | `reports/production.md`, ADR 0017 (Proposed) |
+| 8 hosted app (Keel) | on branch `app-ui`, not merged | `app-ui` | `reports/app.md`, ADR 0018/0019 (Proposed) |
 
 ## Do not
 
