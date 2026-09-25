@@ -64,3 +64,21 @@ def test_weights_compare_ignores_row_order_but_not_values_or_rows():
     changed.loc["z", "log_odds"] = 1.001
     assert weights_mismatches(changed, a) == ["z log_odds: expected 1.0, got 1.001"]
     assert "missing rows: ['z']" in weights_mismatches(a.iloc[:2], a)
+
+
+@pytest.mark.parametrize("fn", [lambda s: top_share(pd.Series(s), s), ties_at_cut,
+                                lambda s: tie_averaged_top_share(pd.Series(s), s)])
+def test_empty_top_cut_raises(fn):
+    with pytest.raises(ValueError, match="is empty"):
+        fn(np.array([0.3, 0.1, 0.2, 0.4]))  # int(4 * 0.2) == 0
+
+
+def test_reordered_rows_rejects_length_mismatch(tmp_path):
+    from emva.eval.regression import reordered_rows
+    a = _w([("x", 0.1, 1.1, 3.0), ("y", 0.2, 1.2, 6.0)])
+    a.to_csv(tmp_path / "a.csv")
+    a.iloc[:1].to_csv(tmp_path / "b.csv")
+    a.iloc[[1, 0]].to_csv(tmp_path / "c.csv")
+    assert reordered_rows(tmp_path / "c.csv", tmp_path / "a.csv") == ["y", "x"]
+    with pytest.raises(ValueError, match="2 and 1 rows"):
+        reordered_rows(tmp_path / "a.csv", tmp_path / "b.csv")

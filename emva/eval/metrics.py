@@ -8,14 +8,22 @@ from sklearn.metrics import brier_score_loss, roc_auc_score
 from emva.constants import TOP_FRACTION
 
 
+def _cut_size(n_rows: int, frac: float) -> int:
+    """Number of rows in the top ``frac``: ``int(n_rows * frac)``; raises if that is 0."""
+    n = int(n_rows * frac)
+    if n < 1:
+        raise ValueError(f"top {frac:.0%} of {n_rows} rows is empty; need at least {int(np.ceil(1 / frac))} rows")
+    return n
+
+
 def top_indices(score: np.ndarray, frac: float = TOP_FRACTION) -> np.ndarray:
     """Positions of the top ``int(len * frac)`` scores, via numpy's default (unstable) argsort.
 
     This matches the baseline. With tied scores at the cut the selection depends on the
-    sort implementation; see ``tie_averaged_top_share``.
+    sort implementation; see ``tie_averaged_top_share``. Raises ``ValueError`` if the cut is empty.
     """
-    n = int(len(score) * frac)
-    return np.argsort(-np.asarray(score))[:n]
+    s = np.asarray(score)
+    return np.argsort(-s)[:_cut_size(len(s), frac)]
 
 
 def top_share(target: pd.Series, score: np.ndarray, frac: float = TOP_FRACTION) -> float:
@@ -23,11 +31,17 @@ def top_share(target: pd.Series, score: np.ndarray, frac: float = TOP_FRACTION) 
     return float(target.iloc[top_indices(score, frac)].sum() / target.sum())
 
 
+def _cut_threshold(s: np.ndarray, frac: float) -> tuple[int, float]:
+    """``(n, threshold)``: cut size and the score of the n-th highest row."""
+    n = _cut_size(len(s), frac)
+    return n, np.sort(s)[::-1][n - 1]
+
+
 def ties_at_cut(score: np.ndarray, frac: float = TOP_FRACTION) -> int:
     """Number of rows whose score equals the score at the top-``frac`` cut (1 = no tie)."""
     s = np.asarray(score)
-    n = int(len(s) * frac)
-    return int((s == np.sort(s)[::-1][n - 1]).sum())
+    _, thr = _cut_threshold(s, frac)
+    return int((s == thr).sum())
 
 
 def tie_averaged_top_share(target: pd.Series, score: np.ndarray, frac: float = TOP_FRACTION) -> float:
@@ -37,8 +51,7 @@ def tie_averaged_top_share(target: pd.Series, score: np.ndarray, frac: float = T
     """
     s = np.asarray(score)
     t = np.asarray(target, dtype=float)
-    n = int(len(s) * frac)
-    thr = np.sort(s)[::-1][n - 1]
+    n, thr = _cut_threshold(s, frac)
     above, at = s > thr, s == thr
     frac_at = (n - above.sum()) / at.sum()
     return float((t[above].sum() + frac_at * t[at].sum()) / t.sum())
@@ -49,9 +62,8 @@ def summary(name: str, y: pd.Series, p: np.ndarray, rev: pd.Series, value: np.nd
 
     Wins are ranked by ``p``; revenue by ``value`` when given, else by ``p``.
     """
-    n = int(len(y) * TOP_FRACTION)
-    o = np.argsort(-p)[:n]
-    ov = o if value is None else np.argsort(-value)[:n]
+    o = top_indices(p)
+    ov = o if value is None else top_indices(value)
     return {"model": name, "auc": round(roc_auc_score(y, p), 3), "brier": round(brier_score_loss(y, np.clip(p, 0, 1)), 4),
             "top20_wins": round(y.iloc[o].sum() / y.sum(), 3), "top20_revenue": round(rev.iloc[ov].sum() / rev.sum(), 3)}
 

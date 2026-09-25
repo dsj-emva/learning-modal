@@ -57,6 +57,12 @@ def weights_mismatches(got: pd.DataFrame, expected: pd.DataFrame) -> list[str]:
 
 
 def reordered_rows(got_path: str | Path, expected_path: str | Path) -> list[str]:
-    """Row names whose position differs between two weights files (empty = same order)."""
+    """Row names whose position differs between two weights files (empty = same order).
+
+    Raises ``ValueError`` if the files have different row counts (``weights_mismatches``
+    reports which rows are missing or extra).
+    """
     g, e = read_weights(got_path).index, read_weights(expected_path).index
-    return [name for name, other in zip(g, e) if name != other]
+    if len(g) != len(e):
+        raise ValueError(f"weights files have {len(g)} and {len(e)} rows; compare with weights_mismatches")
+    return [name for name, other in zip(g, e, strict=True) if name != other]
