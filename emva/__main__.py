@@ -8,10 +8,13 @@ adds ``won_within_h``, ``label_source`` and ``matured_at`` to ``scores.csv``, th
 columns ``value_at_submit``, ``value_at_submit_ts``, ``value_at_close``, ``value_at_close_ts`` (plan 3.3;
 value options ``--value-cap-percentile``, ``--value-floor``, ``--value-compression``, ``--value-tiers``, see
 ``emva.value_transform``). The default ``--feature-set v2`` uses the plan Phase 2 features (see ``emva.features``).
+Every run also writes ``model.joblib`` into ``--out``: the fitted models as an ``emva.persist.ModelBundle``, which
+``emva.scoring`` loads to score new leads. It prints nothing, so stdout stays the baseline's.
 """
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 from emva.cli import (
     add_feature_arguments,
@@ -21,11 +24,12 @@ from emva.cli import (
     label_config,
     value_transform,
 )
+from emva.persist import BUNDLE_FILE, save_bundle
 from emva.pipeline import run, write_outputs
 
 
 def main(argv: list[str] | None = None) -> None:
-    """Parse arguments, run the pipeline, print the summary and write outputs."""
+    """Parse arguments, run the pipeline, print the summary and write outputs (plus ``model.joblib``)."""
     ap = argparse.ArgumentParser(prog="python -m emva")
     ap.add_argument("--data", default="data/v1")
     ap.add_argument("--context", default=None,
@@ -45,6 +49,7 @@ def main(argv: list[str] | None = None) -> None:
     if not result.summary.empty:
         print(result.summary.to_string(index=False))
     write_outputs(result, a.out)
+    save_bundle(result, Path(a.out) / BUNDLE_FILE, a.data, a.margin)
 
 
 if __name__ == "__main__":

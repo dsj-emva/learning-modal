@@ -2,6 +2,7 @@
 numpy==2.4.6
 pandas==3.0.6
 scikit-learn==1.9.1
+joblib==1.6.0          # scikit-learn dependency; emva/persist.py writes model.joblib with it
 threadpoolctl==3.7.0  # scikit-learn dependency; emva.eval.hardening runs its many small fits single-threaded
 scipy==1.17.1          # LogisticRegression's lbfgs solver; pinned because it affects coefficients
 anthropic==1.8.0       # emva/context/agent.py (Phase 6 context agent, SDK + structured output)
