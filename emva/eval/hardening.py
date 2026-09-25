@@ -60,7 +60,6 @@ class Section:
     lines: list[str]
     facts: dict[str, object] = field(default_factory=dict)
     seconds: float = 0.0
-    cached: bool = False
 
 
 def _ci(ci: BootstrapCI | None, signed: bool = False) -> str:
@@ -444,7 +443,6 @@ def run_sections(datas: list[Path], params: Params, use_cache: bool = True,
             path = _cache_path(spec.key, data, params, fp)
             if use_cache and path.exists():
                 sec = pickle.loads(path.read_bytes())
-                sec.cached = True
                 out[(spec.key, data.name)] = sec
                 log.info("%s %s: cached (%.1f s originally)", data.name, spec.key, sec.seconds)
                 continue
@@ -530,11 +528,11 @@ def summary_lines(results: dict[tuple[str, str], Section], names: list[str]) -> 
 
 def timing_lines(results: dict[tuple[str, str], Section]) -> list[str]:
     """Compute time per section and dataset (from the run that produced each cached result)."""
-    rows = [{"section": k, "data": n, "seconds": f"{s.seconds:.1f}", "this run": "cached" if s.cached else "computed"}
-            for (k, n), s in results.items()]
+    rows = [{"section": k, "data": n, "seconds": f"{s.seconds:.1f}"} for (k, n), s in results.items()]
     total = sum(s.seconds for s in results.values())
     return ["## Runtime", "", f"Total compute {total:.0f} s ({total / 60:.1f} min) on the machine that produced the cache "
-            "entries; an unchanged rerun reads `runs/phase4/cache/`.", "", md_table(pd.DataFrame(rows)), ""]
+            "entries (single-threaded fits); an unchanged rerun reads `runs/phase4/cache/` in seconds and writes the "
+            "same text.", "", md_table(pd.DataFrame(rows)), ""]
 
 
 def build(datas: list[Path], params: Params = Params(), use_cache: bool = True) -> str:
