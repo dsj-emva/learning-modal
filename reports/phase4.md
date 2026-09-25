@@ -832,6 +832,79 @@ Share of leads in the 10% of each population with the lowest p that are *ghosted
 | all mature leads, every label_source | 6201 | 20.3% | 27.4% | 24.8% | 20.3% | 27.4% | 24.8% |
 | mature leads created on or after 2026-05-01, every label_source | 640 | 20.3% | 25.0% | 20.3% | 20.3% | 25.0% | 20.3% |
 
+#### Value transforms (plan 3.2)
+
+Candidate value = `value_formula` (p × E[deal value] × margin) through each transform, fitted on the candidate's 3789 training leads. Top-20% revenue = tie-averaged share of recorded won deal value in the top 20% by value; vs baseline = that share over the baseline's own (p×value, identity). value / revenue = total value over total recorded revenue. Every transform is monotone, so capture moves only through ties at the cut.
+
+##### (a) Legacy labels, legacy test set
+
+| value | p1 | p50 | p90 | p99 | max | max/median | top-1% share | top-20% revenue | ties at cut | vs baseline | value / revenue |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| baseline (identity) | 29 | 447 | 5351 | 14236 | 33007 | 73.9× | 11.1% | 0.719 | 1 | 100.0% | 1.08 |
+| candidate: identity | 10 | 548 | 6719 | 17096 | 35656 | 65.1× | 10.3% | 0.778 | 1 | 108.3% | 1.40 |
+| candidate: cap p97 | 10 | 548 | 6719 | 15259 | 15259 | 27.9× | 7.2% | 0.778 | 1 | 108.3% | 1.35 |
+| candidate: cap p97 + floor £25 | 25 | 548 | 6719 | 15259 | 15259 | 27.9× | 7.2% | 0.778 | 1 | 108.3% | 1.35 |
+| candidate: cap p97 + sqrt | 204 | 1523 | 5335 | 8039 | 8039 | 5.3× | 3.5% | 0.778 | 1 | 108.3% | 1.44 |
+| candidate: cap p97 + log | 35 | 1422 | 5743 | 7589 | 7589 | 5.3× | 3.4% | 0.778 | 1 | 108.3% | 1.43 |
+| candidate: tiers 5 | 64 | 729 | 9784 | 9784 | 9784 | 13.4× | 4.3% | 0.766 | 422 | 106.6% | 1.46 |
+| candidate: tiers 10 | 30 | 532 | 5826 | 13742 | 13742 | 25.8× | 6.1% | 0.774 | 225 | 107.6% | 1.44 |
+| candidate: cap p97 + log + floor £25 | 35 | 1422 | 5743 | 7589 | 7589 | 5.3× | 3.4% | 0.778 | 1 | 108.3% | 1.43 |
+
+##### (b) Horizon labels, mature test set
+
+| value | p1 | p50 | p90 | p99 | max | max/median | top-1% share | top-20% revenue | ties at cut | vs baseline | value / revenue |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| baseline (identity) | 27 | 561 | 6278 | 16858 | 33007 | 58.8× | 10.7% | 0.663 | 1 | 100.0% | 0.96 |
+| candidate: identity | 9 | 644 | 7963 | 20446 | 35656 | 55.4× | 10.1% | 0.741 | 1 | 111.7% | 1.19 |
+| candidate: cap p97 | 9 | 644 | 7963 | 15259 | 15259 | 23.7× | 5.8% | 0.741 | 1 | 111.7% | 1.12 |
+| candidate: cap p97 + floor £25 | 25 | 644 | 7963 | 15259 | 15259 | 23.7× | 5.8% | 0.741 | 1 | 111.7% | 1.12 |
+| candidate: cap p97 + sqrt | 193 | 1651 | 5808 | 8039 | 8039 | 4.9× | 3.0% | 0.741 | 1 | 111.7% | 1.13 |
+| candidate: cap p97 + log | 31 | 1603 | 6117 | 7589 | 7589 | 4.7× | 2.8% | 0.741 | 1 | 111.7% | 1.13 |
+| candidate: tiers 5 | 64 | 729 | 9784 | 9784 | 9784 | 13.4× | 3.5% | 0.725 | 84 | 109.4% | 1.17 |
+| candidate: tiers 10 | 30 | 532 | 5826 | 13742 | 13742 | 25.8× | 4.8% | 0.726 | 54 | 109.5% | 1.21 |
+| candidate: cap p97 + log + floor £25 | 31 | 1603 | 6117 | 7589 | 7589 | 4.7× | 2.8% | 0.741 | 1 | 111.7% | 1.13 |
+
+##### All scored leads
+
+| value | p1 | p50 | p90 | p99 | max | max/median | top-1% share |
+|---|---|---|---|---|---|---|---|
+| baseline (identity) | 27 | 498 | 5862 | 16919 | 36283 | 72.8× | 11.3% |
+| candidate: identity | 10 | 599 | 7410 | 20432 | 40539 | 67.6× | 10.4% |
+| candidate: cap p97 | 10 | 599 | 7410 | 15259 | 15259 | 25.5× | 6.7% |
+| candidate: cap p97 + floor £25 | 25 | 599 | 7410 | 15259 | 15259 | 25.5× | 6.7% |
+| candidate: cap p97 + sqrt | 204 | 1593 | 5602 | 8039 | 8039 | 5.0× | 3.4% |
+| candidate: cap p97 + log | 35 | 1521 | 5958 | 7589 | 7589 | 5.0× | 3.2% |
+| candidate: tiers 5 | 64 | 729 | 9784 | 9784 | 9784 | 13.4× | 4.0% |
+| candidate: tiers 10 | 30 | 532 | 5826 | 13742 | 13742 | 25.8× | 5.7% |
+| candidate: cap p97 + log + floor £25 | 35 | 1521 | 5958 | 7589 | 7589 | 5.0× | 3.2% |
+
+##### Acceptance (plan 3.2): ≥ 95% of the baseline's capture on every test set and max/median < 20× on every test set and on all scored leads
+
+| transform | result |
+|---|---|
+| identity | fail |
+| cap p97 | fail |
+| cap p97 + floor £25 | fail |
+| cap p97 + sqrt | PASS |
+| cap p97 + log | PASS |
+| tiers 5 | PASS |
+| tiers 10 | fail |
+| cap p97 + log + floor £25 | PASS |
+
+#### Click-ID coverage (plan 3.5)
+
+Scored leads per paid channel by the identifier an upload could match on (see `docs/platform_contract.md`): a click id (gclid, gbraid, wbraid, fbclid, li_fat_id, oppref), else the lead-form id, else nothing but hashed email / phone (Meta: plus the `fbp` browser cookie).
+
+| channel | leads | click id | lead-form id | no id: fbp present | no id at all | email present | phone present |
+|---|---|---|---|---|---|---|---|
+| google | 2709 | 71.9% | 0.0% | 19.2% | 28.1% | 100.0% | 24.8% |
+| meta | 2725 | 69.4% | 0.0% | 21.2% | 30.6% | 100.0% | 24.7% |
+| linkedin | 1521 | 70.5% | 0.0% | 19.8% | 29.5% | 100.0% | 25.6% |
+| chatgpt | 480 | 72.7% | 0.0% | 20.0% | 27.3% | 100.0% | 26.0% |
+| meta_leadads | 872 | 0.0% | 100.0% | 0.0% | 0.0% | 100.0% | 80.5% |
+| landing-page paid (all but meta_leadads) | 7435 | 70.8% | 0.0% | 20.1% | 29.2% | 100.0% | 25.0% |
+| all paid | 8307 | 63.3% | 10.5% | 18.0% | 26.2% | 100.0% | 30.8% |
+
 #### Design collinearity (plan 2.7): PASS
 
 Candidate design (`v2` features, 39 columns) on its 3789 training rows; fails when two columns have |corr| > 0.95. The report exits 1 on a failure only with `--strict`; `python -m emva.eval.collinearity` always does.
@@ -1012,6 +1085,79 @@ Share of leads in the 10% of each population with the lowest p that are *ghosted
 | all mature leads, every label_source | 6278 | 19.2% | 30.6% | 31.3% | 19.2% | 30.6% | 31.3% |
 | mature leads created on or after 2026-05-01, every label_source | 650 | 21.7% | 29.2% | 27.7% | 21.7% | 29.2% | 27.7% |
 
+#### Value transforms (plan 3.2)
+
+Candidate value = `value_formula` (p × E[deal value] × margin) through each transform, fitted on the candidate's 4049 training leads. Top-20% revenue = tie-averaged share of recorded won deal value in the top 20% by value; vs baseline = that share over the baseline's own (p×value, identity). value / revenue = total value over total recorded revenue. Every transform is monotone, so capture moves only through ties at the cut.
+
+##### (a) Legacy labels, legacy test set
+
+| value | p1 | p50 | p90 | p99 | max | max/median | top-1% share | top-20% revenue | ties at cut | vs baseline | value / revenue |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| baseline (identity) | 11 | 346 | 5670 | 17167 | 45562 | 131.8× | 11.8% | 0.796 | 1 | 100.0% | 1.14 |
+| candidate: identity | 6 | 414 | 6875 | 17889 | 44625 | 107.8× | 10.9% | 0.815 | 1 | 102.5% | 1.30 |
+| candidate: cap p97 | 6 | 414 | 6875 | 13221 | 13221 | 31.9× | 6.6% | 0.815 | 1 | 102.5% | 1.21 |
+| candidate: cap p97 + floor £25 | 25 | 414 | 6875 | 13221 | 13221 | 31.9× | 6.6% | 0.815 | 1 | 102.5% | 1.22 |
+| candidate: cap p97 + sqrt | 156 | 1274 | 5193 | 7201 | 7201 | 5.7× | 3.5% | 0.815 | 1 | 102.5% | 1.26 |
+| candidate: cap p97 + log | 25 | 1208 | 5412 | 6664 | 6664 | 5.5× | 3.2% | 0.815 | 1 | 102.5% | 1.25 |
+| candidate: tiers 5 | 44 | 541 | 8910 | 8910 | 8910 | 16.5× | 4.2% | 0.792 | 479 | 99.5% | 1.29 |
+| candidate: tiers 10 | 23 | 384 | 5471 | 12350 | 12350 | 32.2× | 5.8% | 0.802 | 227 | 100.8% | 1.29 |
+| candidate: cap p97 + log + floor £25 | 25 | 1208 | 5412 | 6664 | 6664 | 5.5× | 3.2% | 0.815 | 1 | 102.5% | 1.25 |
+
+##### (b) Horizon labels, mature test set
+
+| value | p1 | p50 | p90 | p99 | max | max/median | top-1% share | top-20% revenue | ties at cut | vs baseline | value / revenue |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| baseline (identity) | 11 | 432 | 7048 | 18577 | 34763 | 80.5× | 10.9% | 0.752 | 1 | 100.0% | 0.99 |
+| candidate: identity | 6 | 518 | 7873 | 20121 | 32268 | 62.3× | 9.7% | 0.774 | 1 | 103.0% | 1.11 |
+| candidate: cap p97 | 6 | 518 | 7873 | 13221 | 13221 | 25.5× | 5.0% | 0.774 | 1 | 103.0% | 1.02 |
+| candidate: cap p97 + floor £25 | 25 | 518 | 7873 | 13221 | 13221 | 25.5× | 5.0% | 0.774 | 1 | 103.0% | 1.02 |
+| candidate: cap p97 + sqrt | 152 | 1425 | 5557 | 7201 | 7201 | 5.1× | 2.8% | 0.774 | 1 | 103.0% | 0.99 |
+| candidate: cap p97 + log | 23 | 1425 | 5668 | 6664 | 6664 | 4.7× | 2.6% | 0.774 | 1 | 103.0% | 0.99 |
+| candidate: tiers 5 | 44 | 541 | 8910 | 8910 | 8910 | 16.5× | 3.3% | 0.742 | 105 | 98.7% | 1.03 |
+| candidate: tiers 10 | 23 | 698 | 12350 | 12350 | 12350 | 17.7× | 4.5% | 0.747 | 47 | 99.3% | 1.07 |
+| candidate: cap p97 + log + floor £25 | 25 | 1425 | 5668 | 6664 | 6664 | 4.7× | 2.6% | 0.774 | 1 | 103.0% | 0.99 |
+
+##### All scored leads
+
+| value | p1 | p50 | p90 | p99 | max | max/median | top-1% share |
+|---|---|---|---|---|---|---|---|
+| baseline (identity) | 11 | 374 | 6317 | 17841 | 45562 | 121.7× | 11.5% |
+| candidate: identity | 6 | 446 | 7332 | 18646 | 44625 | 100.0× | 10.6% |
+| candidate: cap p97 | 6 | 446 | 7332 | 13221 | 13221 | 29.6× | 6.3% |
+| candidate: cap p97 + floor £25 | 25 | 446 | 7332 | 13221 | 13221 | 29.6× | 6.3% |
+| candidate: cap p97 + sqrt | 152 | 1323 | 5363 | 7201 | 7201 | 5.4× | 3.4% |
+| candidate: cap p97 + log | 23 | 1278 | 5534 | 6664 | 6664 | 5.2× | 3.1% |
+| candidate: tiers 5 | 44 | 541 | 8910 | 8910 | 8910 | 16.5× | 4.0% |
+| candidate: tiers 10 | 23 | 384 | 5471 | 12350 | 12350 | 32.2× | 5.5% |
+| candidate: cap p97 + log + floor £25 | 25 | 1278 | 5534 | 6664 | 6664 | 5.2× | 3.1% |
+
+##### Acceptance (plan 3.2): ≥ 95% of the baseline's capture on every test set and max/median < 20× on every test set and on all scored leads
+
+| transform | result |
+|---|---|
+| identity | fail |
+| cap p97 | fail |
+| cap p97 + floor £25 | fail |
+| cap p97 + sqrt | PASS |
+| cap p97 + log | PASS |
+| tiers 5 | PASS |
+| tiers 10 | fail |
+| cap p97 + log + floor £25 | PASS |
+
+#### Click-ID coverage (plan 3.5)
+
+Scored leads per paid channel by the identifier an upload could match on (see `docs/platform_contract.md`): a click id (gclid, gbraid, wbraid, fbclid, li_fat_id, oppref), else the lead-form id, else nothing but hashed email / phone (Meta: plus the `fbp` browser cookie).
+
+| channel | leads | click id | lead-form id | no id: fbp present | no id at all | email present | phone present |
+|---|---|---|---|---|---|---|---|
+| google | 2763 | 72.3% | 0.0% | 22.0% | 27.7% | 100.0% | 25.2% |
+| meta | 2733 | 70.7% | 0.0% | 22.6% | 29.3% | 100.0% | 24.4% |
+| linkedin | 1485 | 70.8% | 0.0% | 24.5% | 29.2% | 100.0% | 23.7% |
+| chatgpt | 473 | 69.6% | 0.0% | 24.9% | 30.4% | 100.0% | 24.5% |
+| meta_leadads | 932 | 0.0% | 100.0% | 0.0% | 0.0% | 100.0% | 80.8% |
+| landing-page paid (all but meta_leadads) | 7454 | 71.2% | 0.0% | 22.9% | 28.8% | 100.0% | 24.6% |
+| all paid | 8386 | 63.3% | 11.1% | 20.4% | 25.6% | 100.0% | 30.8% |
+
 #### Design collinearity (plan 2.7): FAIL
 
 Candidate design (`v2` features, 39 columns) on its 4049 training rows; fails when two columns have |corr| > 0.95. The report exits 1 on a failure only with `--strict`; `python -m emva.eval.collinearity` always does.
@@ -1030,24 +1176,24 @@ formula 0.814 0.1006       0.571          0.795
 
 ## Runtime
 
-Total compute 593 s (9.9 min) on the machine that produced the cache entries (single-threaded fits); an unchanged rerun reads `runs/phase4/cache/` in seconds and writes the same text.
+Total compute 585 s (9.7 min) on the machine that produced the cache entries (single-threaded fits); an unchanged rerun reads `runs/phase4/cache/` in seconds and writes the same text.
 
 | section | data | seconds |
 |---|---|---|
-| rolling | v2 | 58.1 |
-| subsampling | v2 | 30.0 |
-| customer | v2 | 28.8 |
-| ceiling | v2 | 155.3 |
+| rolling | v2 | 56.7 |
+| subsampling | v2 | 28.7 |
+| customer | v2 | 27.7 |
+| ceiling | v2 | 152.7 |
 | calibration | v2 | 0.2 |
 | regularisation | v2 | 1.0 |
-| interactions | v2 | 26.4 |
-| standard | v2 | 24.1 |
-| rolling | v1 | 59.0 |
-| subsampling | v1 | 30.3 |
-| customer | v1 | 28.4 |
-| ceiling | v1 | 98.7 |
+| interactions | v2 | 26.0 |
+| standard | v2 | 23.1 |
+| rolling | v1 | 59.4 |
+| subsampling | v1 | 29.6 |
+| customer | v1 | 28.7 |
+| ceiling | v1 | 99.2 |
 | calibration | v1 | 0.2 |
 | regularisation | v1 | 1.0 |
-| interactions | v1 | 26.8 |
-| standard | v1 | 24.2 |
+| interactions | v1 | 27.0 |
+| standard | v1 | 23.5 |
 <!-- END GENERATED -->
