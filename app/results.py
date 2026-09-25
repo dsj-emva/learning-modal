@@ -55,8 +55,9 @@ def split_design_column(column: str) -> tuple[str, str]:
 
 
 def load_scores(run_dir: str | Path) -> pd.DataFrame:
-    """The run's ``scores.csv`` indexed by ``lead_id``."""
-    return pd.read_csv(Path(run_dir) / "scores.csv", index_col="lead_id")
+    """The run's ``scores.csv`` indexed by ``lead_id``, parsed with ``float_precision="round_trip"`` so every float
+    is exactly the one the pipeline wrote (pandas' default parser can be off by 100+ ulp)."""
+    return pd.read_csv(Path(run_dir) / "scores.csv", index_col="lead_id", float_precision="round_trip")
 
 
 def scorecard(run_dir: str | Path) -> pd.DataFrame:
@@ -65,7 +66,7 @@ def scorecard(run_dir: str | Path) -> pd.DataFrame:
     Columns: ``feature`` (plain name), ``level``, ``reference`` (the level it is compared with, which scores 0),
     ``points`` (20 points = odds of closing double), ``odds_multiplier``, ``log_odds``, ``column`` (raw name).
     """
-    w = pd.read_csv(Path(run_dir) / "weights.csv", index_col=0)
+    w = pd.read_csv(Path(run_dir) / "weights.csv", index_col=0, float_precision="round_trip")
     parts = [split_design_column(c) for c in w.index]
     out = pd.DataFrame({
         "feature": [feature_label(f) for f, _ in parts], "level": [lvl for _, lvl in parts],

@@ -7,13 +7,15 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from app import scoring
+from app import results, scoring
 from app.auth import check_password, expected_password
 from emva.io import read_leads
 from emva.persist import load_bundle
 from emva.scoring import UnknownLevelError, lead_from_form, points_breakdown, score_leads
 
-# ADR 0018: a lead scored alone differs from the batch run by at most this many ulp (BLAS kernel per batch shape).
+# ADR 0018 / R17: a lead scored alone differs from the batch run by at most this many ulp (BLAS kernel per batch
+# shape). Scores are read with float_precision="round_trip" (results.load_scores); the default parser alone added
+# ~110 ulp on top. A form lead vs score_leads on the same row is exact (same path, same shape).
 MAX_ULP = 64
 
 
@@ -27,7 +29,7 @@ def trained(app_trained):
     """``(bundle, dataset dir, scores.csv)`` of the shared trained run."""
     _, run = app_trained
     return load_bundle(Path(run.out_dir) / "model.joblib"), Path(run.dataset_path), \
-        pd.read_csv(Path(run.out_dir) / "scores.csv", index_col="lead_id")
+        results.load_scores(run.out_dir)
 
 
 def test_form_lead_matches_score_leads(trained) -> None:
@@ -35,7 +37,7 @@ def test_form_lead_matches_score_leads(trained) -> None:
     values = scoring.defaults_for(data)
     got = scoring.score_form(bundle, values, data)
     ref = score_leads(bundle, lead_from_form(scoring.clean_values(values)), data).iloc[0]
-    assert _ulp_close(got.p, ref.p_formula) and _ulp_close(got.value_at_submit, ref.value_at_submit)
+    assert got.p == ref.p_formula and got.value_at_submit == ref.value_at_submit  # same code path, same batch shape
     assert not got.is_bot and not got.is_duplicate
     logit = np.log(got.p / (1 - got.p))
     assert got.points.log_odds.sum() == pytest.approx(logit, abs=1e-9)
