@@ -4,8 +4,9 @@ With ``labels=LEGACY`` and ``features=FeatureSet.LEGACY`` ``run`` reproduces
 ``baseline/emva_score.py::main`` step for step, byte for byte. The defaults are the fixed-horizon
 label over mature leads (plan 1.2 to 1.5) and the v2 feature set (plan Phase 2): explicit missing
 levels and indicators, company-name enrichment, similarity-based boilerplate detection, and a
-deal-value correction estimated from training residuals. ``emva/__main__.py``
-does the printing and file writing.
+deal-value correction estimated from training residuals. In horizon mode ``run`` also adds the two-stage
+upload columns (plan 3.3): ``value_at_submit`` (the expected value through a fitted ``ValueTransform``) and
+``value_at_close``, each with its timestamp, and ``value_at_close_status``. ``emva/__main__.py`` does the printing and file writing.
 """
 from __future__ import annotations
 
@@ -23,17 +24,14 @@ from emva.features import FeatureSet
 from emva.io import clean, load
 from emva.labels import HORIZON, LabelConfig, assign_labels, split_masks
 from emva.model import fit_lr, predict, scorecard
-from emva.value import (
-    DealValueModel,
-    deal_value_design,
-    expected_value,
-    fit_deal_value,
-    predict_deal_value,
-    realised_revenue,
-)
+from emva.value import DealValueModel, expected_value, fit_deal_value, predict_deal_value, realised_revenue, value_at_close
+from emva.value_transform import FittedValueTransform, ValueTransform
 
 # Columns written to scores.csv, in this order, when present (legacy mode: exactly the baseline's).
 SCORE_COLUMNS: tuple[str, ...] = ("p_formula", "deal_value_hat", "value_formula", "p_combined", "value_combined", "y")
+# Two-stage upload columns (plan 3.3), written after the label columns in horizon mode only (ADR 0007).
+VALUE_SCORE_COLUMNS: tuple[str, ...] = ("value_at_submit", "value_at_submit_ts", "value_at_close", "value_at_close_ts",
+                                        "value_at_close_status")
 
 
 @dataclass
@@ -44,7 +42,8 @@ class PipelineResult:
     ``train``/``test`` are boolean masks over ``X``; ``summary`` is the printed metrics table
     (empty when there are no labelled test leads, with a line in ``messages`` saying so);
     ``messages`` are the context-mode lines printed before it; ``labels`` and ``features`` are
-    the label definition and feature set used; ``deal_value`` is the fitted value model.
+    the label definition and feature set used; ``deal_value`` is the fitted value model;
+    ``value_transform`` the transform fitted on the training leads' values (None in legacy mode).
     """
 
     X: pd.DataFrame
@@ -56,11 +55,13 @@ class PipelineResult:
     labels: LabelConfig
     features: FeatureSet
     deal_value: DealValueModel
+    value_transform: FittedValueTransform | None = None
     messages: list[str] = field(default_factory=list)
 
     def scores(self) -> pd.DataFrame:
-        """The scores.csv frame (indexed by ``lead_id``): ``SCORE_COLUMNS`` plus the label config's extra columns."""
-        cols = SCORE_COLUMNS + self.labels.extra_score_columns()
+        """The scores.csv frame (indexed by ``lead_id``): ``SCORE_COLUMNS``, the label config's extra columns and,
+        in horizon mode, ``VALUE_SCORE_COLUMNS``."""
+        cols = SCORE_COLUMNS + self.labels.extra_score_columns() + (() if self.labels.is_legacy else VALUE_SCORE_COLUMNS)
         return self.X[[c for c in cols if c in self.X]]
 
 
@@ -73,14 +74,16 @@ def build(L: pd.DataFrame, labels: LabelConfig = HORIZON, features: FeatureSet =
 
 def run(data: str | Path, margin: float = 1.0, context: str | Path | None = None,
         test_from: str = TEST_FROM, labels: LabelConfig = HORIZON,
-        features: FeatureSet = FeatureSet.V2) -> PipelineResult:
+        features: FeatureSet = FeatureSet.V2, value_transform: ValueTransform = ValueTransform()) -> PipelineResult:
     """Train the formula and deal-value models on ``data`` and score every cleaned lead.
 
     ``labels`` picks the label definition; in horizon mode only mature leads enter the
     train and test sets. ``features`` picks the feature set; the legacy set also keeps the
     baseline's fixed deal-value residual sd, v2 estimates it from training residuals. With
     ``context`` (an agent output CSV), also fit formula-only, context-only and formula+context
-    models on the rows that have a context score and summarise all three.
+    models on the rows that have a context score and summarise all three. In horizon mode
+    ``value_transform`` is fitted on the training leads' ``value_formula`` and gives ``value_at_submit``
+    (legacy mode ignores it: its outputs stay the baseline's).
     """
     spec = feature_spec(features)
     features = spec.feature_set
@@ -91,10 +94,17 @@ def run(data: str | Path, margin: float = 1.0, context: str | Path | None = None
     X["p_formula"] = predict(lr, D)
 
     # expected deal value (fit on train wins)
-    M = deal_value_design(X)
+    M = spec.value_design(X)
     dv = fit_deal_value(M, X.deal_value, tr, log_residual_sd=spec.fixed_log_residual_sd)
     X["deal_value_hat"] = predict_deal_value(dv, M)
     X["value_formula"] = expected_value(X.p_formula, X.deal_value_hat, margin)
+    fitted = None
+    if not labels.is_legacy:
+        fitted = value_transform.fit(X.value_formula[tr])
+        X["value_at_submit"] = fitted.apply(X.value_formula)
+        X["value_at_submit_ts"] = X.created_at
+        close = value_at_close(X, labels.horizon_days)
+        X[list(close.columns)] = close
 
     weights = scorecard(lr, D.columns)
 
@@ -130,7 +140,7 @@ def run(data: str | Path, margin: float = 1.0, context: str | Path | None = None
         X["value_combined"] = expected_value(X.p_combined, X.deal_value_hat, margin)
 
     return PipelineResult(X=X, train=tr, test=te, design=D, weights=weights, summary=pd.DataFrame(rows),
-                          labels=labels, features=features, deal_value=dv, messages=messages)
+                          labels=labels, features=features, deal_value=dv, value_transform=fitted, messages=messages)
 
 
 def write_outputs(result: PipelineResult, out: str | Path) -> None:
@@ -140,4 +150,4 @@ def write_outputs(result: PipelineResult, out: str | Path) -> None:
     result.scores().to_csv(f"{out}/scores.csv")
 
 
-__all__ = ["PipelineResult", "SCORE_COLUMNS", "build", "run", "write_outputs"]
+__all__ = ["PipelineResult", "SCORE_COLUMNS", "VALUE_SCORE_COLUMNS", "build", "run", "write_outputs"]
