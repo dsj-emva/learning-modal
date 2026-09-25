@@ -86,6 +86,7 @@ In a worktree there is no `.venv`: pass the main checkout's interpreter, quoted,
 | `--horizon-days N` | H, default 120 (horizon mode only; with legacy it is a usage error) |
 | `--include-ghosted` | horizon: count leads still New at H as 0 instead of excluding them |
 | `--stalled-as-lost` | horizon: count stalled open deals as 0 instead of censoring them |
+| `--value-cap-percentile P`, `--no-value-cap`, `--value-compression {none,log,sqrt}`, `--value-floor GBP`, `--no-value-floor`, `--value-tiers N` | horizon only (Phase 3): the transform from `value_formula` to `value_at_submit`; default cap p97 + log + floor £25 (ADR 0012). Horizon `scores.csv` also carries `value_at_submit(_ts)`, `value_at_close(_ts)`, `value_at_close_status` |
 | `--feature-set {legacy,v2}` | `v2` (default, Phase 2): `session_missing` / `enrichment_missing` indicators, name enrichment, boilerplate similarity, fixed 39-column design from `V2_LEVELS` (ADR 0009), residual sd estimated. `legacy`: baseline features; with `--label-mode legacy` byte-identical to `baseline/` |
 
 The report also takes `--strict` (exit 1 when the candidate design fails the collinearity check;
@@ -135,15 +136,17 @@ emva/feature_spec.py FeatureSpec per feature set (levels, featuriser, design, fi
 emva/boilerplate.py  boilerplate snippets + token-set Jaccard detector (v2 text=copy_paste)
 emva/design.py       legacy data-driven dummies; v2 fixed_design from V2_LEVELS (unknown level raises)
 emva/model.py        L2 logistic regression, predict, scorecard (weights.csv)
-emva/value.py        ridge deal-value model, expected value, realised revenue
+emva/value.py        ridge deal-value model (fixed-schema design for v2), expected value, value_at_close, realised revenue
+emva/value_transform.py  ValueTransform: cap / log-sqrt compression / floor / tiers, fitted on training leads (plan 3.1)
+emva/troas.py        tROAS eligibility calculator, python -m emva.troas (plan 3.4)
 emva/pipeline.py     run(): load -> clean -> label -> features -> design -> fit -> value -> summary
 emva/cli.py          label flags shared by python -m emva and the report;  emva/__main__.py: the CLI
 emva/context/        agent.py (Haiku call + cache), contract.py (JSON shape), features.py (context_logit)
 emva/eval/           bootstrap, metrics, regression, status_quo, report, label_study, ground_truth_reference,
-                     collinearity, feature_selection, phase2_study
+                     collinearity, feature_selection, phase2_study, value_report (value transforms, click-ID coverage)
 scripts/             check_baseline (make baseline), run_experiments, generate_data_v1, ground_truth_report, compare_to_v1
 tests/               pytest, one file per module + integration; conftest runs v1 in legacy and horizon mode
-reports/             one write-up per task; docs/ context layer (this set of files)
+reports/             one write-up per task; docs/ context layer (this set of files); docs/platform_contract.md (upload design)
 ```
 
 ## Engineering standards
@@ -173,7 +176,8 @@ reports/             one write-up per task; docs/ context layer (this set of fil
 | 1 labels | merged (92168cf) | `phase1-labels` | `reports/phase1.md` |
 | 2 features and leakage | merged (c1b465f) | `phase2-features` | `reports/phase2.md` |
 | 5.2-5.8 generator v2 | merged (01c56f4) | `phase5-generator-v2` | `reports/phase5.md` |
-| 3 value layer, 4 evaluation hardening | pending (need Phase 2) | | |
+| 3 value layer and platform contract | ready for merge | `phase3-value` | `reports/phase3.md` |
+| 4 evaluation hardening | pending (needs Phase 2) | | |
 | 6 context agent v2 | pending (needs 2 and 5) | | |
 | 7 production readiness doc | pending (needs all) | | |
 

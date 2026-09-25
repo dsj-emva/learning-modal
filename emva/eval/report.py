@@ -8,7 +8,8 @@ markdown report:
   options and feature set given (default: horizon labels, ``emva.labels.HORIZON``; v2 features)
 - status quo = ``status_quo_rules.json`` reconstructed by ``emva.eval.status_quo``
 
-It ends with the candidate's design collinearity check (plan 2.7, ``emva.eval.collinearity``) as a
+After the standard tables come the value-transform comparison and click-ID coverage (plan 3.2 / 3.5,
+``emva.eval.value_report``). It ends with the candidate's design collinearity check (plan 2.7, ``emva.eval.collinearity``) as a
 PASS/FAIL section; with ``--strict`` the command exits 1 after printing if that check fails (on
 data/v1 the v2 design fails it because of a data property, ADR 0011, so the default does not).
 
@@ -54,6 +55,7 @@ from emva.eval.metrics import (
     value_scale,
 )
 from emva.eval.status_quo import load_rules, status_quo_value
+from emva.eval.value_report import value_report_sections
 from emva.features import FeatureSet
 from emva.io import clean, load
 from emva.labels import HORIZON, LabelConfig, assign_labels, is_mature, label
@@ -347,6 +349,7 @@ def build_report_with_check(data: str | Path, n_resamples: int = N_RESAMPLES, se
     out += standard_sections(test_a, models, n_resamples, seed)
     out += standard_sections(test_b, models, n_resamples, seed)
     out += ghosted_share_section(X, legacy_y, test_a, models)
+    out += value_report_sections(cand_result, [(t.title, t.revenue) for t in (test_a, test_b)], base.value_formula)
     collinearity_lines, collinearity = collinearity_section(cand_result)
     out += collinearity_lines
     out += ["## Baseline script output", "",
