@@ -1,0 +1,751 @@
+{
+ "entries": {
+  "006dc47ef6678f2c1c340caa9b8768bcbd2aa9c3fb24dbd02b67ca47e659d45c": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "We're a nonprofit focused on clean water initiatives and we don't actually sell products or services.",
+    "As an NGO, we work on clean water projects rather than selling anything.",
+    "We're an NGO that does clean water work, so we're not really in the business of selling things.",
+    "We work for an NGO doing clean water projects and don't sell anything ourselves.",
+    "We're a nonprofit organization working on clean water and we don't sell anything."
+   ],
+   "prompt_version": "v2",
+   "template": "We're an NGO working on clean water projects and don't really sell anything ourselves."
+  },
+  "010ad2e265afe306dd5768e573ba62167b66f03de9499412f94ea527f4e0defe": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "We want to enable companies globally to access innovative, scalable solutions that span the entire business process and deliver growth, operational efficiency, and customer satisfaction.",
+    "Our goal is to provide businesses around the world with modern, scalable, comprehensive solutions designed to accelerate growth, improve efficiency, and enhance customer experience.",
+    "We aim to equip organizations everywhere with state-of-the-art, scalable, integrated solutions that foster growth, boost efficiency, and create customer happiness.",
+    "We're focused on giving businesses worldwide access to advanced, scalable, full-spectrum solutions that promote growth, streamline operations, and delight customers.",
+    "Our vision is to support global businesses with next-generation, scalable, end-to-end solutions that enable growth, drive efficiency gains, and improve customer satisfaction."
+   ],
+   "prompt_version": "v2",
+   "template": "Our mission is to empower businesses worldwide with cutting-edge, scalable, end-to-end solutions that drive growth, efficiency and customer delight."
+  },
+  "01258b21f5dd008bf8877bc47dd488b93942c70fd31edc527211c75275c27fa5": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "We're an animal rescue organization that depends completely on donations from the public",
+    "Animal rescue society here - we operate solely through public fundraising efforts",
+    "We represent an animal rescue that is fully dependent on fundraising from the community",
+    "An animal rescue organization seeking solutions, funded entirely by public contributions",
+    "We work for an animal rescue that relies 100% on public fundraising"
+   ],
+   "prompt_version": "v2",
+   "template": "Asking on behalf of an animal rescue society that relies entirely on public fundraising."
+  },
+  "03413e821dbfb31cb688d22d31a90b901106a5882f064e0ff0e04fde4dba91ce": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "We want to maximize our LinkedIn advertising budget",
+    "Looking to improve our return on LinkedIn marketing investment",
+    "Need to get better results from what we're spending on LinkedIn",
+    "Trying to optimize our LinkedIn ad spend",
+    "Want to see better ROI from our LinkedIn campaigns"
+   ],
+   "prompt_version": "v2",
+   "template": "Trying to get more from our LinkedIn spend."
+  },
+  "065dcf81ced71120b920b99e56073fa8a8a3c6e2f4481a12ef4dbda3e6e36079": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "can you send me more information",
+    "need more details",
+    "I'd like additional information please",
+    "more information needed",
+    "could you provide more info"
+   ],
+   "prompt_version": "v2",
+   "template": "more info pls"
+  },
+  "0d4b2f593a073d2f30be3042f05b36e0e29845dd4bb6e89472717ddcd763e822": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "We need to resolve our ad conversion tracking issues by {month} with a team of {team} marketers.",
+    "Our {team}-person marketing team needs to fix ad conversion tracking by {month}.",
+    "Fix ad conversion tracking by {month} - we have {team} marketers on the team.",
+    "Looking to improve our ad conversion tracking by {month} with our {team} marketing team.",
+    "Ad conversion tracking needs to be fixed by {month} for our {team} marketers."
+   ],
+   "prompt_version": "v2",
+   "template": "Need to fix our ad conversion tracking by {month}, team of {team} marketers."
+  },
+  "0e10c14bee0d5322931f795498bd7a19ad6234f3f8117596d34e03324f6855ee": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "I'd like more information",
+    "Can you provide additional details?",
+    "Tell me more about this",
+    "I want to learn more",
+    "Give me more info"
+   ],
+   "prompt_version": "v2",
+   "template": "tell me more"
+  },
+  "1800a33b11c76f6fde864b0ad050f26f2aa1bd12c81f511d844a04a8a4ef1f4b": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "We're a volunteer-run community trust, so our trustees need to approve all spending.",
+    "As a volunteer-run community trust, we require trustee sign-off on every expenditure.",
+    "Our organization is a volunteer-run community trust where trustees must authorize all spending decisions.",
+    "We operate as a volunteer-run community trust and all expenses need trustee approval.",
+    "Being volunteer-run, we're a community trust that requires trustees to sign off on any spending."
+   ],
+   "prompt_version": "v2",
+   "template": "I should mention we're a volunteer-run community trust and our trustees sign off every spend."
+  },
+  "186f30b85fd46cb07cc744129839c6b771503d290084f49261075c9a299e73e1": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "We use data insights and our team's expertise to help brands reach their most important audiences.",
+    "Data-driven strategies combined with our talented people enable brands to connect with the right audiences.",
+    "Our people leverage data to help brands engage with audiences that truly matter to them.",
+    "We're powered by people and guided by data to connect brands with their most valuable audiences.",
+    "Brands rely on our data-backed approach and skilled team to build connections with audiences that count."
+   ],
+   "prompt_version": "v2",
+   "template": "Driven by data and powered by people, we help brands connect with the audiences that matter most."
+  },
+  "26e41a41bf9e344854c49ae20a7c66f52147bbd4a96b1e5a086192b1b080b48d": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "I recently completed a bootcamp and am searching for my first role in marketing. Do you have any positions available?",
+    "Just completed bootcamp training and looking to start my marketing career - do you guys have any openings?",
+    "Finished my bootcamp and trying to land my first marketing position. Are there any opportunities at your company?",
+    "I've just wrapped up a bootcamp program and am seeking my initial marketing job. Any openings you know of?",
+    "Recently finished bootcamp and am on the hunt for my first marketing job - wondering if you have anything available?"
+   ],
+   "prompt_version": "v2",
+   "template": "Just finished a bootcamp and I'm looking for my first marketing job, any openings on your side?"
+  },
+  "270858e5c4471db53145021eec552ec0d74554b39dd904e5797916f30e8ed860": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "hey",
+    "hello",
+    "hi there",
+    "hey there",
+    "hello there"
+   ],
+   "prompt_version": "v2",
+   "template": "hi"
+  },
+  "2b1bd2c5b43b99756040ecd601e5d833139d22f1b0766e36b651983cf9140576": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "We spend £{k}k monthly on paid advertising but struggle to track which leads actually convert to revenue.",
+    "Our monthly paid spend is £{k}k, and we're unable to determine which leads generate actual revenue.",
+    "We have a £{k}k monthly budget for paid campaigns, but we can't figure out which leads are turning into revenue.",
+    "With a £{k}k per month paid budget, we're having trouble identifying which leads result in revenue.",
+    "We allocate £{k}k each month to paid channels but can't see which leads are actually generating revenue."
+   ],
+   "prompt_version": "v2",
+   "template": "Our paid budget is £{k}k a month and we can't tell which leads turn into revenue."
+  },
+  "33853001b6399f27c5f6b21f0d50b1389526d1f4075732098a8ccbcf9a6bdfdd": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "Need pricing info for {team} seats - planning to launch in {weeks} weeks",
+    "Want to know the cost for {team} seats and go live within {weeks} weeks",
+    "Trying to get pricing on {team} seats so we can be live in {weeks} weeks",
+    "Need {team} seat pricing, aiming to go live in {weeks} weeks",
+    "Looking to get {team} seats live within {weeks} weeks - need pricing details"
+   ],
+   "prompt_version": "v2",
+   "template": "Looking for pricing for {team} seats, want to go live within {weeks} weeks."
+  },
+  "373f9f03c1c6f3389ca0562c27418e53a0deec8b23df94db6ab22c9d586e1c8d": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "The leads we're getting from Meta aren't very good according to our sales team.",
+    "Our sales team has told us that Meta leads are of poor quality.",
+    "Meta leads are performing poorly, at least that's what our sales team is saying.",
+    "According to our sales team, the quality of leads coming from Meta is not good.",
+    "Our sales team reports that we're receiving poor quality leads from Meta."
+   ],
+   "prompt_version": "v2",
+   "template": "Our sales team says the leads from Meta are poor."
+  },
+  "39c9ae5446cbeb82423c0c726eb70708ad89167371589e63eb0371894ab28d41": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "We're a small foundation that helps families in need, so we'd need nonprofit pricing.",
+    "As a small foundation supporting families in need, we can only work with nonprofit rates.",
+    "We support families in need as a small foundation and would require a nonprofit rate.",
+    "Small foundation here helping families in need—we'd only be able to go with nonprofit pricing.",
+    "We're a small foundation focused on supporting families in need and could only afford nonprofit rates."
+   ],
+   "prompt_version": "v2",
+   "template": "We're a small foundation supporting families in need and could only consider a nonprofit rate."
+  },
+  "3d4d34d73c05e186a0bea7fee2194814c8a8d81ed1595360108a817aa796d3fb": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "We're committed to delivering exceptional services that consistently surpass what our clients expect.",
+    "Our dedication to excellence drives us to provide world-class service that goes beyond expectations.",
+    "We're built on a foundation of excellence and committed to delivering services that always exceed client expectations.",
+    "Driven by a passion for excellence, we consistently deliver top-tier services that surpass expectations.",
+    "We pride ourselves on delivering world-class services that exceed expectations as a core part of who we are."
+   ],
+   "prompt_version": "v2",
+   "template": "Founded on a passion for excellence, we deliver world-class services that exceed expectations every time."
+  },
+  "439932cdf798a921ec95ced718c2ee7379f5f34328d30e5d7ea46e1398657500": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "We're a grant-funded charity supporting young carers, and our budget is limited.",
+    "As a grant-funded charity working with young carers, we don't have much money to spare.",
+    "We work as a charity for young carers and rely on grants, so funds are constrained.",
+    "Our charity focuses on young carers and is funded through grants, which means we're operating on a tight budget.",
+    "Being a grant-funded charity that supports young carers means we have limited financial resources."
+   ],
+   "prompt_version": "v2",
+   "template": "Our organisation is a grant-funded charity helping young carers, so money is tight."
+  },
+  "4579ba198b4020e0fffa30ec174fdfb4ebc2b132e3677a59ff654893c4a39610": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "Our company is dynamic and fast-growing, dedicated to delivering exceptional results for clients regardless of their size.",
+    "We're a rapidly expanding, dynamic organization that's committed to achieving exceptional outcomes for all our clients, big or small.",
+    "As a dynamic, fast-growing firm, we focus on delivering exceptional results to clients of all sizes.",
+    "We're committed to being a dynamic, fast-growing company that consistently achieves exceptional results for every client we work with.",
+    "A dynamic and fast-growing company, we're dedicated to providing exceptional results for clients at any scale."
+   ],
+   "prompt_version": "v2",
+   "template": "We are a dynamic, fast-growing company committed to exceptional results for clients of every size."
+  },
+  "4b8fed7babb78d36cb62a1df6e85438c613ba01e8566585d02ffd9682dd7df56": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "I work with software companies on scaling through outbound strategies - would you be open to me sharing a proposal with your team?",
+    "We help software brands grow via outbound. Can I get a proposal over to you?",
+    "I assist software brands in scaling their outbound efforts. Would your team be interested in reviewing a proposal from me?",
+    "Our focus is helping software companies scale with outbound - mind if I send you a proposal?",
+    "I specialize in helping software brands scale through outbound. Could I forward a proposal to your team?"
+   ],
+   "prompt_version": "v2",
+   "template": "I help software brands scale with outbound, could I send over a proposal for your team?"
+  },
+  "4f5c0c3091019607bc21521f2143a926b8096e5fa14cb29edb43a98a6d4b7111": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "We use a comprehensive strategy that blends creativity with technology to drive sustainable growth.",
+    "By integrating strategy, creativity, and technology, we're able to achieve sustainable growth in a holistic way.",
+    "Our approach brings together strategic thinking, creative solutions, and technology to enable long-term sustainable growth.",
+    "We combine strategic planning, creative innovation, and technological solutions for sustainable growth across the board.",
+    "Strategy, creativity, and technology working together in our holistic approach creates sustainable growth."
+   ],
+   "prompt_version": "v2",
+   "template": "Our holistic approach combines strategy, creativity and technology to unlock sustainable growth."
+  },
+  "515fe5f6a78264480354feda6b9c26e0ad38acef298bdfa21484c7ab38a4f6fe": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "We're planning to launch a competing attribution tool in the next year and want to see what solutions currently exist in the market.",
+    "We're building an attribution tool to compete with existing ones and need to understand the current landscape before our launch next year.",
+    "We're benchmarking current attribution tools since we'll be releasing our own competing solution next year.",
+    "We're launching our own attribution tool next year as a competitor and are researching what's currently available.",
+    "We want to benchmark existing attribution tools because we're launching a rival product next year."
+   ],
+   "prompt_version": "v2",
+   "template": "We're launching a rival attribution tool next year and are benchmarking what's already out there."
+  },
+  "54da7d4402f73f60644e9bed048785e3f1c1e303cb10908edfdc35f09249d363": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "We provide white-label SEO services and have partnered with vendors similar to yours in the past.",
+    "Our company delivers white-label SEO services, and we've collaborated with vendors like yours before.",
+    "We're in the white-label SEO space and have worked with comparable vendors to yours.",
+    "We do white-label SEO services and have experience working with vendors in your category.",
+    "We supply white-label SEO services and have dealt with vendors like you previously."
+   ],
+   "prompt_version": "v2",
+   "template": "We offer white-label SEO services and have worked with several vendors like you."
+  },
+  "5d99f5cab47dfee1d4911e7187fea80d063422b9edad46366a56ffd7467662b6": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "We're committed to your success and will exceed expectations to achieve real, measurable results.",
+    "Our goal is your goal - we'll do whatever it takes to deliver tangible, measurable outcomes.",
+    "We believe your success is our success, so we work hard to deliver results you can measure.",
+    "We're dedicated to going the extra mile to ensure your success and deliver measurable impact.",
+    "Your wins are our wins - we're focused on delivering concrete, measurable outcomes for you."
+   ],
+   "prompt_version": "v2",
+   "template": "Your success is our success: we go above and beyond to deliver measurable outcomes."
+  },
+  "6400972541e3353d3f8bc0f090f047d8875f299caa45371b654fa80b40c1c383": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "I have an upcoming interview at a firm that uses products similar to yours, and I'd like to be well-informed.",
+    "Getting ready for an interview at a place that uses tools like what you offer - want to make sure I know my stuff.",
+    "I'm interviewing at a company that relies on solutions like yours and I want to come across as knowledgeable.",
+    "Preparing for an interview at an organization that uses your type of tool, looking to be informed going in.",
+    "I've got an interview coming up at a company using tools comparable to yours and want to appear knowledgeable."
+   ],
+   "prompt_version": "v2",
+   "template": "I'm preparing for an interview at a company that uses tools like yours and want to sound informed."
+  },
+  "6d230681f6fdf7c82d7f116495cb19dca4d87d31848568e7172a03366308d8d7": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "I'm currently in transition between jobs and would be interested in learning about any open growth roles you might have.",
+    "Right now I'm between positions and curious whether you have any hiring opportunities in growth.",
+    "I'm transitioning out of my current role and would like to explore if you're looking to hire for growth positions.",
+    "Currently between jobs and wondering if there are any growth positions available at your company.",
+    "I'm in between roles right now and keen to find out if you're recruiting for growth-focused positions."
+   ],
+   "prompt_version": "v2",
+   "template": "Honestly I'm between roles at the moment and would love to know if you're hiring for growth positions."
+  },
+  "6e12bdd4676bd40313994dd9980a348d67611c57605beb049a467b9d4accb226": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "We want to explore ways to integrate our CRM with Google Ads",
+    "Trying to figure out how to link our CRM system to Google Ads",
+    "Need to find solutions for connecting Google Ads with our CRM",
+    "Exploring possibilities to sync our CRM and Google Ads together",
+    "Want to look into connecting our CRM platform to Google Ads"
+   ],
+   "prompt_version": "v2",
+   "template": "Looking at options to connect our CRM to Google Ads."
+  },
+  "70b4022ccb491ee3cca5219293b246512cafee5cdabf31c395bd5dfe812cab42": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "We provide verified B2B contact lists and would be interested in having you as a customer.",
+    "We're in the business of supplying verified B2B contact lists - we'd like to work with you.",
+    "Quick question: we offer verified B2B contact lists and think you'd be a great fit as a client.",
+    "We supply verified B2B contact lists and are looking to add you to our client base.",
+    "We deal in verified B2B contact lists and would welcome the opportunity to have you as a client."
+   ],
+   "prompt_version": "v2",
+   "template": "Quick one: we supply verified B2B contact lists and would love to have you as a client."
+  },
+  "7391b66fab6468687dabb5cfde6dfbfd04229fb0c344e71227bc4dc8df163943": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "We're a nonprofit housing association, not a commercial enterprise, so I'm not sure if that matters for you.",
+    "Just to clarify, we're a not-for-profit housing association rather than a for-profit business.",
+    "We operate as a not-for-profit housing association, not a commercial company, in case that's relevant.",
+    "We're a nonprofit housing association rather than a commercial business - wanted to mention that upfront.",
+    "We're not a commercial business; we're a not-for-profit housing association, if that makes a difference."
+   ],
+   "prompt_version": "v2",
+   "template": "We're a not-for-profit housing association rather than a commercial business, if that changes anything."
+  },
+  "7779e862964f59d0e204b0ab39e82a4925699192b35638a4d3c278736ddd8a44": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "We're an industry leader that sets the standard for quality, reliability, and customer satisfaction.",
+    "As a leader in our industry, we establish standards around quality, reliability, and how satisfied our customers are.",
+    "We lead the industry by setting benchmarks for quality, reliability, and customer satisfaction.",
+    "Our company is an industry leader—we define what quality, reliability, and customer satisfaction look like.",
+    "We set the bar in our industry when it comes to quality, reliability, and customer satisfaction."
+   ],
+   "prompt_version": "v2",
+   "template": "As an industry leader, we set the standard for quality, reliability and customer satisfaction."
+  },
+  "77f5a2a28f83ef5afb2c065ce82ebbc6574fcd750870a98bc788e5f0fe9d3903": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "Better reporting capabilities for our paid social campaigns",
+    "We need to enhance our paid social reporting",
+    "Improve our paid social reporting processes",
+    "Get better insights from our paid social reporting",
+    "Make our paid social reporting more effective"
+   ],
+   "prompt_version": "v2",
+   "template": "Improve how we report on paid social."
+  },
+  "7b0219189945399ff74742f2cb03f9e4e1d74750f96c90a77434ba1c97da2437": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "We're a small performance marketing consultancy and we're interested in finding products we can resell",
+    "Small performance marketing consultancy here - looking to add resellable products to our offering",
+    "I operate a boutique performance marketing consultancy and want to identify products suitable for reselling",
+    "Running a small performance marketing consultancy, seeking products that we can resell to clients",
+    "We're a small performance marketing shop looking for products we can white label or resell"
+   ],
+   "prompt_version": "v2",
+   "template": "I run a small performance marketing consultancy and am looking for products to resell."
+  },
+  "7e73a8e2dab7666c9d107a8d56f5857c174b2d491bafb2903fb41fbf9a0456d8": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "We have a similar product and I'm interested in understanding how your onboarding process works.",
+    "Our solution is pretty much the same as yours, so I'd like to learn more about your onboarding flow.",
+    "We offer something comparable, and I'd like to see how you've structured your onboarding.",
+    "I'm curious about your onboarding flow since we have a product that does similar things.",
+    "We build something similar and would like to understand how your onboarding is designed."
+   ],
+   "prompt_version": "v2",
+   "template": "Our product does much the same thing; I'd like to see how your onboarding flow is put together."
+  },
+  "88c6fa09455087b33875b6bc7613613b472254236127c806ce0ab0205b3f47e6": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "With years of collective expertise, we deliver customized solutions that generate long-term value.",
+    "We draw on extensive combined experience to offer personalized solutions that drive sustained value.",
+    "Our decades of combined knowledge allow us to create bespoke solutions that deliver enduring value.",
+    "We use our collective experience spanning decades to develop tailored solutions with lasting impact.",
+    "Backed by decades of combined experience, we craft customized solutions that produce meaningful, lasting value."
+   ],
+   "prompt_version": "v2",
+   "template": "Leveraging decades of combined experience, we provide tailored solutions that create lasting value."
+  },
+  "8ac51af7a43fcc5d223ad70f5c9f23d947cdf06b876aff13e359606f33da1572": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "We're based in the city center and work with clients from many different industries and markets.",
+    "Our headquarters is located downtown, and we serve a diverse client base across multiple sectors and markets.",
+    "We're centrally located in the city and provide services to clients operating in various sectors and markets.",
+    "Based in the city's core, we cater to clients across numerous industries and different market segments.",
+    "We operate from a downtown location and serve clients in a wide variety of sectors and markets."
+   ],
+   "prompt_version": "v2",
+   "template": "Headquartered in the heart of the city, we serve clients across a broad range of sectors and markets."
+  },
+  "92e1544ba9f7afb2ab46c005432df950806f8f904c0281bd975e67e70e7948b6": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "We're an independent company that's been customer-focused from the start, and we've continuously redefined our industry.",
+    "Since our founding, we've stayed independent while putting customers first, constantly reshaping what our category looks like.",
+    "Customer obsession and independence have driven us to redefine our category from day one.",
+    "We've been independent operators focused on customers, redefining our space since we started.",
+    "From the beginning, our independence and customer obsession have allowed us to reshape our category."
+   ],
+   "prompt_version": "v2",
+   "template": "Proudly independent and customer obsessed, we have been redefining our category since day one."
+  },
+  "941d0684d865c6e0ae49e956275a0c4328a7e103a2fa70deebeec86ed99ec7ca": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "Need to figure out which campaigns are generating quality leads.",
+    "Looking to identify which campaigns are producing the best leads.",
+    "Want to know which of our campaigns are actually bringing in good leads.",
+    "Trying to understand which campaigns deliver quality leads.",
+    "Need clarity on which campaigns are driving good lead quality."
+   ],
+   "prompt_version": "v2",
+   "template": "Want to understand which campaigns bring good leads."
+  },
+  "99243aead18a7afba6725864b437e96b41e4f9ef47db137494910cd6a0776cf3": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "Can you share my information with your recruiter? You can find my CV on LinkedIn.",
+    "Would you mind forwarding my details to your recruiter? My CV is available on my LinkedIn.",
+    "Please pass along my details to your recruiter - my CV is on LinkedIn.",
+    "Could you send my information to your recruiter? My resume is on my LinkedIn profile.",
+    "Can you give my details to your recruiter? My CV is on LinkedIn."
+   ],
+   "prompt_version": "v2",
+   "template": "Also, could you pass my details to your recruiter? My CV is on my LinkedIn profile."
+  },
+  "99a4fe60af00f9fd432df241175848dc0541348498710b997e4f54386ff1363b": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "N/A",
+    "Not applicable",
+    "NA",
+    "n/a",
+    "Not Applicable"
+   ],
+   "prompt_version": "v2",
+   "template": "N/A"
+  },
+  "9be99d7a2421e67ddf38bd6559eb78dc207f768f068aa4ac47dbad2b80fbde80": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "I was recently laid off and I'm interested in joining a company like yours.",
+    "I got made redundant recently and would like to work for a company similar to yours.",
+    "Recently I was made redundant, and I'm eager to join an organization like yours.",
+    "I was recently let go and am looking to join a company such as yours.",
+    "I've recently been made redundant and am keen to be part of a company like yours."
+   ],
+   "prompt_version": "v2",
+   "template": "I was recently made redundant and am keen to join a company like yours."
+  },
+  "9da48f3767ebfbbebccf3b09943152e742621ac96f7c1217f9c0264928509f74": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "We blend industry best practices with innovative approaches to transform complicated problems into straightforward answers.",
+    "Taking the best of what works and mixing it with forward-thinking ideas, we simplify complex issues into easy solutions.",
+    "Our approach combines proven best practices with modern innovation to turn intricate challenges into simple, workable solutions.",
+    "We merge established best practices with cutting-edge thinking to convert complex problems into uncomplicated solutions.",
+    "By combining time-tested best practices with innovative thinking, we make complex challenges simple to solve."
+   ],
+   "prompt_version": "v2",
+   "template": "Combining best practice with cutting-edge thinking, we turn complex challenges into simple solutions."
+  },
+  "a7fbb18e218a3f7b5d6b0052ae9296acbf4d79834e35dba38f5595ad235a0a8d": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "We're a registered charity, which means any projects we pursue need to be supported by donations.",
+    "As a registered charity, we rely on donations to fund whatever initiatives we decide to undertake.",
+    "Being a registered charity means we can only take on work that's backed by donation funding.",
+    "We operate as a registered charity, so all our activities must be funded through donations.",
+    "Since we're a registered charity, any work we do needs to be covered by donated funds."
+   ],
+   "prompt_version": "v2",
+   "template": "For context, we're a registered charity, so anything we take on has to be funded from donations."
+  },
+  "b5543e9db92af8d62a71aa004de7ee6c04a7ca23f60ce3156d6b3b8ddc0f861f": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "Want to improve the quality of leads coming from our ads.",
+    "Looking to get better quality leads from advertising.",
+    "Need higher quality leads generated through our ad campaigns.",
+    "Trying to improve lead quality from our advertising efforts.",
+    "Want better leads from ads."
+   ],
+   "prompt_version": "v2",
+   "template": "Interested in better lead quality from ads."
+  },
+  "b56994be4e8253ffd271fe94f86e6c46cd591bce9815325c80b173d81f002a76": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "I work on the product team for a different conversion-value platform and would appreciate a demo of your solution.",
+    "We're on the product side at a competing conversion-value platform and want to see how yours works.",
+    "I'm part of the product team at another conversion-value platform - would love to get a walkthrough of what you offer.",
+    "Working in product at a conversion-value platform competitor, looking for a walkthrough of your platform.",
+    "I'm on a product team at a rival conversion-value platform and interested in seeing a walkthrough of yours."
+   ],
+   "prompt_version": "v2",
+   "template": "I'm on the product team at another conversion-value platform and would like a walkthrough of yours."
+  },
+  "b66f4ae8fb3114cf894521ce72c9bac8b9fa7bc94363c29d46dba38eaefa91c8": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "We need to replace our existing tool once our contract expires in {month}. {team} users are affected.",
+    "Looking to swap out our current solution when it expires in {month}. {team} users depend on it.",
+    "Our contract with our current tool ends in {month} and we need a replacement. {team} users.",
+    "When our current tool's contract runs out in {month}, we want to replace it. {team} users involved.",
+    "Need a new tool to replace the one we have now when the contract ends in {month}. {team} users."
+   ],
+   "prompt_version": "v2",
+   "template": "Replacing our current tool when the contract ends in {month}. {team} users."
+  },
+  "b6e98e9e8f07f19622e7444b454a1e9ca6b108ee26400ec47f44c3cb38e09227": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "We create high-converting landing pages and believe we can double your form submissions.",
+    "Our studio specializes in building landing pages that convert well, and we think we could double your form fills.",
+    "We build high-converting landing pages and are confident we could double the number of form fills you get.",
+    "Our team develops high-converting landing pages - we reckon we could double your form fills.",
+    "We design landing pages that convert at high rates and think we could potentially double your form fills."
+   ],
+   "prompt_version": "v2",
+   "template": "Our studio builds high-converting landing pages and I think we could double your form fills."
+  },
+  "b867531f43f5889b4b531cce77f0660e09f2b6cad8f426e9e9d9d80007ff5ee0": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "We're fundamentally committed to innovation, integrity, and impact in all our operations.",
+    "Innovation, integrity, and impact are central to everything we do as an organization.",
+    "Our foundation is built on three principles: innovation, integrity, and impact that guide our work.",
+    "We prioritize innovation, integrity, and impact as core values in everything we undertake.",
+    "Innovation, integrity, and impact drive us at the core of our business."
+   ],
+   "prompt_version": "v2",
+   "template": "At our core, we believe in innovation, integrity and impact across everything we do."
+  },
+  "b9573015774be38268057eee8bf99d4723041be5a32a456d0e95fa6981505fc1": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "We're a growth agency that can manage your paid social campaigns - interested in a brief call to discuss?",
+    "As a growth agency, we'd be happy to handle your paid social advertising. Would you be open to a quick intro?",
+    "We run paid social for growth agencies like yours - could we schedule a quick call to introduce ourselves?",
+    "We're a growth agency offering paid social management services. Open to a quick intro call?",
+    "Our growth agency specializes in paid social - would you be interested in a brief call to learn more?"
+   ],
+   "prompt_version": "v2",
+   "template": "We're a growth agency and could run your paid social for you, open to a quick intro call?"
+  },
+  "c219a186a1a5df944851503da47aba3838e7e9f19d128d431b0cb7c5d2b4dece": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "cost",
+    "pricing structure",
+    "how much does it cost",
+    "pricing options",
+    "price"
+   ],
+   "prompt_version": "v2",
+   "template": "pricing"
+  },
+  "c8cb5dc1ea276b98e1f90dc5649efcc6ab8daf2b44b987ea242e3a26c3af8e91": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "We provide innovative leaders with cutting-edge solutions built for today's enterprises.",
+    "Our next-generation tools empower forward-thinking leaders in modern business environments.",
+    "We equip visionary executives with advanced tools tailored for the contemporary enterprise.",
+    "We enable ambitious leaders with state-of-the-art tools created for modern organizations.",
+    "We give visionary leaders access to next-gen tools purpose-built for today's enterprises."
+   ],
+   "prompt_version": "v2",
+   "template": "We empower visionary leaders with next-generation tools designed for the modern enterprise."
+  },
+  "d10aa5412f1435936d37d2d4d1e915bdaeaaec41f0153e5a5b05a6b893b0ed21": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "testing",
+    "Test",
+    "need to test",
+    "testing purposes",
+    "want to test"
+   ],
+   "prompt_version": "v2",
+   "template": "test"
+  },
+  "d4086618ba0b6fe79ffaa2cd8c71fb75eb67770829cff302154fb03653432544": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "Our {team} SDR team needs to implement better lead scoring by {when}.",
+    "We're looking to improve our lead scoring process for our {team} SDRs before {when}.",
+    "Better lead scoring is needed for our {team}-person SDR group, and we need it done by {when}.",
+    "We want to enhance lead scoring across our {team} SDRs ahead of {when}.",
+    "Our {team} SDRs require improved lead scoring capabilities by {when}."
+   ],
+   "prompt_version": "v2",
+   "template": "We have a team of {team} SDRs and need better lead scoring before {when}."
+  },
+  "dddc5a8c270402443e2d581c75f78cf5d03a24ce25b3de25337aa5a7a952db16": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "information",
+    "more info",
+    "details",
+    "need information",
+    "looking for info"
+   ],
+   "prompt_version": "v2",
+   "template": "info"
+  },
+  "deaaac1bd71395b13df0838f0ed419a281caab047986bef1624fd4786ba39d2e": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "Our award-winning platform is trusted by customers around the world and changes how teams collaborate",
+    "Teams worldwide trust our award-winning platform to transform their work processes",
+    "Customers globally rely on our award-winning platform to revolutionize team workflows",
+    "Our platform has won awards and is trusted by customers everywhere to transform team operations",
+    "Trusted globally by customers, our award-winning platform revolutionizes the way teams work together"
+   ],
+   "prompt_version": "v2",
+   "template": "Trusted by customers worldwide, our award-winning platform transforms the way teams work."
+  },
+  "e369c3adc67b862d23d2406d9eb8d30cab4f718ff24f97ff357e0aee90e10130": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "Our company is a top provider of cutting-edge solutions that deliver exceptional value to stakeholders in every industry by leveraging synergy and operational excellence.",
+    "We're a premier solutions provider focused on offering best-in-class value across all verticals to our stakeholders through collaborative synergy and excellence.",
+    "As a leading provider of innovative solutions, we're committed to delivering outstanding value to stakeholders throughout all sectors via synergy and excellence.",
+    "We provide innovative solutions and deliver best-in-class value to stakeholders across every vertical through synergy and a commitment to excellence.",
+    "A leading provider of innovative solutions dedicated to providing exceptional value to all stakeholders across verticals by fostering synergy and excellence."
+   ],
+   "prompt_version": "v2",
+   "template": "We are a leading provider of innovative solutions dedicated to delivering best-in-class value to our stakeholders across all verticals through synergy and excellence."
+  },
+  "e66d2df6b50d5342bde960ef7d575548317d70bc6b6c46ce6719812eeab7c43c": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "We're also in the scoring vendor space and I'd like to discuss how your approach compares to ours.",
+    "I'm at another scoring vendor and interested in comparing methodologies with your team.",
+    "As someone working for a scoring vendor in this industry, I want to understand how your approach differs from ours.",
+    "I work for a scoring vendor too and would like to exchange insights on your approach.",
+    "We're in the scoring vendor business as well, and I'm curious to see how your methods stack up against ours."
+   ],
+   "prompt_version": "v2",
+   "template": "I work at a scoring vendor in the same space and wanted to compare notes on your approach."
+  },
+  "e68d8d18fd9b71174f3a7cf36261c007b2a3277f88791a81ef0949feb29ff888": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "Our goal is to provide seamless, end-to-end customer experiences that delight and build loyalty.",
+    "We focus on delivering smooth, integrated experiences across the entire customer journey to drive satisfaction and loyalty.",
+    "We create delightful, seamless experiences from start to finish that keep customers coming back.",
+    "Seamless end-to-end experiences that delight customers and foster long-term loyalty is what we deliver.",
+    "We want to offer customers a seamless, complete experience that delights them and increases loyalty."
+   ],
+   "prompt_version": "v2",
+   "template": "We deliver seamless, end-to-end experiences that delight customers and drive loyalty."
+  },
+  "ea236825e093947838cfc0bab6de57716acef09f868e53ae22cb9e97b360728c": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "We've got roughly £{k}k budgeted for implementing a new attribution setup in the current quarter.",
+    "New attribution setup - we have around £{k}k approved in the budget for this quarter.",
+    "Looking to set up new attribution this quarter with an approved budget of approximately £{k}k.",
+    "We've allocated about £{k}k this quarter to build out a new attribution setup.",
+    "Around £{k}k has been approved for a new attribution implementation we're doing this quarter."
+   ],
+   "prompt_version": "v2",
+   "template": "Budget of around £{k}k approved for a new attribution setup this quarter."
+  },
+  "eb321dfb3fc165ed47eb66a4f64e722212d8d4cc5fefa1f6288a95f53e3dadf1": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "interested",
+    "I'm interested",
+    "Interested in learning more",
+    "interested in your solution",
+    "Want to learn more"
+   ],
+   "prompt_version": "v2",
+   "template": "interested"
+  },
+  "f09dc956f11163c19e8cad84d63b7ecc74180345b1d4591a33e276c8c12467d8": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "We work with innovative companies to help them scale their digital transformation efforts.",
+    "Our partnerships with progressive organizations enable faster, large-scale digital transformation.",
+    "We collaborate with forward-thinking businesses to drive digital transformation across their operations.",
+    "We partner with visionary organizations to accelerate digital transformation on a larger scale.",
+    "We help ambitious organizations scale their digital transformation initiatives through strategic partnerships."
+   ],
+   "prompt_version": "v2",
+   "template": "We partner with forward-thinking organisations to accelerate digital transformation at scale."
+  },
+  "f63b12c7b6d0ee83b36f63e2cd68ee8aa16d94e3a65156e49af81ecde228fa37": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "We have a comparable lead scoring solution and want to understand how you manage value uploads to Meta.",
+    "We've developed a lead scoring product like yours and are interested in learning your approach to Meta value uploads.",
+    "Our company makes a similar lead scoring tool, and we'd like to know how you handle uploading values to Meta.",
+    "We create a lead scoring product similar to yours and are wondering about your process for Meta value uploads.",
+    "We have a lead scoring product that's comparable to yours and are curious about how you approach value uploads to Meta."
+   ],
+   "prompt_version": "v2",
+   "template": "We build a similar lead scoring product and are curious how you handle value uploads to Meta."
+  },
+  "fe0af889f65bc01629f19ffe322d830b270371a209b8e9be29d6d8c866c907e6": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "We're conducting competitive research for our ad-scoring startup",
+    "Competitive research - we're building an ad-scoring startup and want to see what else is out there",
+    "Looking into competitors as part of our ad-scoring startup initiative",
+    "Running competitive analysis for the ad-scoring startup we're developing",
+    "We need to do some competitive research since we're launching an ad-scoring startup"
+   ],
+   "prompt_version": "v2",
+   "template": "Doing some competitive research for our own ad-scoring startup."
+  },
+  "feea6818e3892af0daffc80cafe6403253672bf307cb4ad81867229ae1c14b3f": {
+   "model": "claude-haiku-4-5-20251001",
+   "paraphrases": [
+    "I'm considering a move into ad tech and want to learn more about your product before I apply.",
+    "Looking to transition into ad tech, so I'm trying to get familiar with your product first.",
+    "I'm thinking about moving into ad tech and wanted to check out your product before submitting an application.",
+    "Exploring a potential career shift into ad tech—wanted to understand what your product does before applying.",
+    "I'm interested in transitioning to ad tech and wanted to learn about your product ahead of applying."
+   ],
+   "prompt_version": "v2",
+   "template": "I'm exploring a career move into ad tech and wanted to understand your product before applying."
+  }
+ },
+ "model": "claude-haiku-4-5-20251001",
+ "n_paraphrases": 5,
+ "prompt_version": "v2"
+}

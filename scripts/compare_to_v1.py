@@ -2,6 +2,7 @@
 
 Usage:
   python scripts/compare_to_v1.py --ref data/v1 --gen <dir> [--md out.md]
+  python scripts/compare_to_v1.py --gen data/v2 --gen-label v2 --md v2_vs_v1.md    # fidelity of v2 vs v1
 
 Prints (and optionally writes as markdown):
   1. every ground_truth.md table, v1 vs generated, with absolute differences (share of decided leads
@@ -30,6 +31,7 @@ sys.path.insert(0, ROOT)
 from ground_truth_report import load as gt_load, measure  # noqa: E402
 from emva.constants import TEST_FROM  # noqa: E402
 from emva.io import flag_bots_and_duplicates, load as emva_load  # noqa: E402
+from emva.labels import LEGACY  # noqa: E402
 from emva.pipeline import build, run  # noqa: E402
 
 PLANTED = ["band=11-50", "band=51-200", "band=201-1000", "band=1000+", "email=free", "text=specific", "text=vague",
@@ -43,7 +45,7 @@ PLANTED = ["band=11-50", "band=51-200", "band=201-1000", "band=1000+", "email=fr
 
 def run_baseline(data_dir: str) -> tuple[dict, pd.Series]:
     """Baseline pipeline (emva.pipeline.run) on ``data_dir``: summary metrics and learned log-odds weights."""
-    r = run(data_dir)
+    r = run(data_dir, labels=LEGACY)   # the frozen baseline labels; horizon is the default since Phase 1
     return r.summary.iloc[0].to_dict(), r.weights["log_odds"]
 
 
@@ -51,7 +53,7 @@ def cleaning_view(data_dir: str) -> dict:
     """Bot/duplicate shares and label counts as the baseline pipeline's cleaning step sees them."""
     L = emva_load(data_dir)
     F = flag_bots_and_duplicates(L)
-    B = build(L)
+    B = build(L, LEGACY)
     return {"rows": len(L), "bot_share": F.bot.mean(), "dup_share": (F.dup & ~F.bot).mean(), "kept": len(B),
             "labelled": int(B.y.notna().sum()), "label_pos_rate": B.y.mean(),
             "test_labelled": int((B.y.notna() & (B.created_at >= TEST_FROM)).sum())}
@@ -119,6 +121,15 @@ def seed_spread(ref_dir: str, seeds: list[int], n: int) -> str:
     return "\n".join(out) + "\n"
 
 
+def relabel(text: str, label: str) -> str:
+    """Rename the compared directory from "generated"/"gen" to ``label`` in the markdown headers."""
+    for a, b in [("generated", label), ("| gen share |", f"| {label} share |"), ("| gen win rate |", f"| {label} win rate |"),
+                 ("gen_share", f"{label}_share"), ("gen_win", f"{label}_win"), ("| gen mean |", f"| {label} mean |"),
+                 ("| gen sd |", f"| {label} sd |"), ('"gen"', f'"{label}"')]:
+        text = text.replace(a, b)
+    return text
+
+
 def main(argv: list[str] | None = None) -> None:
     """CLI entry point."""
     ap = argparse.ArgumentParser()
@@ -127,6 +138,7 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--md", default=None)
     ap.add_argument("--seeds", default="", help="comma-separated seeds for a seed-spread section, e.g. 1,2,3,4,5")
     ap.add_argument("--n", type=int, default=10000)
+    ap.add_argument("--gen-label", default="generated", help='name for --gen in the tables, e.g. "v2"')
     a = ap.parse_args(argv)
     ref, gen = measure(gt_load(a.ref)), measure(gt_load(a.gen))
     md = []
@@ -140,7 +152,7 @@ def main(argv: list[str] | None = None) -> None:
         for lvl, r in s.iterrows():
             md.append(f"| {lvl} | {fmt_pct(r.v1_share)} | {fmt_pct(r.gen_share)} | {r.d_share_pp:.1f} | "
                       f"{fmt_pct(r.v1_win)} | {fmt_pct(r.gen_win)} | {r.d_win_pp:.1f} |")
-            worst.append((k, lvl, r.d_share_pp, r.d_win_pp, ref["tables"][k].set_index("level").decided[lvl]))
+            worst.append((k, lvl, r.d_share_pp, r.d_win_pp, ref["tables"][k].set_index("level").decided.get(lvl, 0)))
         md.append("")
     W = pd.DataFrame(worst, columns=["table", "level", "d_share_pp", "d_win_pp", "v1_decided"])
     md.append("### Largest deviations\n")
@@ -192,6 +204,8 @@ def main(argv: list[str] | None = None) -> None:
     if a.seeds:
         md.append(seed_spread(a.ref, [int(x) for x in a.seeds.split(",")], a.n))
     text = "\n".join(md)
+    if a.gen_label != "generated":
+        text = relabel(text, a.gen_label)
     print(text)
     if a.md:
         with open(a.md, "w") as f:
