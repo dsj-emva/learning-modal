@@ -62,6 +62,18 @@ wins and this file is wrong: fix it in the same PR. State: `main` 92168cf, 2026-
     **458 leads, 80 won** on v1 (650 cleaned leads minus 141 ghosted and 51 stalled). Fixed to the default
     flags whatever the candidate uses (`emva.eval.report.FROZEN_HORIZON`). Horizon training: 4,049 rows,
     752 wins. On v2: 441 leads, 78 won.
+- **Rolling-origin headline** (Phase 4, ADR 0013, `emva/eval/rolling.py`): at split S (2026-02-01 to
+  2026-07-01, monthly) train on horizon-labelled leads created before S **and mature at S**
+  (`created_at + H <= S`), test on labelled leads created in [S, S + 1 month) and mature at AS_OF. A split
+  with fewer than 100 test leads or 10 of a class is *insufficient* (listed, not averaged). Headline = mean
+  per-split AUC over sufficient splits on data/v2, bootstrap CI from resampling each split independently.
+  Under H = 120 only 2026-02-01 to 2026-05-01 are sufficient.
+- **Oracle-feature ceiling** (Phase 4, `emva/eval/ceiling.py`): the formula model fitted on the
+  generator's own inputs (true size, email, text category, seniority, channel, company spend / CRM /
+  hiring, IP vs true country, session inputs at the planted cut points), without the noise term or the
+  reply time, on the pipeline's rows and splits. "formula + interactions" is the reachable ceiling.
+- **Planted context-only gap** (Phase 4): AUC of the oracle with the true `context_persona` minus the
+  oracle without it (v2): the most a perfect persona detector adds at the ceiling. Phase 6's target.
 - **Baseline**: the frozen `baseline/emva_score.py`, run fresh by the report. Never edited.
 - **Candidate**: the current `emva` pipeline with the options under test (default: horizon labels).
 - **Status quo**: the advertiser's existing rule-based value, reconstructed from `status_quo_rules.json`
@@ -116,6 +128,10 @@ Claims policy: nothing from v1 is quoted externally. Internally, always with the
 | Horizon candidate AUC, legacy test set (v1) | 0.812 [0.788, 0.836] | `reports/phase1.md` |
 | Regenerated v1, 8 seeds | AUC 0.805 ± 0.013 | `reports/phase5-1.md` |
 | Baseline AUC on v2, legacy test set | 0.789 [0.763, 0.815] | `reports/phase5.md` |
+| **Rolling-origin headline** (ADR 0013), v2, pipeline defaults | **0.765 [0.739, 0.790]**, 4 sufficient splits, range 0.743 to 0.776 (v1: 0.789 [0.765, 0.813]) | `reports/phase4.md` (ready for review) |
+| Oracle ceiling (formula + interactions), v2 | 0.825 [0.800, 0.846] on the legacy test set (pipeline 0.804); 0.777 rolling | `reports/phase4.md` |
+| Planted context-only gap (true persona), v2 | +0.006 [+0.001, +0.009] AUC on the legacy test set; +0.002 [−0.001, +0.004] rolling | `reports/phase4.md` |
+| Customer-sized holdout (400 of 2,000 leads) | 95% CI width about 0.11 (± 0.055) | `reports/phase4.md` |
 
 The mature test set spans 26 days, so its CI is about ±0.05, twice the legacy width; compare models on
 it with the paired bootstrap.
@@ -130,7 +146,7 @@ it with the paired bootstrap.
 | 2 features and leakage | merged (c1b465f) | `phase2-features` | `reports/phase2.md` |
 | 5.2-5.8 generator v2 | merged (01c56f4) | `phase5-generator-v2` | `reports/phase5.md` |
 | 3 value layer and platform contract | pending (needs 2) | | |
-| 4 evaluation hardening | pending (needs 2) | | |
+| 4 evaluation hardening | ready for review | `phase4-eval-hardening` | `reports/phase4.md` |
 | 6 context agent v2 | pending (needs 2 and 5) | | |
 | 7 production readiness document | pending (needs all) | | |
 
