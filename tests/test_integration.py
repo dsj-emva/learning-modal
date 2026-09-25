@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 
 from emva.constants import TEST_FROM
-from emva.eval.metrics import top_share
+from emva.eval.metrics import tie_averaged_top_share
 from emva.eval.regression import EXPECTED_SUMMARY, FROZEN_WEIGHTS, read_weights, weights_mismatches
 from emva.eval.status_quo import load_rules, status_quo_value
 from emva.io import load
@@ -33,8 +33,11 @@ def test_status_quo_on_frozen_test_set(v1_result, data_v1):
     y = X.y[te]
     revenue = pd.Series(np.where(y == 1, X.deal_value[te].fillna(0), 0), index=y.index)
     assert round(roc_auc_score(y, sq), 3) == 0.639
-    assert round(top_share(y, sq.values), 3) == 0.392
-    assert round(top_share(revenue, sq.values), 3) == 0.454
+    # The status quo has 203 test leads tied at the top-20% cut, so the unstable-sort figure the
+    # report shows (0.392 wins) depends on numpy's CPU-specific sort kernels. Assert the
+    # tie-averaged value instead: it is the expectation over all tie orders, so it is portable.
+    assert round(tie_averaged_top_share(y, sq.values), 3) == 0.397
+    assert round(tie_averaged_top_share(revenue, sq.values), 3) == 0.454
 
 
 def test_context_mode_matches_baseline_script(tmp_path, data_v1):
@@ -70,5 +73,9 @@ def test_test_set_is_frozen_definition(v1_result):
 def test_report_builds_with_status_quo_targets(data_v1):
     from emva.eval.report import build_report
     text = build_report(data_v1, n_resamples=20)
-    assert "| status quo | 0.639 [" in text and "| 0.392 | 0.454 | 0.454 |" in text
+    # Only sort-independent numbers here: the table's status-quo top-20% cells use the unstable
+    # sort (ties at the cut), so check the tie-averaged footnote values instead.
+    assert "| status quo | 0.639 [" in text
+    assert "ranking wins; the table uses numpy's default argsort (as the baseline does), tie-averaged value is 0.397" in text
+    assert "ranking revenue by p×value; the table uses numpy's default argsort (as the baseline does), tie-averaged value is 0.454" in text
     assert "| baseline | 0.814 [" in text and "| candidate | 0.814 [" in text
