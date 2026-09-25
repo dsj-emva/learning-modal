@@ -1,7 +1,9 @@
 """End-to-end pipeline: load -> clean -> label -> features -> design -> fit -> value -> summary.
 
-``run`` reproduces ``baseline/emva_score.py::main`` step for step (Phase 0: no behaviour
-change); ``emva/__main__.py`` does the printing and file writing.
+With ``LabelConfig(mode="legacy")`` ``run`` reproduces ``baseline/emva_score.py::main`` step
+for step, byte for byte. The default (``horizon``, plan 1.2 to 1.5) trains and evaluates on
+the fixed-horizon label over mature leads only. ``emva/__main__.py`` does the printing and
+file writing.
 """
 from __future__ import annotations
 
@@ -17,21 +19,24 @@ from emva.design import design
 from emva.eval.metrics import summary
 from emva.features import add_features
 from emva.io import clean, load
-from emva.labels import label, split_masks
+from emva.labels import HORIZON, LabelConfig, assign_labels, eligible_rows, split_masks
 from emva.model import fit_lr, predict, scorecard
 from emva.value import deal_value_design, expected_value, fit_deal_value, predict_deal_value, realised_revenue
 
-# Columns written to scores.csv, in this order, when present.
+# Columns written to scores.csv, in this order, when present (legacy mode: exactly the baseline's).
 SCORE_COLUMNS: tuple[str, ...] = ("p_formula", "deal_value_hat", "value_formula", "p_combined", "value_combined", "y")
+# Appended in horizon mode (plan 1.1, 1.2): the raw outcome, where the label came from, and when it matured.
+HORIZON_SCORE_COLUMNS: tuple[str, ...] = ("won_within_h", "label_source", "matured_at")
 
 
 @dataclass
 class PipelineResult:
     """Everything ``run`` produces.
 
-    ``X`` holds one row per cleaned lead with features, ``y`` and all score columns;
+    ``X`` holds one row per cleaned lead with features, label columns and all score columns;
     ``train``/``test`` are boolean masks over ``X``; ``summary`` is the printed metrics table;
-    ``messages`` are the context-mode lines printed before it.
+    ``messages`` are the context-mode lines printed before it; ``labels`` is the label
+    definition used.
     """
 
     X: pd.DataFrame
@@ -40,29 +45,33 @@ class PipelineResult:
     design: pd.DataFrame
     weights: pd.DataFrame
     summary: pd.DataFrame
+    labels: LabelConfig
     messages: list[str] = field(default_factory=list)
 
     def scores(self) -> pd.DataFrame:
-        """The scores.csv frame (indexed by ``lead_id``)."""
-        return self.X[[c for c in SCORE_COLUMNS if c in self.X]]
+        """The scores.csv frame (indexed by ``lead_id``); horizon mode adds ``HORIZON_SCORE_COLUMNS``."""
+        cols = SCORE_COLUMNS + (HORIZON_SCORE_COLUMNS if self.labels.mode == "horizon" else ())
+        return self.X[[c for c in cols if c in self.X]]
 
 
-def build(L: pd.DataFrame) -> pd.DataFrame:
-    """Clean, label and featurise loaded leads (``baseline/emva_score.py::build``)."""
+def build(L: pd.DataFrame, labels: LabelConfig = HORIZON) -> pd.DataFrame:
+    """Clean, label and featurise loaded leads (``baseline/emva_score.py::build`` in legacy mode)."""
     X = clean(L)
-    X["y"] = label(X)
+    assign_labels(X, labels)
     return add_features(X)
 
 
 def run(data: str | Path, margin: float = 1.0, context: str | Path | None = None,
-        test_from: str = TEST_FROM) -> PipelineResult:
+        test_from: str = TEST_FROM, labels: LabelConfig = HORIZON) -> PipelineResult:
     """Train the formula and deal-value models on ``data`` and score every cleaned lead.
 
-    With ``context`` (an agent output CSV), also fit formula-only, context-only and
-    formula+context models on the rows that have a context score and summarise all three.
+    ``labels`` picks the label definition; in horizon mode only mature leads enter the
+    train and test sets. With ``context`` (an agent output CSV), also fit formula-only,
+    context-only and formula+context models on the rows that have a context score and
+    summarise all three.
     """
-    X = build(load(data))
-    tr, te = split_masks(X, test_from)
+    X = build(load(data), labels)
+    tr, te = split_masks(X, test_from, eligible_rows(X, labels))
     D = design(X)
     lr = fit_lr(D, X.y, tr)
     X["p_formula"] = predict(lr, D)
@@ -99,7 +108,7 @@ def run(data: str | Path, margin: float = 1.0, context: str | Path | None = None
         X["value_combined"] = expected_value(X.p_combined, X.deal_value_hat, margin)
 
     return PipelineResult(X=X, train=tr, test=te, design=D, weights=weights,
-                          summary=pd.DataFrame(rows), messages=messages)
+                          summary=pd.DataFrame(rows), labels=labels, messages=messages)
 
 
 def write_outputs(result: PipelineResult, out: str | Path) -> None:
@@ -108,4 +117,4 @@ def write_outputs(result: PipelineResult, out: str | Path) -> None:
     result.scores().to_csv(f"{out}/scores.csv")
 
 
-__all__ = ["PipelineResult", "SCORE_COLUMNS", "build", "run", "write_outputs"]
+__all__ = ["HORIZON_SCORE_COLUMNS", "PipelineResult", "SCORE_COLUMNS", "build", "run", "write_outputs"]

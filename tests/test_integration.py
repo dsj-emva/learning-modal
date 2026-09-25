@@ -1,4 +1,4 @@
-"""The emva/ pipeline on data/v1 must equal the frozen baseline (Phase 0: no behaviour change)."""
+"""The emva/ pipeline on data/v1: legacy labels must equal the frozen baseline; horizon labels are the new default."""
 import filecmp
 import subprocess
 import sys
@@ -12,6 +12,7 @@ from emva.eval.metrics import tie_averaged_top_share
 from emva.eval.regression import EXPECTED_SUMMARY, FROZEN_WEIGHTS, read_weights, weights_mismatches
 from emva.eval.status_quo import load_rules, status_quo_value
 from emva.io import load
+from emva.labels import LEGACY
 from emva.pipeline import run, write_outputs
 from sklearn.metrics import roc_auc_score
 
@@ -49,7 +50,7 @@ def test_context_mode_matches_baseline_script(tmp_path, data_v1):
     b_out.mkdir(), e_out.mkdir()
     proc = subprocess.run([sys.executable, "emva_score.py", "--data", str(data_v1), "--out", str(b_out),
                            "--context", str(ctx)], cwd=REPO / "baseline", capture_output=True, text=True, check=True)
-    result = run(data_v1, context=ctx)
+    result = run(data_v1, context=ctx, labels=LEGACY)
     write_outputs(result, e_out)
     printed = "\n".join(result.messages + [result.summary.to_string(index=False)]) + "\n"
     assert printed == proc.stdout
@@ -57,12 +58,43 @@ def test_context_mode_matches_baseline_script(tmp_path, data_v1):
     assert filecmp.cmp(b_out / "weights.csv", e_out / "weights.csv", shallow=False)
 
 
-@pytest.mark.parametrize("module", ["emva"])
-def test_cli_entry_point_runs(tmp_path, module, data_v1):
-    proc = subprocess.run([sys.executable, "-m", module, "--data", str(data_v1), "--out", str(tmp_path)],
-                          cwd=REPO, capture_output=True, text=True, check=True)
+def test_cli_legacy_mode_reproduces_baseline_byte_for_byte(tmp_path, data_v1):
+    b_out, e_out = tmp_path / "b", tmp_path / "e"
+    b_out.mkdir(), e_out.mkdir()
+    base = subprocess.run([sys.executable, "emva_score.py", "--data", str(data_v1), "--out", str(b_out)],
+                          cwd=REPO / "baseline", capture_output=True, text=True, check=True)
+    proc = subprocess.run([sys.executable, "-m", "emva", "--data", str(data_v1), "--out", str(e_out),
+                           "--label-mode", "legacy"], cwd=REPO, capture_output=True, text=True, check=True)
+    assert proc.stdout == base.stdout
     assert "formula 0.814 0.1006       0.571          0.795" in proc.stdout
-    assert (tmp_path / "weights.csv").exists() and (tmp_path / "scores.csv").exists()
+    for name in ("scores.csv", "weights.csv"):
+        assert filecmp.cmp(b_out / name, e_out / name, shallow=False), name
+
+
+def test_cli_default_is_horizon_and_writes_label_columns(tmp_path, data_v1):
+    subprocess.run([sys.executable, "-m", "emva", "--data", str(data_v1), "--out", str(tmp_path)],
+                   cwd=REPO, capture_output=True, text=True, check=True)
+    scores = pd.read_csv(tmp_path / "scores.csv", index_col="lead_id")
+    assert list(scores.columns[-4:]) == ["y", "won_within_h", "label_source", "matured_at"]
+    assert set(scores.label_source) == {"won", "crm_lost", "stalled", "ghosted", "open"}
+    assert (tmp_path / "weights.csv").exists()
+
+
+@pytest.mark.parametrize("flags", [["--label-mode", "legacy", "--include-ghosted"],
+                                   ["--label-mode", "legacy", "--stalled-as-lost"],
+                                   ["--label-mode", "legacy", "--horizon-days", "90"],
+                                   ["--horizon-days", "0"]])
+def test_cli_rejects_horizon_options_without_horizon_mode(tmp_path, data_v1, flags):
+    proc = subprocess.run([sys.executable, "-m", "emva", "--data", str(data_v1), "--out", str(tmp_path), *flags],
+                          cwd=REPO, capture_output=True, text=True)
+    assert proc.returncode == 2 and "error:" in proc.stderr
+
+
+def test_make_baseline_passes():
+    proc = subprocess.run(["make", "baseline"], cwd=REPO, capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "PASS: baseline and emva/" in proc.stdout
+    assert "emva scores.csv vs baseline run: byte-identical" in proc.stdout
 
 
 def test_test_set_is_frozen_definition(v1_result):

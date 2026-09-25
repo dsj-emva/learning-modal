@@ -39,6 +39,7 @@ from emva.eval.metrics import (
 )
 from emva.eval.status_quo import load_rules, status_quo_value
 from emva.io import load
+from emva.labels import LEGACY
 from emva.pipeline import run
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -87,7 +88,7 @@ def build_report(data: str | Path, n_resamples: int = N_RESAMPLES, seed: int = S
     L = load(data)
     with tempfile.TemporaryDirectory() as tmp:
         base, base_stdout = run_baseline(data, tmp)
-    cand = run(data).X
+    cand = run(data, labels=LEGACY).X
 
     test_ids = base.index[base.y.notna() & (L.created_at.reindex(base.index) >= TEST_FROM)]
     missing = test_ids.difference(cand.index[cand.p_formula.notna()])

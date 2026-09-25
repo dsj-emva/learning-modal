@@ -15,12 +15,13 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
 from emva.eval.report import build_report  # noqa: E402 (needs the repo on sys.path)
+from emva.labels import LEGACY  # noqa: E402
 from emva.pipeline import run, write_outputs  # noqa: E402
 
 
 def baseline(data: Path, out: Path) -> None:
     """The ``emva`` pipeline with default settings (equal to the frozen baseline in Phase 0)."""
-    result = run(data)
+    result = run(data, labels=LEGACY)
     print(result.summary.to_string(index=False))
     write_outputs(result, out)
 
