@@ -277,3 +277,11 @@ def test_submit_time_fields(trained):
     assert spec["form_variant"].allowed == V2_LEVELS["form_variant"]
     assert set(spec["utm_source"].allowed) == {s for sources in CHANNEL_SOURCES.values() for s in sources}
     assert spec["viewed_pricing"].dtype == "bool" and spec["time_on_page_s"].dtype == "float"
+
+
+@pytest.mark.parametrize("value,blank", [(None, True), (float("nan"), True), (np.float64("nan"), True),
+                                         (pd.NA, True), (pd.NaT, True), ("", True), (" ", False), ("x", False),
+                                         (0, False), (0.0, False), (False, False), (np.int64(3), False)])
+def test_is_blank(value: object, blank: bool) -> None:
+    from emva.scoring import is_blank
+    assert is_blank(value) is blank

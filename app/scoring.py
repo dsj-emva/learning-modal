@@ -11,13 +11,12 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 from app.results import feature_label
 from emva.features import SESSION_INPUTS
 from emva.persist import ModelBundle
-from emva.scoring import FieldSpec, lead_from_form, points_breakdown, score_leads, submit_time_fields
+from emva.scoring import FieldSpec, is_blank, lead_from_form, points_breakdown, score_leads, submit_time_fields
 
 # Sections of the form, in display order: title -> field names.
 SECTIONS: dict[str, tuple[str, ...]] = {
@@ -71,7 +70,7 @@ def values_from_lead(row: pd.Series) -> dict[str, object]:
     out: dict[str, object] = {}
     for f in submit_time_fields():
         v = answers.get(f.name) if f.source == "answers" else row.get(f.name)
-        if v is None or (isinstance(v, float) and np.isnan(v)) or v is pd.NA:
+        if is_blank(v):
             out[f.name] = None
         elif f.dtype == "bool":
             out[f.name] = bool(v)
@@ -127,7 +126,7 @@ def clean_values(values: dict[str, object]) -> dict[str, object]:
             v = v.strip()
         if specs[k].dtype == "int" and isinstance(v, float) and v.is_integer():
             v = int(v)
-        if specs[k].dtype in ("int", "float") and v == "":
+        if specs[k].dtype in ("int", "float") and is_blank(v):
             v = None
         out[k] = v
     return out
@@ -135,8 +134,7 @@ def clean_values(values: dict[str, object]) -> dict[str, object]:
 
 def blank_session_fields(values: dict[str, object]) -> list[str]:
     """Session fields left blank (each one makes the model treat the whole session as missing)."""
-    return [k for k in sorted(SESSION_FIELDS) if values.get(k) in (None, "") or
-            (isinstance(values.get(k), float) and np.isnan(values[k]))]
+    return [k for k in sorted(SESSION_FIELDS) if is_blank(values.get(k))]
 
 
 @dataclass(frozen=True)

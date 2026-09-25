@@ -99,6 +99,19 @@ _COLUMNS: dict[str, tuple[str, tuple[str, ...] | None, str]] = {
 }
 
 
+def is_blank(value: object) -> bool:
+    """True for a missing form value: None, NaN (float or numpy), ``pd.NA``, ``NaT`` or the empty string.
+
+    The one blank test shared by ``lead_from_form`` and the app (pandas 3 gives None, NaN or ``pd.NA`` for a missing
+    cell depending on the column dtype). Whitespace-only strings are not blank.
+    """
+    if value is None or value is pd.NA or value is pd.NaT:
+        return True
+    if isinstance(value, str):
+        return value == ""
+    return isinstance(value, numbers.Real) and not isinstance(value, (bool, np.bool_)) and bool(np.isnan(value))
+
+
 def submit_time_fields() -> list[FieldSpec]:
     """The fields the app must collect to score a lead: every input the scoring path reads, columns first.
 
@@ -136,8 +149,8 @@ def lead_from_form(fields: dict[str, object]) -> pd.DataFrame:
     if unknown:
         raise ValueError(f"unknown form field(s) {unknown}; valid fields: {list(spec)}")
     # a blank column reads as NaN from historical_leads.csv; a blank answer stays "" in the JSON, as forms send it
-    given = {k: v for k, v in fields.items() if not (v is None or (isinstance(v, float) and np.isnan(v))
-                                                     or (v == "" and spec[k].source == "column"))}
+    given = {k: v for k, v in fields.items()
+             if not is_blank(v) or (v == "" and spec[k].source == "answers")}
     for name, f in spec.items():
         if f.required and not (isinstance(given.get(name), str) and given[name].strip()):
             raise ValueError(f"form field {name!r} is required")
@@ -263,5 +276,5 @@ def points_breakdown(bundle: ModelBundle, leads: pd.DataFrame, data: str | Path)
                                                 "points"]]
 
 
-__all__ = ["FieldSpec", "UnknownLevelError", "check_levels", "lead_from_form", "points_breakdown", "prepare",
+__all__ = ["FieldSpec", "UnknownLevelError", "check_levels", "is_blank", "lead_from_form", "points_breakdown", "prepare",
            "score_leads", "submit_time_fields"]

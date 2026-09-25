@@ -9,7 +9,7 @@ from app import charts, scoring, storage, ui
 from app import components as C
 from app.scoring import FormField
 from emva.persist import BUNDLE_FILE
-from emva.scoring import UnknownLevelError
+from emva.scoring import UnknownLevelError, is_blank
 
 LONG_TEXT = {"what_to_solve", "user_agent", "landing_url"}
 
@@ -26,7 +26,7 @@ def _widget(f: FormField, default: object, key: str) -> object:
         return st.toggle(label, value=bool(default), key=key, help=f.spec.description)
     if f.spec.dtype in ("int", "float"):
         is_int = f.spec.dtype == "int"
-        value = None if default in (None, "") else (int(default) if is_int else float(default))
+        value = None if is_blank(default) else (int(default) if is_int else float(default))
         return st.number_input(label, value=value, min_value=0 if is_int else 0.0, step=1 if is_int else 1.0,
                                format="%d" if is_int else "%.0f", key=key, help=f.spec.description,
                                placeholder="blank")

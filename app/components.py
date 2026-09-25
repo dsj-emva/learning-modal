@@ -9,6 +9,7 @@ import math
 import html
 
 from app.validation import Issue
+from emva.scoring import is_blank
 
 # Keel glyph: a keel line under a hull, drawn in white on the accent square.
 _GLYPH = ('<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">'
@@ -21,29 +22,24 @@ def esc(value: object) -> str:
     return "" if value is None else html.escape(str(value), quote=True)
 
 
-def _is_missing(x: float | None) -> bool:
-    """True for None or NaN."""
-    return x is None or (isinstance(x, float) and math.isnan(x))
-
-
 def gbp(x: float | None, dp: int = 0) -> str:
     """``£12,345`` (``–`` when missing)."""
-    return "–" if _is_missing(x) else f"£{x:,.{dp}f}"
+    return "–" if is_blank(x) else f"£{x:,.{dp}f}"
 
 
 def pct(x: float | None, dp: int = 1) -> str:
     """``23.4%`` from a share 0-1 (``–`` when missing)."""
-    return "–" if _is_missing(x) else f"{x * 100:.{dp}f}%"
+    return "–" if is_blank(x) else f"{x * 100:.{dp}f}%"
 
 
 def num(x: float | None, dp: int = 3) -> str:
     """Fixed decimals (``–`` when missing)."""
-    return "–" if _is_missing(x) else f"{x:.{dp}f}"
+    return "–" if is_blank(x) else f"{x:.{dp}f}"
 
 
 def points(x: float | None) -> str:
     """Signed integer points, e.g. ``+12`` / ``−7`` (true minus sign)."""
-    if _is_missing(x):
+    if is_blank(x):
         return "–"
     v = int(round(x))
     return f"+{v}" if v > 0 else (f"−{abs(v)}" if v < 0 else "0")
@@ -72,7 +68,7 @@ def section(title: str, text: str = "", step: str | None = None) -> str:
 def delta(value: float | None, fmt: str = "pts", good_when: str = "up") -> str:
     """A delta chip: ``value`` formatted as percentage points (``pts``), ``auc`` (3 dp) or ``x`` (multiplier);
     teal when it moves in the ``good_when`` direction, warm red otherwise."""
-    if _is_missing(value):
+    if is_blank(value):
         return ""
     text = {"pts": f"{value * 100:+.1f} pts", "auc": f"{value:+.3f}", "x": f"{value:.1f}×"}[fmt]
     text = text.replace("-", "−")
@@ -171,9 +167,9 @@ def result_card(p: float, base_rate: float, deal_value: float, value_at_submit: 
     """The scored-lead card: P(close) large with the base rate for context, expected deal value, the value sent at
     submit (or p × value for legacy-label runs) with how it is derived, and bot/duplicate flags."""
     ratio = p / base_rate if base_rate > 0 else math.nan
-    rel = "" if _is_missing(ratio) else f" · {ratio:.1f}× the average lead"
-    submit_label = "Value sent at submit" if not _is_missing(value_at_submit) else "p × deal value"
-    submit_value = value_at_submit if not _is_missing(value_at_submit) else value_formula
+    rel = "" if is_blank(ratio) else f" · {ratio:.1f}× the average lead"
+    submit_label = "Value sent at submit" if not is_blank(value_at_submit) else "p × deal value"
+    submit_value = value_at_submit if not is_blank(value_at_submit) else value_formula
     return (
         '<div class="k-result"><div class="eyebrow">Chance this lead closes</div>'
         f'<div class="big">{esc(pct(p))}</div>'
