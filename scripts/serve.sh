@@ -10,6 +10,7 @@ set -- python -m streamlit run app/main.py --server.port "$PORT" --server.addres
 mkdir -p "$DATA_DIR"
 if [ "$(id -u)" = "0" ]; then
     chown -R 1000:1000 "$DATA_DIR"
+    echo "serve.sh: started as root; chowned DATA_DIR=$DATA_DIR to 1000:1000, dropping to uid 1000"
     exec setpriv --reuid=1000 --regid=1000 --init-groups env HOME=/home/app "$@"
 fi
 if [ ! -w "$DATA_DIR" ]; then
@@ -17,4 +18,5 @@ if [ ! -w "$DATA_DIR" ]; then
     echo "On Railway the volume is root-owned: set RAILWAY_RUN_UID=0 (this script then drops to uid 1000)." >&2
     exit 1
 fi
+echo "serve.sh: running as uid $(id -u); DATA_DIR=$DATA_DIR is writable"
 exec "$@"
