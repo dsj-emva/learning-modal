@@ -131,6 +131,7 @@ emva/constants.py    every constant (AS_OF, TEST_FROM, HORIZON_DAYS, CATS refere
 emva/io.py           load CSVs, normalise CRM stages, join enrichment, won_at/first_contact_at; bot + duplicate cleaning
 emva/labels.py       LabelMode/LabelConfig, legacy label, label_source, won_within_h, horizon_label, maturity, split
 emva/features.py     FeatureSet; legacy and v2 bucketed features (indicators, name enrichment, boilerplate text)
+emva/feature_spec.py FeatureSpec per feature set (levels, featuriser, design, fixed residual sd), like LabelConfig
 emva/boilerplate.py  boilerplate snippets + token-set Jaccard detector (v2 text=copy_paste)
 emva/design.py       legacy data-driven dummies; v2 fixed_design from V2_LEVELS (unknown level raises)
 emva/model.py        L2 logistic regression, predict, scorecard (weights.csv)

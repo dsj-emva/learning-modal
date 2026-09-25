@@ -16,9 +16,9 @@ flowchart TD
     LOAD["io.load<br/>normalise CRM stages (STAGE), final_stage, last_change,<br/>deal_value, won_at, first_contact_at,<br/>a_&lt;answer&gt; columns, co_&lt;enrichment&gt; join by domain"] --> CLEAN
     CLEAN["io.clean = flag_bots_and_duplicates + drop<br/>bot: headless UA or time_on_page_s &lt; 15<br/>dup: not the first submission per normalised email"] --> LABELS
     LABELS["labels.assign_labels(LabelConfig)<br/>legacy: y = label()<br/>horizon: label_source, matured_at, won_within_h, y = horizon_label()"] --> FEAT
-    FEAT["features.featurise (legacy add_features / v2 add_features_v2)<br/>channel, band, email, text, seniority, spend, crm, hiring,<br/>behaviour buckets, search_term, ip, c_budget/c_timeline ..."] --> SPLIT
+    FEAT["FeatureSpec.featurise (legacy add_features / v2 add_features_v2)<br/>channel, band, email, text, seniority, spend, crm, hiring,<br/>behaviour buckets, search_term, ip, c_budget/c_timeline ..."] --> SPLIT
     SPLIT["labels.split_masks(test_from, LabelConfig.eligible)<br/>train: created &lt; 2026-05-01, test: on or after<br/>horizon: mature rows only"] --> DESIGN
-    DESIGN["design.feature_design<br/>legacy: one-hot per CATS feature (data-driven)<br/>v2: fixed_design over V2_LEVELS (39 columns)"] --> FIT
+    DESIGN["FeatureSpec.design<br/>legacy: one-hot per CATS feature (data-driven)<br/>v2: fixed_design over V2_LEVELS (39 columns)"] --> FIT
     FIT["model.fit_lr (L2 LR, C=0.5) -> model.predict -> p_formula<br/>model.scorecard -> weights.csv"] --> VALUE
     VALUE["value: deal_value_design -> fit_deal_value (ridge on log value, train wins)<br/>predict_deal_value -> deal_value_hat<br/>expected_value = p × deal_value_hat × margin"] --> OUT
     CTX["context agent CSV (optional --context)<br/>context.features.context_logit"] -.-> FIT
@@ -32,8 +32,9 @@ flowchart TD
 | clean | `emva/io.py::clean` | Bots and duplicates are dropped before labelling; 9,311 of 10,000 v1 leads remain |
 | labels | `emva/labels.py` | Two definitions side by side; see section 2 |
 | features | `emva/features.py` | `FeatureSet` switch (section 2). Legacy `add_features`: `text_cat` (regex + three copy-paste prefixes + `VAGUE` list), `seniority` (title regex), `channel` (UTM rules). v2 `add_features_v2`: `session_absent` / `session_missing`, `enrichment_missing`, `text_cat_v2`; `V2_DROPPED` (plan 2.6) |
+| feature spec | `emva/feature_spec.py` | `FeatureSpec` (reference levels, featuriser, design function, fixed residual sd or None) per `FeatureSet`, like `LabelConfig`; `feature_spec(fs)` is the only place that switches on the feature set |
 | boilerplate | `emva/boilerplate.py` | v2 copy-paste detector: 16 snippets, token-set Jaccard, `BOILERPLATE_SIMILARITY_THRESHOLD` 0.6 (plan 2.5; low recall on paraphrased v2 text, ADR 0011) |
-| design | `emva/design.py` | Legacy `design()`: levels absent from the data make no column; a missing reference level is silently kept (baseline behaviour). v2 `fixed_design()`: exactly the columns declared in `constants.V2_LEVELS` (39), absent level = zero column, undeclared value raises (ADR 0009). `feature_design()` picks by feature set |
+| design | `emva/design.py` | Legacy `design()`: levels absent from the data make no column; a missing reference level is silently kept (baseline behaviour). v2 `fixed_design()`: exactly the columns declared in `constants.V2_LEVELS` (39), absent level = zero column, undeclared value raises (ADR 0009). `FeatureSpec.design` picks by feature set |
 | fit | `emva/model.py` | `make_lr` is the unfitted estimator, reused by the coefficient bootstrap |
 | value | `emva/value.py` | `DealValueModel`: ridge on log value; lognormal correction exp(sd²/2) with sd estimated from training residuals (plan 2.4), or the baseline's fixed sd (`eval.regression.BASELINE_DEAL_LOG_RESIDUAL_SD`) for `--feature-set legacy`. `deal_value_design` is still data-driven. Capping/compression and `value_at_submit`/`value_at_close` are Phase 3 |
 | orchestration | `emva/pipeline.py` | `PipelineResult` (X, masks, design, weights, summary, labels, messages); `scores()` adds horizon label columns only in horizon mode (ADR 0007) |
