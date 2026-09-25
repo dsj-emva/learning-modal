@@ -8,6 +8,10 @@
 - ``evaluate_judgments``: formula vs formula+context on the same rows, paired bootstrap, per-judgment
   weights with bootstrap CIs, persona confusion against ``context_persona``, correlation of each context
   feature with the formula score, and boilerplate recall against the generator's ``copy_paste`` flag (R6).
+- **Acceptance (R12, ADR 0016)**: ``coefficient_criterion``. The pooled persona feature's weight
+  (``ctx_persona_group=non_buyer`` in formula + ``ctx_persona_group``) must have a 95% CI excluding zero
+  and a point estimate inside the oracle weight's CI on the same rows. The AUC gap is reported but is
+  recorded as unmeasurable at the planted effect size.
 
 **Protocol.** Both models are always fit on identical rows. On a sample (1,000 leads) the comparison
 is cross-fitted: ``N_FOLDS`` stratified folds (seed ``SEED``), every model gets the same folds, AUCs are
@@ -34,7 +38,8 @@ import pandas as pd
 from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import StratifiedKFold
 
-from emva.context.features import CONTEXT_COLUMNS, context_design
+from emva.context.contract import JUDGMENTS
+from emva.context.features import CONTEXT_COLUMNS, PERSONA_ACCEPTANCE_COLUMN, PREFIX, context_design
 from emva.eval.bootstrap import (
     CI_LEVEL,
     N_RESAMPLES,
@@ -46,6 +51,7 @@ from emva.eval.bootstrap import (
     coef_bootstrap,
     paired_auc,
 )
+from emva.design import fixed_columns, fixed_design
 from emva.feature_spec import feature_spec
 from emva.features import FeatureSet
 from emva.io import load
@@ -59,7 +65,10 @@ N_NOISE_DRAWS: int = 20
 N_FOLDS: int = 5
 SAMPLE_SIZE: int = 1000
 SAMPLE_PERSONA: int = 300               # >= 150 required by the plan; ~75 per planted persona
-NON_BUYER_PERSONAS: tuple[str, ...] = ("vendor", "student", "job_seeker", "competitor", "nonprofit", "agency_pitching")
+# Secondary, underpowered (R13): the contract judgments without pooling, persona at its eight levels.
+FINE_CATS: dict[str, str] = {"ctx_is_real_business": "yes", "ctx_persona": "buyer", "ctx_problem_specificity": "specific",
+                             "ctx_urgency": "none", "ctx_brief_fit": "partial"}
+FINE_LEVELS: dict[str, tuple[str, ...]] = {PREFIX + k: v for k, v in JUDGMENTS.items()}
 
 
 @dataclass(frozen=True)
@@ -174,6 +183,19 @@ def true_probability_gap(y: np.ndarray, p_true: np.ndarray, persona: np.ndarray,
     return {"auc_true": with_p, "auc_true_without_persona": without, "true_gap": with_p - without}
 
 
+def coefficient_criterion(weight: BootstrapCI, oracle: BootstrapCI) -> bool:
+    """R12 (ADR 0016): ``weight``'s CI excludes zero and its point estimate lies inside ``oracle``'s CI."""
+    return (weight.lo > 0 or weight.hi < 0) and oracle.lo <= weight.point <= oracle.hi
+
+
+def _weights_table(columns: Sequence[str], M: np.ndarray, cis: Sequence[BootstrapCI]) -> pd.DataFrame:
+    """Rows ``feature, n, weight, lo, hi, significant`` for design columns ``M`` and their CIs."""
+    t = pd.DataFrame({"feature": list(columns), "n": M.sum(axis=0).astype(int), "weight": [c.point for c in cis],
+                      "lo": [c.lo for c in cis], "hi": [c.hi for c in cis]})
+    t["significant"] = (t.lo > 0) | (t.hi < 0)
+    return t
+
+
 @dataclass
 class JudgmentEval:
     """Results of ``evaluate_judgments`` (all on the ok-status sample rows)."""
@@ -184,18 +206,20 @@ class JudgmentEval:
     status_counts: dict[str, int]
     ctx_vs_formula: PairedComparison
     oracle_vs_formula: PairedComparison
+    persona_vs_formula: PairedComparison
     recovered: BootstrapCI
     weights: pd.DataFrame
     oracle_weight: BootstrapCI
+    persona_weight: BootstrapCI
+    persona_weight_combined: BootstrapCI
+    r12_pass: bool
+    fine_weights: pd.DataFrame
     confusion: pd.DataFrame
     correlations: pd.DataFrame
     context_score_corr: float
     boilerplate: pd.DataFrame
     time_split: pd.DataFrame
     time_split_rows: int
-    pooled_vs_formula: PairedComparison
-    pooled_weight: BootstrapCI
-    pooled_n: int
 
 
 def _recall_precision(truth: pd.Series, flag: pd.Series) -> dict[str, float]:
@@ -226,16 +250,23 @@ def evaluate_judgments(ed: EvalData, judgments_path: str | Path, data: str | Pat
         return make_lr().fit(M, t).coef_[0]
 
     ci = coef_bootstrap(np.column_stack([D, C]), y, lr_coef, n_resamples=n_resamples, seed=seed)[D.shape[1]:]
-    weights = pd.DataFrame({"feature": CONTEXT_COLUMNS, "n": C.sum(axis=0).astype(int),
-                            "weight": [c.point for c in ci], "lo": [c.lo for c in ci], "hi": [c.hi for c in ci]})
-    weights["significant"] = (weights.lo > 0) | (weights.hi < 0)
+    weights = _weights_table(CONTEXT_COLUMNS, C, ci)
     oracle_ci = coef_bootstrap(np.column_stack([D, oracle / PERSONA_EFFECT]), y, lr_coef,
                                n_resamples=n_resamples, seed=seed)[-1]
-    # exploratory, chosen after seeing the per-level CIs (not the acceptance test): one pooled indicator
-    judged = J.set_index("lead_id").persona.reindex(idx)
-    pooled = judged.isin(NON_BUYER_PERSONAS).to_numpy(dtype=float)
-    p_nb = crossfit(np.column_stack([D, pooled]), y, splits)
-    pooled_ci = coef_bootstrap(np.column_stack([D, pooled]), y, lr_coef, n_resamples=n_resamples, seed=seed)[-1]
+
+    # R12 acceptance: the pooled persona feature alone (its two non-reference columns) next to the formula
+    pg_cols = [c for c in CONTEXT_COLUMNS if c.startswith("ctx_persona_group=")]
+    P = C_all.loc[idx, pg_cols].to_numpy()
+    p_pg = crossfit(np.column_stack([D, P]), y, splits)
+    pg_ci = coef_bootstrap(np.column_stack([D, P]), y, lr_coef, n_resamples=n_resamples, seed=seed)[D.shape[1]:]
+    persona_ci = pg_ci[pg_cols.index(PERSONA_ACCEPTANCE_COLUMN)]
+
+    # secondary (underpowered): the unpooled judgments, persona at its eight contract levels
+    ok = J[J.status == "ok"].set_index("lead_id")
+    F = pd.DataFrame({PREFIX + k: ok[k] for k in JUDGMENTS}, index=ok.index).reindex(idx)
+    Cf = fixed_design(F, FINE_CATS, FINE_LEVELS).to_numpy()
+    fine_ci = coef_bootstrap(np.column_stack([D, Cf]), y, lr_coef, n_resamples=n_resamples, seed=seed)[D.shape[1]:]
+    fine = _weights_table(fixed_columns(FINE_CATS, FINE_LEVELS), Cf, fine_ci)
 
     # correlation with the formula score: the formula fit on every pre-2026-05-01 labelled lead
     formula = make_lr().fit(ed.D[ed.train], ed.X.y[ed.train])
@@ -246,7 +277,6 @@ def evaluate_judgments(ed: EvalData, judgments_path: str | Path, data: str | Pat
     w_full = make_lr().fit(np.column_stack([D, C]), y).coef_[0][D.shape[1]:]
     ctx_score_r = float(np.corrcoef(C @ w_full, f_logit)[0, 1])
 
-    ok = J[J.status == "ok"].set_index("lead_id")
     conf = pd.crosstab(ok.persona.reindex(idx).rename("judged persona"), persona.rename("planted persona"))
 
     # boilerplate (R6): every ok sample row, labelled or not
@@ -267,12 +297,13 @@ def evaluate_judgments(ed: EvalData, judgments_path: str | Path, data: str | Pat
         status_counts=J.status.value_counts().to_dict(),
         ctx_vs_formula=paired_auc(y, p_f, p_c, n_resamples=n_resamples, seed=seed),
         oracle_vs_formula=paired_auc(y, p_f, p_o, n_resamples=n_resamples, seed=seed),
+        persona_vs_formula=paired_auc(y, p_f, p_pg, n_resamples=n_resamples, seed=seed),
         recovered=gap_recovered(y, p_f, p_c, p_o, n_resamples=n_resamples, seed=seed),
-        weights=weights, oracle_weight=oracle_ci, confusion=conf, correlations=corr,
-        context_score_corr=ctx_score_r, boilerplate=boiler, time_split=res.summary,
-        time_split_rows=int((res.test & res.X.p_combined.notna()).sum()),
-        pooled_vs_formula=paired_auc(y, p_f, p_nb, n_resamples=n_resamples, seed=seed), pooled_weight=pooled_ci,
-        pooled_n=int(pooled.sum()))
+        weights=weights, oracle_weight=oracle_ci, persona_weight=persona_ci,
+        persona_weight_combined=ci[CONTEXT_COLUMNS.index(PERSONA_ACCEPTANCE_COLUMN)],
+        r12_pass=coefficient_criterion(persona_ci, oracle_ci), fine_weights=fine, confusion=conf,
+        correlations=corr, context_score_corr=ctx_score_r, boilerplate=boiler, time_split=res.summary,
+        time_split_rows=int((res.test & res.X.p_combined.notna()).sum()))
 
 
 def plot_power_curve(curves: dict[str, pd.DataFrame], real: dict[str, BootstrapCI], path: str | Path) -> None:
@@ -326,8 +357,17 @@ def markdown(curves: dict[str, pd.DataFrame], refs: dict[str, dict[str, float]],
                 f"Ceiling from the generator's true probability: AUC {r['auc_true']:.4f} with the persona term, "
                 f"{r['auc_true_without_persona']:.4f} without, gap {r['true_gap']:.4f}.", "",
                 _md(cur), ""]
-    c, o = ev.ctx_vs_formula, ev.oracle_vs_formula
-    out += ["### 6.6 Real run: formula vs formula + context (same rows, cross-fitted)", "",
+    c, o, pg = ev.ctx_vs_formula, ev.oracle_vs_formula, ev.persona_vs_formula
+    w, ow = ev.persona_weight, ev.oracle_weight
+    out += ["### R12 acceptance: pooled persona weight vs oracle weight (same rows)", "",
+            "| model (formula + ...) | weight of the persona column [95% CI] |", "|---|---|",
+            f"| `ctx_persona_group` (buyer / non_buyer / unclear): `{PERSONA_ACCEPTANCE_COLUMN}` | {_fmt_ci(w)} |",
+            f"| true persona indicator (oracle) | {_fmt_ci(ow)} |", "",
+            f"CI excludes zero: {w.lo > 0 or w.hi < 0}; point inside the oracle CI: {ow.lo <= w.point <= ow.hi}. "
+            f"**R12: {'PASS' if ev.r12_pass else 'FAIL'}.** Formula + `ctx_persona_group` AUC {pg.auc_b:.4f}, "
+            f"diff vs formula {_fmt_ci(pg.diff, 4)}, p {pg.p_value:.3f}. The same column in the full combined model "
+            f"(all 13 context columns): {_fmt_ci(ev.persona_weight_combined)}.", "",
+            "### 6.6 Real run: formula vs formula + context (same rows, cross-fitted)", "",
             f"Rows: {ev.n_rows} labelled sample leads with an ok judgment ({ev.n_wins} wins, {ev.n_persona} with a "
             f"planted persona). Status counts over the whole file: {ev.status_counts}.", "",
             "| model | AUC (out of fold) | diff vs formula [95% CI] | p |", "|---|---|---|---|",
@@ -336,13 +376,10 @@ def markdown(curves: dict[str, pd.DataFrame], refs: dict[str, dict[str, float]],
             f"| formula + true persona (oracle) | {o.auc_b:.4f} | {_fmt_ci(o.diff, 4)} | {o.p_value:.3f} |", "",
             f"**Fraction of the oracle gap recovered: {_fmt_ci(ev.recovered)}** (shared bootstrap resamples).", "",
             f"Oracle persona weight on the same rows: {_fmt_ci(ev.oracle_weight)}.", "",
-            "#### Context weights (formula + context fit on all rows; 1,000 bootstrap refits)", "",
+            "#### Context weights (formula + all 13 context columns fit on all rows; 1,000 bootstrap refits)", "",
             _md(ev.weights), "",
-            "#### Exploratory (chosen after seeing the per-level CIs; not the acceptance test): one pooled "
-            "`judged persona is not buyer/unclear` indicator", "",
-            f"{ev.pooled_n} rows flagged. Weight in formula + indicator: {_fmt_ci(ev.pooled_weight)}. "
-            f"AUC {ev.pooled_vs_formula.auc_b:.4f}, diff vs formula {_fmt_ci(ev.pooled_vs_formula.diff, 4)}, "
-            f"p {ev.pooled_vs_formula.p_value:.3f}.", "",
+            "#### Secondary, underpowered: unpooled judgments (persona at its eight contract levels)", "",
+            _md(ev.fine_weights), "",
             "#### Persona judged vs planted (evaluation only)", "", _md(ev.confusion.reset_index()), "",
             "#### Correlation of each context feature with the formula logit", "",
             f"Formula fit on all pre-2026-05-01 labelled leads. Combined context score (context columns x their "

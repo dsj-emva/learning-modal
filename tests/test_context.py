@@ -28,9 +28,13 @@ from emva.context.features import (
     CONTEXT_CATS,
     CONTEXT_COLUMNS,
     CONTEXT_LEVELS,
+    PERSONA_ACCEPTANCE_COLUMN,
+    PERSONA_GROUP_LEVELS,
+    PERSONA_GROUPS,
     context_design,
     context_features,
     context_logit,
+    persona_group,
 )
 from emva.io import flag_bots_and_duplicates, load
 from emva.pipeline import run
@@ -315,10 +319,13 @@ def judgments_frame(ids, values=None, status="ok", stamp=("b" * 16, "judgments-v
 
 
 def test_context_levels_are_fixed():
-    assert CONTEXT_LEVELS == {"ctx_" + k: v for k, v in JUDGMENTS.items()}
-    assert CONTEXT_CATS == {"ctx_is_real_business": "yes", "ctx_persona": "buyer", "ctx_problem_specificity": "specific",
-                            "ctx_urgency": "none", "ctx_brief_fit": "partial"}
-    assert len(CONTEXT_COLUMNS) == sum(len(v) - 1 for v in JUDGMENTS.values()) == 18
+    assert CONTEXT_LEVELS == {"ctx_is_real_business": ("yes", "no", "unclear"),
+                              "ctx_persona_group": ("buyer", "non_buyer", "unclear"),
+                              "ctx_problem_specificity": JUDGMENTS["problem_specificity"],
+                              "ctx_urgency": JUDGMENTS["urgency"], "ctx_brief_fit": JUDGMENTS["brief_fit"]}
+    assert CONTEXT_CATS == {"ctx_is_real_business": "yes", "ctx_persona_group": "buyer",
+                            "ctx_problem_specificity": "specific", "ctx_urgency": "none", "ctx_brief_fit": "partial"}
+    assert len(CONTEXT_COLUMNS) == 13 and PERSONA_ACCEPTANCE_COLUMN in CONTEXT_COLUMNS
     one = context_design(judgments_frame(["a"]), pd.Index(["a"]))
     assert list(one.columns) == CONTEXT_COLUMNS            # one row still gets the full schema
     assert one.loc["a", "ctx_urgency=now"] == 1 and one.loc["a", "ctx_brief_fit=strong"] == 1
@@ -331,12 +338,32 @@ def test_context_design_nan_for_errors_and_absent_leads_and_raises_on_bad_input(
     C = context_design(J, pd.Index(["a", "b", "c"]))
     assert C.loc["a"].notna().all() and C.loc["b"].isna().all() and C.loc["c"].isna().all()
     with pytest.raises(ValueError, match="outside its declared levels"):
+        context_design(judgments_frame(["a"], values={**GOOD, "urgency": "soon"}), pd.Index(["a"]))
+    with pytest.raises(ValueError, match="outside the contract"):
         context_design(judgments_frame(["a"], values={**GOOD, "persona": "customer"}), pd.Index(["a"]))
     with pytest.raises(ValueError, match="stamps"):
         context_design(pd.concat([judgments_frame(["a"]), judgments_frame(["b"], stamp=("c" * 16, "v", "m"))]),
                        pd.Index(["a"]))
     with pytest.raises(ValueError, match="duplicated"):
         context_design(judgments_frame(["a", "a"]), pd.Index(["a"]))
+
+
+def test_every_contract_persona_maps_to_exactly_one_group():
+    assert set(PERSONA_GROUPS) == set(JUDGMENTS["persona"]) and set(PERSONA_GROUPS.values()) == set(PERSONA_GROUP_LEVELS)
+    grouped = persona_group(pd.Series(JUDGMENTS["persona"]))
+    assert dict(zip(JUDGMENTS["persona"], grouped, strict=True)) == {
+        "buyer": "buyer", "vendor": "non_buyer", "student": "non_buyer", "job_seeker": "non_buyer",
+        "competitor": "non_buyer", "nonprofit": "non_buyer", "agency_pitching": "non_buyer", "unclear": "unclear"}
+    with pytest.raises(ValueError, match="outside the contract"):
+        persona_group(pd.Series(["buyer", "Buyer"]))
+
+
+def test_persona_is_pooled_in_the_design():
+    rows = [judgments_frame([p], values={**GOOD, "persona": p}) for p in JUDGMENTS["persona"]]
+    C = context_design(pd.concat(rows), pd.Index(JUDGMENTS["persona"]))
+    assert C["ctx_persona_group=non_buyer"].to_dict() == {p: float(PERSONA_GROUPS[p] == "non_buyer")
+                                                          for p in JUDGMENTS["persona"]}
+    assert C.loc["unclear", "ctx_persona_group=unclear"] == 1 and C.loc["buyer"].sum() == 2
 
 
 def test_context_features_dispatches_on_format(tmp_path):

@@ -70,3 +70,17 @@ def test_true_probability_gap_measures_the_planted_term():
     g = true_probability_gap(y, p, persona, effect=-3.0)
     assert g["true_gap"] > 0.02 and g["auc_true"] == pytest.approx(g["auc_true_without_persona"] + g["true_gap"])
     assert true_probability_gap(y, p, np.zeros(len(y)))["true_gap"] == 0
+
+
+def test_coefficient_criterion_needs_significance_and_agreement_with_the_oracle():
+    from emva.eval.bootstrap import BootstrapCI
+    from emva.eval.context_harness import coefficient_criterion
+
+    def ci(point, lo, hi):
+        return BootstrapCI(point=point, lo=lo, hi=hi, samples=np.array([]))
+
+    oracle = ci(-0.61, -1.02, -0.21)
+    assert coefficient_criterion(ci(-0.61, -1.07, -0.18), oracle)
+    assert not coefficient_criterion(ci(-0.40, -0.90, 0.10), oracle)     # CI includes zero
+    assert not coefficient_criterion(ci(-1.50, -2.00, -1.10), oracle)    # significant but outside the oracle CI
+    assert not coefficient_criterion(ci(0.50, 0.10, 0.90), oracle)       # wrong sign
