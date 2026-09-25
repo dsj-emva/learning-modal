@@ -13,6 +13,7 @@ from emva.troas import (
     META_MIN_EVENTS_PER_WEEK,
     campaign_leads,
     eligibility,
+    format_table,
     volumes_from_data,
 )
 
@@ -84,3 +85,29 @@ def test_cli_by_numbers_and_by_data(data_v1):
     bad = subprocess.run([sys.executable, "-m", "emva.troas", "--leads-per-month", "10"], cwd=REPO,
                          capture_output=True, text=True)
     assert bad.returncode == 2
+
+
+def test_table_prints_two_decimals_so_just_below_does_not_read_as_the_threshold():
+    leads = 29.97 * DAYS_PER_MONTH / 30
+    text = format_table(eligibility([leads], 1.0, GOOGLE), GOOGLE)
+    assert "| 29.97 | 29.97 | BELOW | BELOW |" in text
+
+
+def test_volumes_from_data_gives_a_missing_platform_zero_volume(tmp_path, data_v1):
+    import pandas as pd
+    for f in data_v1.iterdir():
+        (tmp_path / f.name).write_bytes(f.read_bytes())
+    leads = pd.read_csv(data_v1 / "historical_leads.csv")
+    leads = leads[~leads.utm_source.isin(["facebook", "instagram"])]
+    leads.to_csv(tmp_path / "historical_leads.csv", index=False)
+    volumes, _ = volumes_from_data(tmp_path)
+    assert volumes["meta"].empty and len(volumes["google"]) == 4
+    proc = subprocess.run([sys.executable, "-m", "emva.troas", "--data", str(tmp_path), "--platform", "meta"],
+                          cwd=REPO, capture_output=True, text=True, check=True)
+    assert "| all campaigns pooled (portfolio) | 0.0 | 0.00 | 0.00 | BELOW | BELOW | inf |" in proc.stdout
+
+
+def test_cli_data_path_range_checks_the_positive_rate(data_v1):
+    proc = subprocess.run([sys.executable, "-m", "emva.troas", "--data", str(data_v1), "--positive-rate", "1.5"],
+                          cwd=REPO, capture_output=True, text=True)
+    assert proc.returncode == 2 and "--positive-rate" in proc.stderr

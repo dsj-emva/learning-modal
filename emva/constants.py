@@ -144,7 +144,7 @@ DEAL_VALUE_LEVELS: dict[str, tuple[str, ...]] = {
     "spend": V2_LEVELS["spend"],
 }
 
-# Value transform defaults (plan 3.1; ADR 0012, proposed): cap the expected value at this percentile of the
+# Value transform defaults (plan 3.1; ADR 0012): cap the expected value at this percentile of the
 # training leads' values, compress it (``emva.value_transform.Compression``: "none", "log" or "sqrt") and floor it
 # at this many GBP. CLI: --value-cap-percentile, --value-compression, --value-floor.
 VALUE_CAP_PERCENTILE: float = 97.0

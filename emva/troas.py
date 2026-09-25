@@ -108,7 +108,7 @@ def volumes_from_data(data: str | Path, as_of: pd.Timestamp = AS_OF) -> tuple[di
     Uses scored leads (after bot and duplicate removal) created in the 12 months before ``as_of``; Meta
     campaigns pool the website (``meta``) and lead-form (``meta_leadads``) channels of the same
     ``utm_campaign``. The positive rate is the mean ``won_within_h`` over mature leads (every mature non-win
-    counts as 0, as the platform would see it).
+    counts as 0, as the platform would see it). A platform with no leads gets an empty Series (0 volume).
     """
     X = clean(load(data))
     X = X[X.created_at > as_of - pd.DateOffset(years=1)]
@@ -116,18 +116,24 @@ def volumes_from_data(data: str | Path, as_of: pd.Timestamp = AS_OF) -> tuple[di
     platform = ch.map({"google": "google", "meta": "meta", "meta_leadads": "meta"})
     counts = X.groupby([platform, X.utm_campaign]).size() / 12
     rate = float(won_within_h(X, as_of=as_of)[is_mature(X, as_of=as_of)].mean())
-    return {p: counts.loc[p] for p in THRESHOLDS if p in counts.index.get_level_values(0)}, rate
+    present = set(counts.index.get_level_values(0))
+    empty = pd.Series(dtype=float, index=pd.Index([], name="utm_campaign"))
+    return {p: counts.loc[p] if p in present else empty for p in THRESHOLDS}, rate
 
 
 def format_table(df: pd.DataFrame, threshold: Threshold) -> str:
-    """Markdown table of an ``eligibility`` frame, with the threshold in the header."""
+    """Markdown table of an ``eligibility`` frame, with the threshold in the header.
+
+    Conversions and the shortfall are printed to 2 dp so a value just under the threshold (29.97) does not
+    read as the threshold itself next to "BELOW".
+    """
     per = f"per {threshold.days} days"
     lines = [f"{threshold.platform}: threshold {threshold.minimum:g} conversions per {threshold.unit} {per} (verify)",
              "", f"| campaign | leads / month | lead conversions {per} | win conversions {per} | submit stage | "
              "close stage | close volume needed × |", "|---|---|---|---|---|---|---|"]
     for r in df.itertuples(index=False):
-        lines.append(f"| {r.campaign} | {r.leads_per_month:.1f} | {r.submit_conversions:.1f} | {r.close_conversions:.1f} | "
-                     f"{'ok' if r.submit_ok else 'BELOW'} | {'ok' if r.close_ok else 'BELOW'} | {r.close_shortfall:.1f} |")
+        lines.append(f"| {r.campaign} | {r.leads_per_month:.1f} | {r.submit_conversions:.2f} | {r.close_conversions:.2f} | "
+                     f"{'ok' if r.submit_ok else 'BELOW'} | {'ok' if r.close_ok else 'BELOW'} | {r.close_shortfall:.2f} |")
     return "\n".join(lines)
 
 
@@ -146,6 +152,8 @@ def main(argv: list[str] | None = None) -> None:
     if a.data is not None:
         if any(v is not None for v in (a.leads_per_month, a.campaigns, a.split)):
             ap.error("--data derives volumes itself; do not combine it with --leads-per-month/--campaigns/--split")
+        if a.positive_rate is not None and not 0 <= a.positive_rate <= 1:
+            ap.error(f"--positive-rate must be in [0, 1], got {a.positive_rate}")
         volumes, rate = volumes_from_data(a.data)
         rate = rate if a.positive_rate is None else a.positive_rate
         print(f"{a.data}: positive rate {rate:.3f} (won within H over mature leads)\n")

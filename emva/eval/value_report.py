@@ -25,7 +25,7 @@ from emva.features import channel
 from emva.pipeline import PipelineResult
 from emva.value_transform import IDENTITY, Compression, ValueTransform
 
-# Plan 3.2's comparison, plus the proposed default (ADR 0012) last.
+# Plan 3.2's comparison, plus the default (ADR 0012) last.
 REPORT_TRANSFORMS: tuple[ValueTransform, ...] = (
     IDENTITY,
     ValueTransform(floor=None, compression=Compression.NONE),
@@ -49,8 +49,13 @@ LEAD_FORM_ID_COLUMN: str = "meta_lead_id"
 
 
 def scale_stats(values: np.ndarray | pd.Series) -> dict[str, float]:
-    """p1, p50, p90, p99, max, max/median and the share of the total held by the top 1% of ``values``."""
+    """p1, p50, p90, p99, max, max/median and the share of the total held by the top 1% of ``values``.
+
+    Raises ``ValueError`` for an empty vector or one whose median or total is not positive (ratios undefined).
+    """
     v = np.sort(np.asarray(values, dtype=float))[::-1]
+    if len(v) == 0 or np.median(v) <= 0 or v.sum() <= 0:
+        raise ValueError("value scale needs a non-empty value vector with a positive median and total")
     k = max(1, int(len(v) * 0.01))
     p1, p50, p90, p99 = np.percentile(v, [1, 50, 90, 99])
     return {"p1": float(p1), "p50": float(p50), "p90": float(p90), "p99": float(p99), "max": float(v[0]),
@@ -71,12 +76,19 @@ def transform_table(result: PipelineResult, ids: pd.Index, revenue: pd.Series | 
 
     Transforms are fitted on ``result``'s training leads. With ``revenue`` (recorded revenue indexed like
     ``ids``) the table adds top-20% capture, ties at the cut, retention vs the baseline's capture and value /
-    revenue. Also returns, per transform row, the raw numbers the acceptance check needs.
+    revenue. Also returns, per transform row, the raw numbers the acceptance check needs. Raises ``ValueError``
+    when the test set has no recorded revenue or the baseline captures none of it (ratios undefined).
     """
     X, tr = result.X, result.train
     rows: list[dict[str, str]] = []
     raw: list[dict[str, float]] = []
-    base_capture = None if revenue is None else tie_averaged_top_share(revenue, baseline_value.loc[ids].values)
+    base_capture = None
+    if revenue is not None:
+        if revenue.sum() <= 0:
+            raise ValueError("the test set has no recorded revenue; capture and value / revenue are undefined")
+        base_capture = tie_averaged_top_share(revenue, baseline_value.loc[ids].values)
+        if base_capture <= 0:
+            raise ValueError("the baseline captures no revenue in its top 20%; retention vs baseline is undefined")
     entries = [("baseline (identity)", baseline_value.loc[ids].values)]
     entries += [(f"candidate: {t.describe()}", t.fit(X.value_formula[tr]).apply(X.value_formula.loc[ids]))
                 for t in REPORT_TRANSFORMS]

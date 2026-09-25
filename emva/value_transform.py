@@ -15,11 +15,16 @@ parameters. The steps run in this order, each optional:
 4. **tiers**: ``tiers`` quantile tiers of the reference values after steps 1 to 3; each value becomes the
    mean of the reference values in its tier (so the reference total is preserved).
 
+The order is fixed: cap, then compression, then floor, then tiers (ruling R11). The floor therefore acts
+before the tiers: the tier edges and means are computed on floored values, so every tier value is at least
+the floor.
+
 Every step is monotone non-decreasing, so ranking by the transformed value never reverses an order; cap,
 floor and tiers can only create ties.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 
@@ -37,18 +42,35 @@ class Compression(str, Enum):
     SQRT = "sqrt"
 
 
+# The configured default (``constants.VALUE_COMPRESSION``) coerced to the enum, here only.
+DEFAULT_COMPRESSION: Compression = Compression(VALUE_COMPRESSION)
+
+# Step 2 without the rescale, per kind: f(values, anchor). NONE is the identity (no anchor is fitted for it).
+_COMPRESS: dict[Compression, Callable[[np.ndarray, float | None], np.ndarray]] = {
+    Compression.NONE: lambda v, m: v,
+    Compression.SQRT: lambda v, m: np.sqrt(v * m),
+    Compression.LOG: lambda v, m: m * np.log2(1 + v / m),
+}
+
+
+def compress(values: np.ndarray, compression: Compression, anchor: float | None) -> np.ndarray:
+    """Step 2 without the rescale: ``sqrt(v × anchor)``, ``anchor × log2(1 + v / anchor)`` or ``v`` (none)."""
+    return _COMPRESS[compression](values, anchor)
+
+
 @dataclass(frozen=True)
 class ValueTransform:
     """Which transform steps to apply and their settings.
 
     ``cap_percentile`` in (0, 100] or None (no cap); ``floor`` in GBP (>= 0) or None; ``compression`` a
     ``Compression`` or its string value; ``tiers`` >= 2 or None. The default is plan 3.1's cap at p97
-    and floor £25 plus log compression (ADR 0012, proposed), no tiers.
+    and floor £25 plus log compression (ADR 0012, accepted), no tiers. Steps run in the order cap,
+    compression, floor, tiers (see the module docstring).
     """
 
     cap_percentile: float | None = VALUE_CAP_PERCENTILE
     floor: float | None = VALUE_FLOOR_GBP
-    compression: Compression = Compression(VALUE_COMPRESSION)
+    compression: Compression = DEFAULT_COMPRESSION
     tiers: int | None = None
 
     def __post_init__(self) -> None:
@@ -88,9 +110,7 @@ class ValueTransform:
         anchor = None if self.compression is Compression.NONE else float(np.median(capped))
         if anchor == 0:
             raise ValueError("compression needs a positive median reference value")
-        scale = 1.0
-        if anchor is not None:
-            scale = float(capped.sum() / FittedValueTransform(self, cap, anchor, 1.0, (), ())._compress(capped).sum())
+        scale = 1.0 if anchor is None else float(capped.sum() / compress(capped, self.compression, anchor).sum())
         fitted = FittedValueTransform(self, cap, anchor, scale, (), ())
         if self.tiers is None:
             return fitted
@@ -122,14 +142,6 @@ class FittedValueTransform:
     tier_edges: tuple[float, ...]
     tier_values: tuple[float, ...]
 
-    def _compress(self, v: np.ndarray) -> np.ndarray:
-        """Step 2 without the rescale: ``sqrt(v × anchor)`` or ``anchor × log2(1 + v / anchor)``; identity if none."""
-        if self.spec.compression is Compression.SQRT:
-            return np.sqrt(v * self.anchor)
-        if self.spec.compression is Compression.LOG:
-            return self.anchor * np.log2(1 + v / self.anchor)
-        return v
-
     def apply(self, values: np.ndarray | pd.Series) -> np.ndarray:
         """Transform expected values (finite, >= 0) with the fitted parameters; raises ``ValueError`` otherwise."""
         v = np.asarray(values, dtype=float)
@@ -137,8 +149,7 @@ class FittedValueTransform:
             raise ValueError("expected values must be finite and >= 0")
         if self.cap is not None:
             v = np.minimum(v, self.cap)
-        if self.spec.compression is not Compression.NONE:
-            v = self._compress(v) * self.scale
+        v = compress(v, self.spec.compression, self.anchor) * self.scale
         if self.spec.floor is not None:
             v = np.maximum(v, self.spec.floor)
         if self.tier_values:
@@ -148,4 +159,4 @@ class FittedValueTransform:
 
 IDENTITY = ValueTransform(cap_percentile=None, floor=None, compression=Compression.NONE)
 
-__all__ = ["Compression", "FittedValueTransform", "IDENTITY", "ValueTransform"]
+__all__ = ["Compression", "DEFAULT_COMPRESSION", "FittedValueTransform", "IDENTITY", "ValueTransform", "compress"]

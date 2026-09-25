@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import argparse
 
-from emva.constants import HORIZON_DAYS, VALUE_CAP_PERCENTILE, VALUE_COMPRESSION, VALUE_FLOOR_GBP
+from emva.constants import HORIZON_DAYS, VALUE_CAP_PERCENTILE, VALUE_FLOOR_GBP
 from emva.features import FeatureSet
 from emva.labels import LabelConfig, LabelMode
-from emva.value_transform import Compression, ValueTransform
+from emva.value_transform import DEFAULT_COMPRESSION, Compression, ValueTransform
 
 
 def add_feature_arguments(ap: argparse.ArgumentParser) -> None:
@@ -58,7 +58,7 @@ def add_value_arguments(ap: argparse.ArgumentParser) -> None:
                     help=f"floor value_at_submit at this many GBP (default {VALUE_FLOOR_GBP:g}; horizon mode only)")
     ap.add_argument("--no-value-floor", action="store_true", help="do not floor value_at_submit")
     ap.add_argument("--value-compression", choices=[c.value for c in Compression], default=None,
-                    help=f"compress value_at_submit after the cap (default {VALUE_COMPRESSION}; horizon mode only)")
+                    help=f"compress value_at_submit after the cap (default {DEFAULT_COMPRESSION.value}; horizon mode only)")
     ap.add_argument("--value-tiers", type=int, default=None,
                     help="replace value_at_submit by the mean of its quantile tier among N tiers (horizon mode only)")
 
@@ -81,7 +81,7 @@ def value_transform(ap: argparse.ArgumentParser, a: argparse.Namespace, labels: 
             cap_percentile=None if a.no_value_cap else (VALUE_CAP_PERCENTILE if a.value_cap_percentile is None
                                                         else a.value_cap_percentile),
             floor=None if a.no_value_floor else (VALUE_FLOOR_GBP if a.value_floor is None else a.value_floor),
-            compression=a.value_compression or VALUE_COMPRESSION,
+            compression=a.value_compression or DEFAULT_COMPRESSION,
             tiers=a.value_tiers)
     except ValueError as e:
         ap.error(str(e))

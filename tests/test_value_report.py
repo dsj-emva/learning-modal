@@ -3,7 +3,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from emva.eval.value_report import REPORT_TRANSFORMS, click_id_coverage, scale_stats, value_report_sections
+from emva.eval.value_report import (
+    REPORT_TRANSFORMS,
+    click_id_coverage,
+    scale_stats,
+    transform_table,
+    value_report_sections,
+)
 from emva.pipeline import run
 
 from conftest import REPO
@@ -47,3 +53,20 @@ def test_click_id_coverage_on_v1(v1_horizon):
     landing = cov.loc["landing-page paid (all but meta_leadads)"]
     assert landing["leads"] == 7454 and landing["no id at all"] == "28.8%"
     assert cov.loc["all paid", "leads"] == 8386
+
+
+@pytest.mark.parametrize("bad", [np.array([]), np.zeros(5), np.array([0.0, 0.0, 0.0, 5.0])])
+def test_scale_stats_refuses_undefined_ratios(bad):
+    with pytest.raises(ValueError, match="positive median"):
+        scale_stats(bad)
+
+
+def test_transform_table_refuses_zero_revenue_and_zero_baseline_capture(v1_horizon):
+    ids = v1_horizon.X.index[v1_horizon.test]
+    with pytest.raises(ValueError, match="no recorded revenue"):
+        transform_table(v1_horizon, ids, pd.Series(0.0, index=ids), v1_horizon.X.value_formula)
+    rev = _revenue(v1_horizon, ids)
+    # a baseline that ranks every revenue lead last captures none of it
+    inverted = pd.Series(np.where(rev > 0, 0.0, 1.0), index=ids)
+    with pytest.raises(ValueError, match="captures no revenue"):
+        transform_table(v1_horizon, ids, rev, inverted.reindex(v1_horizon.X.index, fill_value=1.0))
