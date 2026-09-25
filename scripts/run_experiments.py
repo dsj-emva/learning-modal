@@ -6,6 +6,10 @@ definition and a feature set: ``baseline`` is legacy labels and legacy features 
 frozen baseline), ``horizon`` the current default (horizon labels, v2 features), the
 ``horizon-*`` flag variants use v2 features, ``legacy-labels`` isolates the Phase 2 feature
 change and ``horizon-legacy-features`` the Phase 1 label change.
+
+``hardening`` (Phase 4) is a study rather than a model: it runs ``emva.eval.hardening`` on the one
+``--data`` directory and writes ``runs/hardening/<data name>.md`` (``make report-full`` runs it on
+data/v2 and data/v1 into ``reports/phase4.md``).
 """
 from __future__ import annotations
 
@@ -16,7 +20,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-from emva.eval.report import build_report  # noqa: E402 (needs the repo on sys.path)
+from emva.eval import hardening  # noqa: E402 (needs the repo on sys.path)
+from emva.eval.report import build_report  # noqa: E402
 from emva.features import FeatureSet  # noqa: E402
 from emva.labels import HORIZON, LEGACY, LabelConfig  # noqa: E402
 from emva.pipeline import run, write_outputs  # noqa: E402
@@ -30,16 +35,22 @@ EXPERIMENTS: dict[str, tuple[LabelConfig, FeatureSet]] = {
     "legacy-labels": (LEGACY, FeatureSet.V2),
     "horizon-legacy-features": (HORIZON, FeatureSet.LEGACY),
 }
+STUDIES: tuple[str, ...] = ("hardening",)
 
 
 def main() -> None:
     """CLI entry point."""
     ap = argparse.ArgumentParser()
-    ap.add_argument("name", choices=sorted(EXPERIMENTS))
+    ap.add_argument("name", choices=sorted([*EXPERIMENTS, *STUDIES]))
     ap.add_argument("--data", default=str(REPO / "data" / "v1"))
     a = ap.parse_args()
     out = REPO / "runs" / a.name
     out.mkdir(parents=True, exist_ok=True)
+    if a.name == "hardening":
+        path = out / f"{Path(a.data).name}.md"
+        path.write_text(hardening.build([Path(a.data)]))
+        print(f"wrote {path}")
+        return
     labels, features = EXPERIMENTS[a.name]
     result = run(Path(a.data), labels=labels, features=features)
     print(result.summary.to_string(index=False))

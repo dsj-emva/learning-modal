@@ -13,8 +13,8 @@
 6. 2.4 deal-value model: the fixed and the estimated residual sd, their corrections and what
    the change does to value and revenue capture.
 
-This module and ``emva/eval`` Phase 1's ground-truth reference script are the only readers of
-ground-truth files; nothing imports this module.
+Ground-truth readers: this module, Phase 1's ground-truth reference script and Phase 4's
+``emva/eval/ceiling.py``; nothing imports this module.
 """
 from __future__ import annotations
 
