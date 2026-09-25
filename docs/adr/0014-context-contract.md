@@ -1,6 +1,6 @@
 # 0014. Context contract: enum judgments, a four-field lead card, stamped and cached output
 
-- Status: Proposed
+- Status: Accepted (Phase 6 review; persona pooling amended by ADR 0016)
 - Date: 2026-09-25
 - Source: Phase 6 (`phase6-context-agent`, `reports/phase6.md`); plan 6.1 to 6.4
 
@@ -33,7 +33,8 @@ prompt or model produced them.
   without calling), and the context weights are refit on the new judgments; weights never carry over
   between stamps.
 - **Features**: each judgment is a categorical `ctx_<judgment>` with the declared levels above and
-  reference levels yes / buyer / specific / none / partial (ADR 0009 fixed schema, 18 columns). Rows
+  reference levels yes / buyer / specific / none / partial (ADR 0009 fixed schema). Persona enters the
+  design pooled as `ctx_persona_group` (buyer / non_buyer / unclear; ADR 0016), giving 13 columns. Rows
   without an ok judgment have no context and are left out of both models in a comparison.
 - Adding or renaming a level is a contract change: bump `PROMPT_VERSION` and the feature levels together.
 
@@ -42,7 +43,7 @@ prompt or model produced them.
 - `python -m emva --context` accepts the new judgments file; the legacy `context_score` file still works
   so the baseline's context mode stays byte-identical.
 - On data/v2 the judgments correlate weakly with the formula logit (largest single column |r| 0.33,
-  combined context score r 0.13), and Haiku reads the planted persona well, but the planted persona's
-  AUC gap is too small to measure at n = 1,000 (`reports/phase6.md`).
+  combined context score r 0.14), and Haiku reads the planted persona well, but the planted persona's
+  AUC gap is too small to measure at n = 1,000; acceptance is coefficient-level (ADR 0016).
 - The card is deliberately thin. If a later phase wants the agent to use enrichment it must show the
   added correlation with the formula is acceptable and supersede this ADR.

@@ -87,9 +87,12 @@ wins and this file is wrong: fix it in the same PR. State: `main` 92168cf, 2026-
   text, typed company, job title, email domain; nothing the formula uses) against the business brief,
   returning five enum **judgments** (`is_real_business`, `persona`, `problem_specificity`, `urgency`,
   `brief_fit`) and a short `reason`, never a 0-1 score. `--context` joins them as `ctx_<judgment>=<level>`
-  dummies. Run on 1,000 v2 leads (`data/v2/context/`).
+  dummies, with persona pooled into `ctx_persona_group` (buyer / non_buyer / unclear; ADR 0016). Run on 1,000 v2 leads (`data/v2/context/`).
 - **Stamp**: `(brief_hash, prompt_version, model_id)` on every judgments row; one stamp per file. A new
   `brief_hash` means new judgments and a refit of the context weights.
+- **Coefficient criterion (R12, ADR 0016)**: acceptance for a context feature: its weight's 95% CI excludes 0
+  and its point estimate lies inside the oracle weight's CI on the same rows. Replaces the AUC-gap criterion,
+  which is unmeasurable at the planted persona's effect size.
 - **Parse error vs transport error**: the API answered but the reply broke the contract (recorded, cached,
   not retried) vs no usable response after every retry (not cached).
 - **Persona**: in generator v2 (5.7), a hidden `context_persona` (job seeker, agency, nonprofit,

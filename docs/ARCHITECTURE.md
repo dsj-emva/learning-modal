@@ -186,10 +186,11 @@ flowchart LR
 |---|---|
 | `emva/context/card.py` | `LeadCard` with exactly four strings (`CARD_FIELDS`); no enrichment, spend, CRM, hiring, bucketed answers or telemetry (tested) |
 | `emva/context/contract.py` | `JUDGMENTS` (five enums), `reason` <= 30 words, `RESPONSE_SCHEMA` for `output_config`, `validate` -> `ContractError` (parse error); `STATUSES` ok / parse_error / transport_error; `OUTPUT_COLUMNS` with the `(brief_hash, prompt_version, model_id)` stamp |
-| `emva/context/agent.py` | `make_client` (key and workspace from env or `.env`, `anthropic-workspace-id` header, SDK retries off), `judge` (one card; transport errors retried, 4xx configuration errors raise, parse errors recorded), `run_agent` (cache, <= 8 workers, `--dry-run` counts misses without a client) |
+| `emva/env.py` | `find_dotenv` / `load_env_var`, shared by the agent and `scripts/paraphrase_templates.py` |
+| `emva/context/agent.py` | `make_client` (key and workspace via `emva.env`, `anthropic-workspace-id` header, SDK retries off), `judge` (one card; transport errors retried, 4xx configuration errors raise, parse errors recorded), `run_agent` (cache, <= 8 workers, `--dry-run` counts misses without a client) |
 | `emva/context/cache.py` | `ReplyCache`: JSON, atomic writes, ok and parse-error replies cached, transport errors never |
-| `emva/context/features.py` | `CONTEXT_LEVELS` / `CONTEXT_CATS` (references yes / buyer / specific / none / partial), 18 columns from `design.fixed_design`; one stamp per file enforced |
-| `emva/eval/context_harness.py` | evaluation side (reads ground truth): persona-stratified sample, oracle power curve, same-row cross-fitted comparison, weight CIs, persona confusion, formula correlation, boilerplate recall |
+| `emva/context/features.py` | `CONTEXT_LEVELS` / `CONTEXT_CATS` (references yes / buyer / specific / none / partial); persona pooled via `PERSONA_GROUPS` into `ctx_persona_group` (buyer / non_buyer / unclear, ADR 0016); 13 columns from `design.fixed_design`; one stamp per file enforced |
+| `emva/eval/context_harness.py` | evaluation side (reads ground truth): persona-stratified sample, oracle power curve, same-row cross-fitted comparison, R12 `coefficient_criterion` (weight CI excludes 0 and lies in the oracle CI), weight CIs, persona confusion, formula correlation, boilerplate recall |
 | `scripts/run_context_agent.py` | 6.6 run on the sample; appends counts to `data/v2/context/runs.jsonl` |
 
 A brief edit changes `brief_hash`, so every lead is a cache miss: `--dry-run` reports the count and the
