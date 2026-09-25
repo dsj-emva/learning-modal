@@ -31,6 +31,7 @@ make experiment NAME=horizon    # pipeline outputs + report into runs/horizon/ (
 .venv/bin/python -m emva --data data/v1 --out OUT_DIR    # writes weights.csv, scores.csv
 .venv/bin/python -m emva.eval.label_study                # Phase 1: label flags, size weights with bootstrap CIs
 .venv/bin/python -m emva.eval.ground_truth_reference     # true close rates by size (reads ground truth; eval only)
+.venv/bin/python scripts/generate_data_v1.py --seed 20260924 --out DIR && .venv/bin/python scripts/compare_to_v1.py --gen DIR   # regenerate v1-like data, compare with data/v1
 ```
 
 ### Labels
