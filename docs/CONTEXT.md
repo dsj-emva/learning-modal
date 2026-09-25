@@ -136,7 +136,7 @@ it with the paired bootstrap.
 | 1 labels | merged 92168cf | `phase1-labels` | `reports/phase1.md` |
 | 2 features and leakage | merged (c1b465f) | `phase2-features` | `reports/phase2.md` |
 | 5.2-5.8 generator v2 | merged (01c56f4) | `phase5-generator-v2` | `reports/phase5.md` |
-| 3 value layer and platform contract | ready for merge | `phase3-value` | `reports/phase3.md` |
+| 3 value layer | merged (a13491d) | `phase3-value` | `reports/phase3.md` |
 | 4 evaluation hardening | pending (needs 2) | | |
 | 6 context agent v2 | pending (needs 2 and 5) | | |
 | 7 production readiness document | pending (needs all) | | |
