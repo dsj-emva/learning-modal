@@ -77,7 +77,8 @@ def _md_table(df: pd.DataFrame) -> str:
     return "\n".join(lines)
 
 
-def _f(x: float, dp: int = 3) -> str:
+def _fmt_num(x: float | None, dp: int = 3) -> str:
+    """Format ``x`` to ``dp`` decimals; ``None`` or NaN becomes "n/a"."""
     return "n/a" if x is None or (isinstance(x, float) and np.isnan(x)) else f"{x:.{dp}f}"
 
 
@@ -122,9 +123,9 @@ def build_report(data: str | Path, n_resamples: int = N_RESAMPLES, seed: int = S
             "model": m.name,
             "AUC [95% CI]": f"{ci.point:.3f} [{ci.lo:.3f}, {ci.hi:.3f}]",
             "Brier": "n/a" if m.p is None else f"{brier_score_loss(y, np.clip(m.p, 0, 1)):.4f}",
-            "top-20% wins": _f(top_share(y, m.rank_score)),
-            "top-20% revenue (by p)": _f(top_share(revenue, m.rank_score)),
-            "top-20% revenue (by p×value)": _f(top_share(revenue, m.value)),
+            "top-20% wins": _fmt_num(top_share(y, m.rank_score)),
+            "top-20% revenue (by p)": _fmt_num(top_share(revenue, m.rank_score)),
+            "top-20% revenue (by p×value)": _fmt_num(top_share(revenue, m.value)),
         })
     out += [_md_table(pd.DataFrame(head)), "", "## Paired AUC comparison vs baseline", ""]
 
@@ -144,7 +145,7 @@ def build_report(data: str | Path, n_resamples: int = N_RESAMPLES, seed: int = S
         cal = d if cal is None else cal.merge(d.drop(columns="n"), on="decile")
     for c in cal.columns:
         if c.endswith(("mean p", "observed")):
-            cal[c] = cal[c].map(_f)
+            cal[c] = cal[c].map(_fmt_num)
     out += [_md_table(cal), "", "Status quo has no probability, so it has no Brier score or calibration.",
             "", "## AUC by test month", ""]
 
@@ -153,7 +154,7 @@ def build_report(data: str | Path, n_resamples: int = N_RESAMPLES, seed: int = S
         d = auc_by_month(y, m.rank_score, Lt.created_at).rename(columns={"auc": m.name})
         month = d if month is None else month.merge(d[["month", m.name]], on="month")
     for m in models:
-        month[m.name] = month[m.name].map(_f)
+        month[m.name] = month[m.name].map(_fmt_num)
     out += [_md_table(month), "", "## Value scale", ""]
 
     scale = []

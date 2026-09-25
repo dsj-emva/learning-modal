@@ -11,8 +11,8 @@ from sklearn.linear_model import Ridge
 
 from emva.constants import DEAL_VALUE_FEATURES, DEAL_VALUE_RIDGE_ALPHA
 
-# Lognormal mean correction exp(sd**2 / 2) uses a residual sd of 0.45 on log deal value.
-# This number is the generator's planted noise sd (data/v1/ground_truth.md), not something
+# Lognormal mean correction exp(sd**2 / 2) uses the residual sd on log deal value below.
+# This number is the generator's planted noise sd (from the generator documentation), not something
 # estimated from training data, so it violates ground rule 2. Kept verbatim in Phase 0 for
 # exact reproduction of the baseline.
 # TODO(plan 2.4): estimate the residual variance from training residuals and delete this.

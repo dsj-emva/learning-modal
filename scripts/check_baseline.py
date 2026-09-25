@@ -31,6 +31,7 @@ from emva.eval.regression import (  # noqa: E402 (needs the repo on sys.path)
 
 
 def _run(cmd: list[str], cwd: Path) -> str:
+    """Run ``cmd`` in ``cwd`` and return its stdout; exit with its stderr if it fails."""
     proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
     if proc.returncode != 0:
         raise SystemExit(f"FAIL: {' '.join(cmd)} exited {proc.returncode}\n{proc.stderr}")

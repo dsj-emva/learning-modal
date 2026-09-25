@@ -56,12 +56,14 @@ def _resample_indices(y: np.ndarray, n_resamples: int, rng: np.random.Generator)
 
 
 def _percentile_ci(point: float, samples: np.ndarray, level: float) -> BootstrapCI:
+    """Wrap ``point`` and the equal-tailed ``level`` percentile interval of ``samples``."""
     alpha = (1 - level) / 2
     lo, hi = np.quantile(samples, [alpha, 1 - alpha])
     return BootstrapCI(point=point, lo=float(lo), hi=float(hi), samples=samples)
 
 
 def _check(y: np.ndarray, *scores: np.ndarray) -> None:
+    """Raise ``ValueError`` unless ``y`` is binary with both classes and each score matches it in length, NaN-free."""
     if set(np.unique(y)) != {0.0, 1.0}:
         raise ValueError("y must contain both classes and only 0/1")
     for s in scores:
