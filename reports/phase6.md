@@ -39,6 +39,9 @@ simulated data** (`data/v2`, generator v2 as merged at 01c56f4).
   version bump, no new API calls). **The pooling rule was chosen after seeing the per-level results of this
   run.** It is applied to the unchanged cached judgments and is now fixed in code, so the next customer run
   is pre-registered. The per-level weights stay below as secondary, marked underpowered.
+- **R12 scope (ruling on the caveat below).** R12 is judged one context feature at a time next to the
+  formula, as done here. The full-model weight (-0.383 [-0.887, 0.156]) is reported as secondary: the other
+  judgments share part of the persona signal.
 - **R14.** `agency_pitching` stays in the contract; Haiku's vendor/agency confusion (38 of 67 agency leads
   called `vendor`) is documented, and both pool to non_buyer under R13.
 - **R15.** Sample design (300 persona / 700 other, labelled leads only, seed 0) accepted; cross-fitting is
@@ -294,10 +297,17 @@ mocked or forbidden by a factory that raises).
 
 ## Open questions for the orchestrator
 
-1. **Combined-model persona weight.** R12 is judged on formula + `ctx_persona_group`. In the full combined
-   model the same column is not significant (-0.38 [-0.89, 0.16]). Should the next customer run judge R12
-   on the full model, or keep one feature at a time (as here)?
-2. The earlier questions (criterion power, persona encoding, agency vs vendor) are answered by R12 to R15.
+None open. Criterion power, persona encoding and agency vs vendor are answered by R12 to R15; the
+combined-model persona weight by the R12 scope ruling (one feature at a time, full model secondary).
+
+## Merge with Phase 3 (origin/main f0406a4)
+
+Merged into this branch; conflicts only in the pipeline docstring and the docs' status/index rows (both
+kept). After the merge a from-cache rerun (1,000 hits, 0 API requests) and `python -m emva.eval.context_harness
+evaluate` give output identical to the pre-merge run: every number in this report is unchanged, including the
+R12 row and the time-split table. Phase 3's `value_at_submit` is computed from `value_formula` only; there
+is no hook that takes it from the combined model in `--context` mode (only `value_combined` uses
+`p_combined`). Left as is, per instruction.
 
 ## Standard report (`make report DATA=data/v2`)
 

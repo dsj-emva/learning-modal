@@ -29,6 +29,10 @@ non-buyer levels of 29 to 76 rows each, so no per-level weight was significant.
   version bump and no new API calls. **The pooling rule was chosen after seeing the per-level results of the
   first run.** It was applied to the unchanged cached judgments and is now fixed in code, so the next
   customer run is pre-registered. Per-level weights stay in reports as secondary and underpowered.
+- **R12 scope (ruling on the Phase 6 caveat).** R12 is judged one context feature at a time, next to the
+  formula (formula + that feature's columns). The feature's weight in the full combined model is reported as
+  secondary, with the shared-signal explanation: the other judgments carry part of the same signal, so the
+  full-model weight can lose significance without the feature being uninformative.
 - **R14.** `agency_pitching` stays in the contract; Haiku's vendor/agency confusion is documented; both
   pool to non_buyer.
 - **R15.** The Phase 6 sample design (300 persona / 700 other labelled leads, seed 0) and cross-fitting as
@@ -39,7 +43,7 @@ non-buyer levels of 29 to 76 rows each, so no per-level weight was significant.
 - The context design has 13 fixed columns instead of 18. Any contract persona not in `PERSONA_GROUPS`
   fails at import; any judged value outside the contract raises.
 - In the full 13-column combined model the pooled persona column is -0.383 [-0.887, 0.156], not significant:
-  the other judgments share part of its signal. Whether R12 should be judged per feature (as in Phase 6)
-  or in the full model is left open for the next customer run.
+  the other judgments share part of its signal. Under the R12 scope ruling this is secondary evidence, not
+  a failure.
 - A customer pilot applies R12 per context feature against whatever oracle or holdout evidence exists; the
   AUC gap is still reported, but not used as a pass criterion when the planted or expected effect is small.
