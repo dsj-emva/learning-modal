@@ -157,7 +157,7 @@ def crm_leads(tmp_path_factory) -> pd.DataFrame:
     rows = [{"lead_id": i, "stage": s, "deal_value": 1000 if s.lower() in ("won", "closed won") else None,
              "changed_at": t.isoformat()} for i in ids for s, t in HISTORIES[i][1]]
     pd.DataFrame(rows).sample(frac=1, random_state=0).to_csv(root / "crm_history.csv", index=False)  # load sorts
-    pd.DataFrame({"domain": ["acme.example"], "sector": ["Software"], "employee_band": ["51-200"],
+    pd.DataFrame({"company_name": ["Acme Ltd"], "domain": ["acme.example"], "sector": ["Software"], "employee_band": ["51-200"],
                   "monthly_ad_spend_band": ["none"], "crm_platform": ["HubSpot"], "is_hiring": [False]}
                  ).to_csv(root / "companies.csv", index=False)
     return load(root)
@@ -263,7 +263,7 @@ def test_legacy_mode_tolerates_an_unrecognised_stage(tmp_path):
                   "deal_value": [None] * 4,
                   "changed_at": [t0.isoformat(), (t0 + d).isoformat(), t0.isoformat(), (t0 + d).isoformat()]}
                  ).to_csv(tmp_path / "crm_history.csv", index=False)
-    pd.DataFrame({"domain": ["a.example"], "sector": ["x"], "employee_band": ["1-10"], "monthly_ad_spend_band": ["none"],
+    pd.DataFrame({"company_name": ["A Inc"], "domain": ["a.example"], "sector": ["x"], "employee_band": ["1-10"], "monthly_ad_spend_band": ["none"],
                   "crm_platform": ["x"], "is_hiring": [False]}).to_csv(tmp_path / "companies.csv", index=False)
     X = assign_labels(load(tmp_path), LEGACY)
     assert np.isnan(X.y["L1"]) and X.y["L2"] == 0 and "label_source" not in X
