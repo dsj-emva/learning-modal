@@ -23,9 +23,14 @@ CANON = {"New", "Contacted", "Qualified", "Demo booked", "Proposal", "Won", "Los
 
 
 def load(d: str) -> dict:
-    """Read the five CSVs and status_quo_rules.json of a data directory."""
+    """Read the five CSVs and status_quo_rules.json of a data directory.
+
+    ``gt_companies`` is the full firmographics table: ground_truth_companies.csv when the directory has one
+    (v2 with enrichment dropout, where companies.csv misses some domains), else companies.csv."""
     t = {n: pd.read_csv(os.path.join(d, f"{n}.csv")) for n in
          ["historical_leads", "crm_history", "companies", "people", "ground_truth_labels"]}
+    gt_co = os.path.join(d, "ground_truth_companies.csv")
+    t["gt_companies"] = pd.read_csv(gt_co) if os.path.exists(gt_co) else t["companies"]
     with open(os.path.join(d, "status_quo_rules.json")) as f:
         t["rules"] = json.load(f)
     return t
@@ -47,7 +52,7 @@ def tier_of(answers: dict, pages: float | None, rules: dict) -> str:
 
 def frame(t: dict) -> pd.DataFrame:
     """One row per lead with the hidden labels and the observed columns the tables need."""
-    L, G, CO = t["historical_leads"], t["ground_truth_labels"], t["companies"].set_index("domain")
+    L, G, CO = t["historical_leads"], t["ground_truth_labels"], t["gt_companies"].set_index("domain")
     X = L.merge(G.add_prefix("g_"), left_on="lead_id", right_on="g_lead_id")
     X["ans"] = X.answers.apply(json.loads)
     X["a_country"] = X.ans.apply(lambda d: d.get("country"))
@@ -76,6 +81,18 @@ def table(X: pd.DataFrame, levels: pd.Series, order: list) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+CONSENT_LEVEL = "blank (consent declined)"
+
+
+def consent_table(X: pd.DataFrame, levels: pd.Series, order: list) -> pd.DataFrame:
+    """``table`` for a telemetry column; in v2 data, consent-declined rows get their own level instead of
+    falling into the Lead Ads / "under" level (v1 data has no ``consent_declined`` label, so is unchanged)."""
+    if "g_consent_declined" not in X:
+        return table(X, levels, order)
+    cd = X.g_consent_declined.astype(str).eq("True")
+    return table(X, levels.where(~cd, CONSENT_LEVEL), order + [CONSENT_LEVEL])
+
+
 def top_bucket(s: pd.Series) -> pd.Series:
     """Time-on-page bucket labels as in ground_truth.md ("missing" for Lead Ads)."""
     return pd.Series(np.select([s < 15, s < 60, s < 300, s <= 600, s > 600],
@@ -91,18 +108,18 @@ def measure(t: dict, as_of: str = AS_OF_DEFAULT) -> dict:
     tabs["email"] = table(X, pd.Series(np.where(X.g_is_free_email, "free email", "business email"), index=X.index),
                           ["business email", "free email"])
     tabs["text"] = table(X, X.g_text_category, ["specific", "neutral", "vague", "copy_paste"])
-    tabs["time_on_page"] = table(X, top_bucket(X.time_on_page_s), ["<15s (bot-like)", "15-60s", "60-300s", "300-600s", ">600s"])
-    tabs["hesitation"] = table(X, pd.Series(np.where(X.hesitation_ms > 90000, "over 90s", "under 90s"), index=X.index),
+    tabs["time_on_page"] = consent_table(X, top_bucket(X.time_on_page_s), ["<15s (bot-like)", "15-60s", "60-300s", "300-600s", ">600s"])
+    tabs["hesitation"] = consent_table(X, pd.Series(np.where(X.hesitation_ms > 90000, "over 90s", "under 90s"), index=X.index),
                                ["over 90s", "under 90s"])
     tabs["form_variant"] = table(X, X.form_variant, ["A", "B", "C", "D"])
     tabs["channel"] = table(X, X.g_channel, ["meta", "google", "linkedin", "chatgpt", "organic_direct"])
     tabs["seniority"] = table(X, X.g_seniority, ["senior", "mid", "junior", "student"])
     vp = pd.Series(np.where(X.viewed_pricing.isna(), "no page (Lead Ads)",
                             np.where(X.viewed_pricing.astype(str) == "True", "yes", "no")), index=X.index)
-    tabs["viewed_pricing"] = table(X, vp, ["yes", "no", "no page (Lead Ads)"])
+    tabs["viewed_pricing"] = consent_table(X, vp, ["yes", "no", "no page (Lead Ads)"])
     ss = pd.Series(np.select([X.sessions_before_convert == 1, X.sessions_before_convert == 2,
                               X.sessions_before_convert >= 3], ["1", "2", "3+"], "missing"), index=X.index)
-    tabs["sessions"] = table(X, ss, ["1", "2", "3+"])
+    tabs["sessions"] = consent_table(X, ss, ["1", "2", "3+"])
     st = pd.Series(np.where(X.utm_source != "google", "not Google",
                             np.where(X.utm_term.fillna("").str.lower().str.contains("northstar"), "brand", "generic")),
                    index=X.index)
@@ -111,7 +128,7 @@ def measure(t: dict, as_of: str = AS_OF_DEFAULT) -> dict:
     tabs["submitted"] = table(X, pd.Series(np.where(wk, "weekday 09-18", "outside"), index=X.index), ["weekday 09-18", "outside"])
     ipc = pd.Series(np.where(X.ip_country.isna(), "no IP (Lead Ads)",
                              np.where(X.ip_country != X.a_country, "mismatch", "match")), index=X.index)
-    tabs["ip_country"] = table(X, ipc, ["match", "mismatch", "no IP (Lead Ads)"])
+    tabs["ip_country"] = consent_table(X, ipc, ["match", "mismatch", "no IP (Lead Ads)"])
     tabs["spend"] = table(X, X.co_monthly_ad_spend_band.fillna("no company"),
                           ["none", "under £5k", "£5k-£25k", "£25k-£100k", "£100k+", "no company"])
     tabs["crm"] = table(X, X.co_crm_platform.fillna("no company"),
@@ -130,7 +147,7 @@ def measure(t: dict, as_of: str = AS_OF_DEFAULT) -> dict:
     pv = X.pages_visited
     pvb = pd.Series(np.where(pv.isna(), "none (Lead Ads)", np.where(pv >= 5, "5+", pv.fillna(0).astype(int).astype(str))),
                     index=X.index)
-    tabs["pages_visited"] = table(X, pvb, ["none (Lead Ads)", "1", "2", "3", "4", "5+"])
+    tabs["pages_visited"] = consent_table(X, pvb, ["none (Lead Ads)", "1", "2", "3", "4", "5+"])
     tabs["status_quo_tier"] = table(X, X.tier, ["A", "B", "C"])
 
     s = {}
@@ -196,14 +213,26 @@ def md_table(tab: pd.DataFrame, head: str) -> str:
 
 def render_ground_truth(d: str, cfg: "Config") -> str:
     """ground_truth.md for the data in ``d`` generated with ``cfg``."""
+    from generate_data_v1 import v2_on  # sibling module; imported here because it imports this module's users
     m = measure(load(d), cfg.as_of)
     T, s = m["tables"], m["scalars"]
     band_base = {k: v for k, v in cfg.deal_base.items()}
+    v2 = v2_on(cfg)
+    if v2:
+        written_by = (f"scripts/generate_data_v2.py, i.e. scripts/generate_data_v1.py with the Phase 5.2-5.8 options "
+                      f"{v2} (seed {cfg.seed}, data as of {cfg.as_of}, n = {cfg.n}). Rerunning the script with the "
+                      f"same arguments rewrites this file with identical numbers. Every v1 mechanism below still "
+                      f"applies; the section \"v2 mechanisms\" at the end lists what the options add.")
+        never_rule = "Stage stays New. v2: picked on the status quo tier only (see v2 mechanisms, 5.6)"
+    else:
+        written_by = (f"scripts/generate_data_v1.py (seed {cfg.seed}, data as of {cfg.as_of}, n = {cfg.n}). "
+                      f"Rerunning the\nscript with the same arguments rewrites this file with identical numbers. "
+                      f"This generator is a rewrite of the\nlost original from its ground_truth.md; it reproduces "
+                      f"the v1 schema and distributions, not v1's rows.")
+        never_rule = "Stage stays New. Picked with extra weight on status quo tier C, free emails and vague text"
     lines = f"""# Ground truth: planted signals and data problems
 
-Written by scripts/generate_data_v1.py (seed {cfg.seed}, data as of {cfg.as_of}, n = {cfg.n}). Rerunning the
-script with the same arguments rewrites this file with identical numbers. This generator is a rewrite of the
-lost original from its ground_truth.md; it reproduces the v1 schema and distributions, not v1's rows.
+Written by {written_by}
 
 Every lead has a hidden close log-odds: an intercept ({cfg.intercept}, calibrated so ~12% of all leads
 end up Won) plus the effects below, plus random noise (sd {cfg.noise_sd}). Win or lose is then drawn
@@ -377,7 +406,7 @@ whatever its real quality.
 | No person-data match | people.csv covers 75% of business emails, 40% of free emails and no bots | {s['no_person_match']} leads with no match |
 | IP country mismatch | IP country differs from the country typed (VPN or travelling); about half of these on datacenter IPs | {s['ip_mismatch']} leads |
 | Datacenter IPs | Bots and some VPN users | {s['datacenter']} leads |
-| Never contacted | Stage stays New. Picked with extra weight on status quo tier C, free emails and vague text | {s['never_contacted']} leads (plus duplicates left at New) |
+| Never contacted | {never_rule} | {s['never_contacted']} leads (plus duplicates left at New) |
 
 Other deliberate mess: phone numbers in mixed formats, some invalid ("12345"); company names typed with
 or without the legal suffix, sometimes lowercase; bots share a handful of IP addresses.
@@ -385,4 +414,7 @@ or without the legal suffix, sometimes lowercase; bots share a handful of IP add
 **Selection bias warning:** never-contacted leads have no outcome, and they are mostly the ones that
 looked weak. Training only on decided leads under-represents weak-looking leads.
 """
+    if v2:
+        from v2_checks import render_v2_section  # sibling module (evaluation side, reads ground truth)
+        lines += "\n" + render_v2_section(d, cfg)
     return lines
