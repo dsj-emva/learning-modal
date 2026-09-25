@@ -116,9 +116,11 @@ Project `learning-modal`, environment `production`, service `app` (ids in `docs/
      With this set the container starts as root, `scripts/serve.sh` chowns `/data` and drops to uid 1000
      before starting Streamlit; without it `serve.sh` exits with an explanatory error.
 5. **Domain:** Settings -> Networking -> Generate Domain (port 8080).
-6. **First run:** open the domain, log in with `APP_PASSWORD`, upload the four CRM CSVs on "Upload CRM data"
-   (`historical_leads.csv`, `crm_history.csv`, `companies.csv`, `people.csv`; `data/v1/` has samples), train,
-   then view the results.
+6. **First run:** open the domain, log in with `APP_PASSWORD`, and on "Upload & train" upload the CRM exports
+   (`historical_leads.csv`, `crm_history.csv`, `companies.csv`, optionally `people.csv`, which the model never
+   reads) plus the optional `status_quo_rules.json`, which the status-quo benchmark and the standard report need;
+   `data/v1/` has samples, and the bundled sample can be trained without uploading. Validate, save, train, then
+   open "Model results".
 
 ## Context for agents and engineers
 
