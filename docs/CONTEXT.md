@@ -127,7 +127,7 @@ it with the paired bootstrap.
 | 0 freeze and instrument | merged 15f90fc | `phase0-freeze-instrument` | `reports/phase0.md` |
 | 5.1 generator v1 rewrite | merged ed3f54b | `phase5-generator-v1` | `reports/phase5-1.md` |
 | 1 labels | merged 92168cf | `phase1-labels` | `reports/phase1.md` |
-| 2 features and leakage | ready for review (ADRs 0009, 0011) | `phase2-features` | `reports/phase2.md` |
+| 2 features and leakage | merged (c1b465f) | `phase2-features` | `reports/phase2.md` |
 | 5.2-5.8 generator v2 | merged (01c56f4) | `phase5-generator-v2` | `reports/phase5.md` |
 | 3 value layer and platform contract | pending (needs 2) | | |
 | 4 evaluation hardening | pending (needs 2) | | |

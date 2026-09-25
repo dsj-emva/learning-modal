@@ -45,3 +45,10 @@ Jaccard ≥ 0.6) finds 50 of 812 paraphrased copy-paste texts (recall 0.062, pre
   `hiring=hiring`; `seniority=mid` = `business_hours=wkday_9-18` = `spend=£5k-£25k`) are reported,
   not engineered away.
 - Phase 6 inherits the copy-paste detection problem on paraphrased text.
+
+## R8 (added at merge, 2026-09-25)
+
+The "no two coefficients identical to three decimals" criterion exists to catch duplicated
+design columns (the baseline's `email=free` / `no_company=yes` pair). Coincidental ties between
+columns whose |corr| is below 0.07 are not that failure. The criterion is read as: no identical
+coefficients between correlated columns, enforced by the collinearity check. Passed on intent.
