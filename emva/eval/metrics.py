@@ -57,6 +57,19 @@ def tie_averaged_top_share(target: pd.Series, score: np.ndarray, frac: float = T
     return float((t[above].sum() + frac_at * t[at].sum()) / t.sum())
 
 
+def bottom_share(flag: pd.Series, score: np.ndarray, frac: float) -> float:
+    """Mean of boolean ``flag`` among the ``int(len * frac)`` rows with the lowest ``score``.
+
+    Uses a stable sort, so rows tied at the cut are taken in their original order.
+    Raises ``ValueError`` if the cut is empty or the lengths differ.
+    """
+    s = np.asarray(score, dtype=float)
+    if len(s) != len(flag):
+        raise ValueError(f"score length {len(s)} != flag length {len(flag)}")
+    idx = np.argsort(s, kind="stable")[:_cut_size(len(s), frac)]
+    return float(np.asarray(flag, dtype=float)[idx].mean())
+
+
 def summary(name: str, y: pd.Series, p: np.ndarray, rev: pd.Series, value: np.ndarray | None = None) -> dict:
     """The baseline's summary row (``baseline/emva_score.py::report``, unchanged).
 

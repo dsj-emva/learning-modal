@@ -1,31 +1,30 @@
 """Run a named experiment end to end: ``python scripts/run_experiments.py NAME [--data DIR]``.
 
-Writes the pipeline's outputs to ``runs/NAME/`` and the standard report to
-``runs/NAME/report.md``. Phase 0 has one experiment, ``baseline`` (the current ``emva``
-pipeline with default settings); later phases register theirs in ``EXPERIMENTS``.
+Writes the pipeline's outputs to ``runs/NAME/`` and the standard report (with that
+experiment's model as the candidate) to ``runs/NAME/report.md``. Each experiment is a label
+definition: ``baseline`` is the legacy labels (equal to the frozen baseline), ``horizon`` the
+Phase 1 default, and the others the Phase 1 comparison flags.
 """
 from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Callable
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
 from emva.eval.report import build_report  # noqa: E402 (needs the repo on sys.path)
+from emva.labels import HORIZON, LEGACY, LabelConfig  # noqa: E402
 from emva.pipeline import run, write_outputs  # noqa: E402
 
-
-def baseline(data: Path, out: Path) -> None:
-    """The ``emva`` pipeline with default settings (equal to the frozen baseline in Phase 0)."""
-    result = run(data)
-    print(result.summary.to_string(index=False))
-    write_outputs(result, out)
-
-
-EXPERIMENTS: dict[str, Callable[[Path, Path], None]] = {"baseline": baseline}
+EXPERIMENTS: dict[str, LabelConfig] = {
+    "baseline": LEGACY,
+    "horizon": HORIZON,
+    "horizon-include-ghosted": LabelConfig(include_ghosted=True),
+    "horizon-stalled-as-lost": LabelConfig(stalled_as_lost=True),
+    "horizon-both-flags": LabelConfig(include_ghosted=True, stalled_as_lost=True),
+}
 
 
 def main() -> None:
@@ -36,8 +35,11 @@ def main() -> None:
     a = ap.parse_args()
     out = REPO / "runs" / a.name
     out.mkdir(parents=True, exist_ok=True)
-    EXPERIMENTS[a.name](Path(a.data), out)
-    (out / "report.md").write_text(build_report(a.data) + "\n")
+    labels = EXPERIMENTS[a.name]
+    result = run(Path(a.data), labels=labels)
+    print(result.summary.to_string(index=False))
+    write_outputs(result, out)
+    (out / "report.md").write_text(build_report(a.data, labels=labels) + "\n")
     print(f"wrote {out}/weights.csv, scores.csv, report.md")
 
 

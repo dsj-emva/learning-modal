@@ -8,9 +8,14 @@ from sklearn.linear_model import LogisticRegression
 from emva.constants import LR_C, LR_MAX_ITER, POINTS_TO_DOUBLE_ODDS
 
 
+def make_lr() -> LogisticRegression:
+    """The unfitted formula model: L2 logistic regression with ``LR_C`` and ``LR_MAX_ITER``."""
+    return LogisticRegression(C=LR_C, max_iter=LR_MAX_ITER)
+
+
 def fit_lr(D: pd.DataFrame, y: pd.Series, tr: pd.Series) -> LogisticRegression:
-    """Fit the L2 logistic regression on the rows selected by the boolean mask ``tr``."""
-    return LogisticRegression(C=LR_C, max_iter=LR_MAX_ITER).fit(D[tr], y[tr])
+    """Fit the formula model on the rows selected by the boolean mask ``tr``."""
+    return make_lr().fit(D[tr], y[tr])
 
 
 def predict(lr: LogisticRegression, D: pd.DataFrame) -> np.ndarray:

@@ -1,10 +1,12 @@
-"""Bootstrap confidence intervals for AUC and paired AUC comparisons.
+"""Bootstrap confidence intervals for AUC, paired AUC comparisons and model coefficients.
 
-Percentile bootstrap over test rows (resampled with replacement). Resamples that contain a
-single class have no AUC and are redrawn, so every result has exactly ``n_resamples`` values.
+Percentile bootstrap over rows (resampled with replacement). Resamples that contain a
+single class have no AUC (and no classifier fit) and are redrawn, so every result has
+exactly ``n_resamples`` values.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
@@ -95,3 +97,21 @@ def paired_auc(y: np.ndarray, score_a: np.ndarray, score_b: np.ndarray, n_resamp
     auc_a, auc_b = float(roc_auc_score(y, a)), float(roc_auc_score(y, b))
     p = min(1.0, 2 * min(float((diffs <= 0).mean()), float((diffs >= 0).mean())))
     return PairedComparison(auc_a=auc_a, auc_b=auc_b, diff=_percentile_ci(auc_b - auc_a, diffs, level), p_value=p)
+
+
+def coef_bootstrap(X: np.ndarray, y: np.ndarray, fit: Callable[[np.ndarray, np.ndarray], np.ndarray],
+                   n_resamples: int = N_RESAMPLES, level: float = CI_LEVEL, seed: int = SEED) -> list[BootstrapCI]:
+    """Percentile CI for each coefficient returned by ``fit(X, y)``, refitting on resampled training rows.
+
+    ``fit`` takes a design matrix and binary labels and returns a 1-D coefficient vector (for
+    example ``lambda X, y: LogisticRegression(...).fit(X, y).coef_[0]``). The point estimate
+    is the fit on all rows. Returns one ``BootstrapCI`` per coefficient, in ``fit``'s order.
+    """
+    X, y = np.asarray(X, dtype=float), np.asarray(y, dtype=float)
+    if len(X) != len(y):
+        raise ValueError(f"X has {len(X)} rows but y has {len(y)}")
+    _check(y)
+    point = np.asarray(fit(X, y), dtype=float)
+    rng = np.random.default_rng(seed)
+    samples = np.array([fit(X[i], y[i]) for i in _resample_indices(y, n_resamples, rng)], dtype=float)
+    return [_percentile_ci(float(point[j]), samples[:, j], level) for j in range(len(point))]

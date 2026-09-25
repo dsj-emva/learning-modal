@@ -1,7 +1,9 @@
 """End-to-end pipeline: load -> clean -> label -> features -> design -> fit -> value -> summary.
 
-``run`` reproduces ``baseline/emva_score.py::main`` step for step (Phase 0: no behaviour
-change); ``emva/__main__.py`` does the printing and file writing.
+With ``labels=LEGACY`` ``run`` reproduces ``baseline/emva_score.py::main`` step
+for step, byte for byte. The default (``horizon``, plan 1.2 to 1.5) trains and evaluates on
+the fixed-horizon label over mature leads only. ``emva/__main__.py`` does the printing and
+file writing.
 """
 from __future__ import annotations
 
@@ -17,11 +19,11 @@ from emva.design import design
 from emva.eval.metrics import summary
 from emva.features import add_features
 from emva.io import clean, load
-from emva.labels import label, split_masks
+from emva.labels import HORIZON, LabelConfig, assign_labels, split_masks
 from emva.model import fit_lr, predict, scorecard
 from emva.value import deal_value_design, expected_value, fit_deal_value, predict_deal_value, realised_revenue
 
-# Columns written to scores.csv, in this order, when present.
+# Columns written to scores.csv, in this order, when present (legacy mode: exactly the baseline's).
 SCORE_COLUMNS: tuple[str, ...] = ("p_formula", "deal_value_hat", "value_formula", "p_combined", "value_combined", "y")
 
 
@@ -29,9 +31,11 @@ SCORE_COLUMNS: tuple[str, ...] = ("p_formula", "deal_value_hat", "value_formula"
 class PipelineResult:
     """Everything ``run`` produces.
 
-    ``X`` holds one row per cleaned lead with features, ``y`` and all score columns;
-    ``train``/``test`` are boolean masks over ``X``; ``summary`` is the printed metrics table;
-    ``messages`` are the context-mode lines printed before it.
+    ``X`` holds one row per cleaned lead with features, label columns and all score columns;
+    ``train``/``test`` are boolean masks over ``X``; ``summary`` is the printed metrics table
+    (empty when there are no labelled test leads, with a line in ``messages`` saying so);
+    ``messages`` are the context-mode lines printed before it; ``labels`` is the label
+    definition used.
     """
 
     X: pd.DataFrame
@@ -40,29 +44,33 @@ class PipelineResult:
     design: pd.DataFrame
     weights: pd.DataFrame
     summary: pd.DataFrame
+    labels: LabelConfig
     messages: list[str] = field(default_factory=list)
 
     def scores(self) -> pd.DataFrame:
-        """The scores.csv frame (indexed by ``lead_id``)."""
-        return self.X[[c for c in SCORE_COLUMNS if c in self.X]]
+        """The scores.csv frame (indexed by ``lead_id``): ``SCORE_COLUMNS`` plus the label config's extra columns."""
+        cols = SCORE_COLUMNS + self.labels.extra_score_columns()
+        return self.X[[c for c in cols if c in self.X]]
 
 
-def build(L: pd.DataFrame) -> pd.DataFrame:
-    """Clean, label and featurise loaded leads (``baseline/emva_score.py::build``)."""
+def build(L: pd.DataFrame, labels: LabelConfig = HORIZON) -> pd.DataFrame:
+    """Clean, label and featurise loaded leads (``baseline/emva_score.py::build`` in legacy mode)."""
     X = clean(L)
-    X["y"] = label(X)
+    assign_labels(X, labels)
     return add_features(X)
 
 
 def run(data: str | Path, margin: float = 1.0, context: str | Path | None = None,
-        test_from: str = TEST_FROM) -> PipelineResult:
+        test_from: str = TEST_FROM, labels: LabelConfig = HORIZON) -> PipelineResult:
     """Train the formula and deal-value models on ``data`` and score every cleaned lead.
 
-    With ``context`` (an agent output CSV), also fit formula-only, context-only and
-    formula+context models on the rows that have a context score and summarise all three.
+    ``labels`` picks the label definition; in horizon mode only mature leads enter the
+    train and test sets. With ``context`` (an agent output CSV), also fit formula-only,
+    context-only and formula+context models on the rows that have a context score and
+    summarise all three.
     """
-    X = build(load(data))
-    tr, te = split_masks(X, test_from)
+    X = build(load(data), labels)
+    tr, te = split_masks(X, test_from, labels.eligible(X))
     D = design(X)
     lr = fit_lr(D, X.y, tr)
     X["p_formula"] = predict(lr, D)
@@ -76,8 +84,14 @@ def run(data: str | Path, margin: float = 1.0, context: str | Path | None = None
     weights = scorecard(lr, D.columns)
 
     T = X[te]
-    rows = [summary("formula", T.y, T.p_formula.values, realised_revenue(T), T.value_formula.values)]
     messages: list[str] = []
+    if te.any():
+        rows = [summary("formula", T.y, T.p_formula.values, realised_revenue(T), T.value_formula.values)]
+    else:
+        # e.g. a horizon so long that no lead created on or after test_from is mature yet
+        rows = []
+        messages.append(f"no labelled test leads ({labels.describe()} labels, created on or after {test_from}); "
+                        "test metrics skipped")
 
     if context:
         X["context_logit"] = context_logit(context, X.index)
@@ -85,6 +99,8 @@ def run(data: str | Path, margin: float = 1.0, context: str | Path | None = None
         messages.append(f"context scores for {have.sum()} of {len(X)} leads")
         # same rows for both models so the comparison is fair
         tr2, te2 = tr & have, te & have
+        if not te2.any():
+            raise ValueError("no labelled test leads have a context score; cannot compare the context models")
         base = fit_lr(D, X.y, tr2)
         both = fit_lr(D.join(X.context_logit), X.y, tr2)
         X["p_base"] = predict(base, D)
@@ -99,7 +115,7 @@ def run(data: str | Path, margin: float = 1.0, context: str | Path | None = None
         X["value_combined"] = expected_value(X.p_combined, X.deal_value_hat, margin)
 
     return PipelineResult(X=X, train=tr, test=te, design=D, weights=weights,
-                          summary=pd.DataFrame(rows), messages=messages)
+                          summary=pd.DataFrame(rows), labels=labels, messages=messages)
 
 
 def write_outputs(result: PipelineResult, out: str | Path) -> None:
