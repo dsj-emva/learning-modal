@@ -2,7 +2,7 @@
 PY ?= .venv/bin/python
 DATA ?= data/v1
 
-.PHONY: baseline report test compile experiment
+.PHONY: baseline report report-full test compile experiment
 
 ## baseline: frozen baseline and emva/ must reproduce the published metrics and weights
 baseline:
@@ -11,6 +11,11 @@ baseline:
 ## report: standard table (baseline vs candidate vs status quo) on the frozen test set
 report:
 	"$(PY)" -m emva.eval.report --data "$(DATA)"
+
+## report-full: Phase 4 hardening (rolling origin, subsampling, ceiling, calibration decay, C sweep, interactions)
+## plus the standard report, on data/v2 (headline) and data/v1, into reports/phase4.md (cached under runs/phase4/)
+report-full:
+	"$(PY)" -m emva.eval.hardening --data data/v2 data/v1 --out reports/phase4.md
 
 ## test: unit + integration tests, then a compile check
 test:

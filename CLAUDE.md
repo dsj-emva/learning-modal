@@ -71,6 +71,7 @@ python3.11 -m venv .venv && .venv/bin/pip install -r requirements.txt   # pinned
 make baseline      # frozen baseline + `python -m emva --label-mode legacy` must give AUC 0.814, Brier 0.1006, top-20% wins 0.571, revenue 0.795, canonical weights
 make test          # pytest (193 passed at the Phase 1 merge, ~60 s) then compileall
 make report        # standard report on data/v1, both test definitions
+make report-full   # Phase 4 hardening + standard report, data/v2 + data/v1 -> reports/phase4.md; how later phases inherit Phase 4 (R16, ADR 0013); ~10 min uncached, cached in runs/phase4/
 make experiment NAME=horizon   # runs/NAME/ outputs + report; names in scripts/run_experiments.py
 ```
 
@@ -94,7 +95,9 @@ The report also takes `--strict` (exit 1 when the candidate design fails the col
 
 The same label flags work on `python -m emva.eval.report`, where they change only the candidate.
 Other entry points: `python -m emva.eval.label_study`, `python -m emva.eval.ground_truth_reference`
-(reads ground truth), `python -m emva.context.agent --data data/v2 [--ids FILE] [--limit N] [--dry-run]`
+(reads ground truth), `python -m emva.eval.hardening [--data data/v2 data/v1] [--out FILE] [--no-cache]`
+(Phase 4; the headline number is its rolling-origin mean on v2, ADR 0013),
+`python -m emva.context.agent --data data/v2 [--ids FILE] [--limit N] [--dry-run]`
 (judgments CSV + committed cache in `data/v2/context/`), `python scripts/run_context_agent.py [--probe N]`,
 `python -m emva.eval.context_harness {sample,evaluate}` (reads ground truth).
 
@@ -146,7 +149,8 @@ emva/cli.py          label flags shared by python -m emva and the report;  emva/
 emva/context/        card.py (lead card), contract.py (enum judgments), agent.py (SDK runtime), cache.py, features.py (ctx_ dummies)
 emva/eval/           bootstrap, metrics, regression, status_quo, report, label_study, ground_truth_reference,
                      collinearity, feature_selection, phase2_study, value_report (value transforms, click-ID coverage),
-                     context_harness
+                     context_harness; Phase 4: hardening (entry point), rolling, subsampling, ceiling (reads
+                     ground truth), calibration_decay, regularisation, interactions
 scripts/             check_baseline (make baseline), run_experiments, generate_data_v1, ground_truth_report, compare_to_v1
 tests/               pytest, one file per module + integration; conftest runs v1 in legacy and horizon mode
 reports/             one write-up per task; docs/ context layer (this set of files); docs/platform_contract.md (upload design)
@@ -180,7 +184,7 @@ reports/             one write-up per task; docs/ context layer (this set of fil
 | 2 features and leakage | merged (c1b465f) | `phase2-features` | `reports/phase2.md` |
 | 5.2-5.8 generator v2 | merged (01c56f4) | `phase5-generator-v2` | `reports/phase5.md` |
 | 3 value layer | merged (a13491d) | `phase3-value` | `reports/phase3.md` |
-| 4 evaluation hardening | pending (needs Phase 2) | | |
+| 4 evaluation hardening | merged (3e374e8) | `phase4-eval-hardening` | `reports/phase4.md` |
 | 6 context agent v2 | merged (9e3dfae) | `phase6-context-agent` | `reports/phase6.md` |
 | 7 production readiness doc | ready for review | `phase7-production-doc` | `reports/production.md`, ADR 0017 (Proposed) |
 
