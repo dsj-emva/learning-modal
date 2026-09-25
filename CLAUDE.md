@@ -186,7 +186,7 @@ reports/             one write-up per task; docs/ context layer (this set of fil
 | 3 value layer | merged (a13491d) | `phase3-value` | `reports/phase3.md` |
 | 4 evaluation hardening | merged (3e374e8) | `phase4-eval-hardening` | `reports/phase4.md` |
 | 6 context agent v2 | merged (9e3dfae) | `phase6-context-agent` | `reports/phase6.md` |
-| 7 production readiness doc | ready for merge | `phase7-production-doc` | `reports/production.md`, ADR 0017 (Proposed) |
+| 7 production readiness doc | merged (fa9bc4d) | `phase7-production-doc` | `reports/production.md`, ADR 0017 (Proposed) |
 
 ## Do not
 

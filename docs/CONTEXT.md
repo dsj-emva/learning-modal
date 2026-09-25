@@ -163,7 +163,7 @@ it with the paired bootstrap.
 | 3 value layer | merged (a13491d) | `phase3-value` | `reports/phase3.md` |
 | 4 evaluation hardening | merged (3e374e8) | `phase4-eval-hardening` | `reports/phase4.md` |
 | 6 context agent v2 | merged (9e3dfae) | `phase6-context-agent` | `reports/phase6.md` |
-| 7 production readiness document | ready for merge | `phase7-production-doc` | `reports/production.md`, ADR 0017 (Proposed) |
+| 7 production readiness document | merged (fa9bc4d) | `phase7-production-doc` | `reports/production.md`, ADR 0017 (Proposed) |
 
 Open question carried from Phase 1 (not yet ruled): should young `crm_lost` leads be 0 rather than NaN?
 It changes only `scores.csv` today.
