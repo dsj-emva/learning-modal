@@ -16,27 +16,50 @@ simulated data** (`data/v2`, generator v2 as merged at 01c56f4).
   detector on the same rows (R6).
 - The context features are close to orthogonal to the formula: combined context score vs formula logit
   r = 0.13; largest single column |r| = 0.33.
-- **But the planted persona is worth very little AUC.** Even the generator's own true probability gains only
+- **The planted persona is worth very little AUC.** Even the generator's own true probability gains only
   0.0037 AUC from the persona term over all labelled leads (0.0095 on the persona-enriched sample); the
-  cross-fitted oracle gap on the sample is 0.0037 [-0.0050, 0.0114], not distinguishable from zero. The
-  "recover more than half of the gap" criterion cannot be passed or failed meaningfully at n = 1,000, and no
-  individual `persona` weight is significant. **Two of the four acceptance criteria fail** (below).
+  cross-fitted oracle gap on the sample is 0.0037 [-0.0050, 0.0114], not distinguishable from zero. Under
+  ruling R12 that criterion is recorded as **unmeasurable** at this effect size (not passed), and acceptance
+  moves to the coefficient level.
+- **R12 coefficient criterion: PASS.** With persona pooled at the feature level (R13), the weight of
+  `ctx_persona_group=non_buyer` next to the formula is **-0.606 [-1.067, -0.179]**, against the oracle
+  persona weight **-0.612 [-1.021, -0.209]** on the same 1,000 rows. Caveat: inside the full combined model
+  (all 13 context columns) the same column is -0.383 [-0.887, 0.156], not significant; the other judgments
+  share part of its signal.
+
+## Orchestrator decisions (review of Phase 6)
+
+- **R12 (ADR 0016).** The AUC-gap criterion ("recover more than half of the planted gap") is recorded as
+  unmeasurable at the planted effect size (oracle gap +0.0037 [-0.005, +0.011]); it is not restated as
+  passed. The acceptance for context features from now on is coefficient-level: the context feature's
+  weight must have a 95% CI excluding zero and lie within the oracle weight's CI on the same rows.
+- **R13 (ADR 0016).** Persona is pooled at the feature level in `emva/context/features.py`:
+  `ctx_persona_group` in {buyer, non_buyer (vendor, student, job_seeker, competitor, nonprofit,
+  agency_pitching), unclear}, reference buyer. The contract enum stays fine-grained (no prompt or contract
+  version bump, no new API calls). **The pooling rule was chosen after seeing the per-level results of this
+  run.** It is applied to the unchanged cached judgments and is now fixed in code, so the next customer run
+  is pre-registered. The per-level weights stay below as secondary, marked underpowered.
+- **R14.** `agency_pitching` stays in the contract; Haiku's vendor/agency confusion (38 of 67 agency leads
+  called `vendor`) is documented, and both pool to non_buyer under R13.
+- **R15.** Sample design (300 persona / 700 other, labelled leads only, seed 0) accepted; cross-fitting is
+  the primary comparison, the time split secondary.
+- ADR 0014 (context contract) is Accepted. `matplotlib` stays pinned in `requirements.txt`. The `.env`
+  loader is shared in `emva/env.py` (agent and `scripts/paraphrase_templates.py`).
 
 ## Acceptance
 
 | criterion | result | evidence | pass/fail |
 |---|---|---|---|
-| Combined model recovers > 1/2 of the planted context-only gap | fraction recovered **1.13 [95% CI -8.66, 8.86]**; formula + context AUC diff 0.0042 [-0.0074, 0.0163] (p 0.47); oracle gap 0.0037 [-0.0050, 0.0114] (p 0.38) | 6.6 table below; gap computed in this harness (Phase 4 oracle numbers were not on `origin` when this finished) | **FAIL** (not demonstrated: the gap itself is not significant, so its fraction has no usable CI) |
-| `persona` weights individually significant | 0 of 7 persona levels have a CI excluding 0 (e.g. competitor -0.35 [-0.97, 0.20], job_seeker -0.14 [-0.79, 0.45]) | weights table below | **FAIL** |
-| Correlation of context features with the formula score reported and < 0.5 | combined context score r = 0.134; max single-column \|r\| = 0.333 (`is_real_business=no`) | correlation table below | PASS |
-| Same brief + model reproduces scores exactly from cache; brief edit gives a new `brief_hash` and a documented retrain | rerun: 1,000 hits, 0 requests, identical CSV; temp brief: new hash, all misses reported by `--dry-run` with no client | `tests/test_context.py::test_committed_cache_reproduces_the_committed_judgments_without_the_api`, `::test_brief_edit_is_a_new_hash_and_dry_run_reports_misses_without_calling`, `::test_dry_run_cli_reports_the_retrain_without_calling`; ADR 0014 | PASS |
+| **R12 (acceptance): pooled persona weight has a 95% CI excluding 0 and lies inside the oracle weight's CI, same rows** | `ctx_persona_group=non_buyer` in formula + `ctx_persona_group`: **-0.606 [-1.067, -0.179]**; oracle persona indicator: **-0.612 [-1.021, -0.209]**. Formula + `ctx_persona_group` AUC +0.0049 [-0.0048, 0.0143] (p 0.30). In the full 13-column combined model the column is -0.383 [-0.887, 0.156] | "R12 acceptance" table below; `emva.eval.context_harness.coefficient_criterion` | **PASS** |
+| Combined model recovers > 1/2 of the planted context-only gap (plan) | fraction recovered 1.87 [95% CI -10.6, 12.2]; formula + context AUC +0.0070 [-0.0051, 0.0195] (p 0.25); oracle gap +0.0037 [-0.0050, 0.0114] (p 0.38); model-free ceiling 0.0037 (all labelled) / 0.0095 (sample) | 6.5 and 6.6 below | **unmeasurable** (R12; not passed) |
+| `persona` weights individually significant (plan, per contract level) | 0 of 7 unpooled levels significant (e.g. competitor -0.35 [-0.97, 0.20]) | secondary table below | superseded by R12/R13 (underpowered at n = 1,000) |
+| Correlation of context features with the formula score reported and < 0.5 | combined context score r = 0.136; max single-column \|r\| = 0.333 (`is_real_business=no`) | correlation table below | PASS |
+| Same brief + model reproduces scores exactly from cache; brief edit gives a new `brief_hash` and a documented retrain | rerun after the R13 change: 1,000 hits, 0 requests, identical CSV; temp brief: new hash, all misses reported by `--dry-run` with no client | `tests/test_context.py::test_committed_cache_reproduces_the_committed_judgments_without_the_api`, `::test_brief_edit_is_a_new_hash_and_dry_run_reports_misses_without_calling`, `::test_dry_run_cli_reports_the_retrain_without_calling`; ADR 0014 | PASS |
 
-Per ground rule 5 the failing criteria are reported, not tuned. Nothing was changed after seeing the results
-except one exploratory line, clearly marked (a pooled non-buyer indicator), which is not used for
-acceptance. For the orchestrator: the evidence says the agent detects the persona (87% recall, 82%
-precision for "non-buyer") and that its pooled persona signal carries the same weight as the oracle
-(-0.64 [-1.09, -0.23] vs oracle -0.61 [-1.02, -0.21] on the same rows), but that the planted effect (-1.0 on
-8% of leads) is too small in AUC terms for the plan's criterion at this sample size. See "Open questions".
+The first submission of this report failed the two plan criteria (AUC gap, per-level persona weights);
+the orchestrator's rulings R12 and R13 replaced them. Nothing was re-run against the API; the pooled
+feature is computed from the same cached judgments. Formula + context AUC moved from +0.0042 to +0.0070
+because the design changed from 18 to 13 columns (unpooled to pooled persona).
 
 ## What was built
 
@@ -44,10 +67,10 @@ precision for "non-buyer") and that its pooled persona signal carries the same w
 |---|---|---|
 | 6.1 contract | `emva/context/contract.py` | `JUDGMENTS` (five enums), `reason` <= 30 words, `RESPONSE_SCHEMA` sent as `output_config` JSON schema (enums enforced server-side), `validate` raises `ContractError` = parse error |
 | 6.2 lead card | `emva/context/card.py` | `LeadCard(what_to_solve, company_typed, job_title, email_domain)`; test asserts no enrichment, spend, CRM, hiring, bucketed answers, telemetry, stage or outcome reaches the text |
-| 6.3 features | `emva/context/features.py` | `ctx_<judgment>` with declared levels, references yes / buyer / specific / none / partial, 18 fixed columns via `design.fixed_design` (ADR 0009); one stamp per file enforced; the legacy `context_score` file still works (baseline byte identity) |
+| 6.3 features | `emva/context/features.py` | `ctx_<judgment>` with declared levels; persona pooled into `ctx_persona_group` (buyer / non_buyer / unclear, `PERSONA_GROUPS`, R13); references yes / buyer / specific / none / partial; 13 fixed columns via `design.fixed_design` (ADR 0009); one stamp per file enforced; the legacy `context_score` file still works (baseline byte identity) |
 | 6.4 runtime | `emva/context/agent.py`, `emva/context/cache.py` | SDK client with `anthropic-workspace-id` (refuses to run without it), SDK retries off; `io.clean` before any call; transport errors (connection, timeout, 408/409/429/5xx) retried 1-2-4-8 s and logged; 400/401/403/404 raise; parse errors recorded and cached, never retried; `(brief_hash, prompt_version, model_id)` + `card_hash` on every row; <= 8 workers; `--dry-run` |
 | pipeline hook | `emva/pipeline.py` | `--context` now goes through `context_features`, which returns the judgment dummies or the legacy `context_logit`; formula vs formula+context on the same rows as in Phase 0 |
-| 6.5 harness | `emva/eval/context_harness.py` | sample, cross-fitting, oracle power curve, gap ratio with shared resamples, weight CIs, confusion, correlation, boilerplate recall, true-probability ceiling |
+| 6.5 harness | `emva/eval/context_harness.py` | sample, cross-fitting, oracle power curve, gap ratio with shared resamples, R12 `coefficient_criterion`, weight CIs (pooled and unpooled), confusion, correlation, boilerplate recall, true-probability ceiling |
 | 6.6 run | `scripts/run_context_agent.py`, `data/v2/context/` | `sample_ids.csv`, `cache.json` (committed), `context_judgments.csv`, `runs.jsonl` (counts per run) |
 
 Prompt (`PROMPT_VERSION = "judgments-v1"`): the system prompt defines each judgment and its values in
@@ -81,7 +104,8 @@ Reproduce: `python -m emva.eval.context_harness evaluate --data data/v2 --plot r
 
 The curve is flat and noisy because the gap it normalises by is tiny: at sd 0.25 the oracle keeps ~60% of
 a 0.0025 to 0.0037 AUC gap, and at sd >= 1 it keeps nothing on average. The real run's point estimate
-(1.13) sits above the curve but its CI spans the whole plot.
+(1.87) sits above the curve but its CI spans far beyond the plot; this is why R12 moves acceptance to
+the coefficient level.
 
 ### 6.5 Power curve (oracle persona feature + noise)
 
@@ -103,6 +127,15 @@ a 0.0025 to 0.0037 AUC gap, and at sd >= 1 it keeps nothing on average. The real
 | 1.000 | 0.780 | 0.001 | -1.262 | 0.873 |
 | 2.000 | 0.779 | -0.066 | -0.562 | 1.010 |
 
+### R12 acceptance: pooled persona weight vs oracle weight (same rows)
+
+| model (formula + ...) | weight of the persona column [95% CI] |
+|---|---|
+| `ctx_persona_group` (buyer / non_buyer / unclear): `ctx_persona_group=non_buyer` | -0.606 [-1.067, -0.179] |
+| true persona indicator (oracle) | -0.612 [-1.021, -0.209] |
+
+CI excludes zero: True; point inside the oracle CI: True. **R12: PASS.** Formula + `ctx_persona_group` AUC 0.7845, diff vs formula 0.0049 [-0.0048, 0.0143], p 0.302. The same column in the full combined model (all 13 context columns): -0.383 [-0.887, 0.156].
+
 ### 6.6 Real run: formula vs formula + context (same rows, cross-fitted)
 
 Rows: 1000 labelled sample leads with an ok judgment (184 wins, 300 with a planted persona). Status counts over the whole file: {'ok': 1000}.
@@ -110,14 +143,32 @@ Rows: 1000 labelled sample leads with an ok judgment (184 wins, 300 with a plant
 | model | AUC (out of fold) | diff vs formula [95% CI] | p |
 |---|---|---|---|
 | formula | 0.7796 | | |
-| formula + context | 0.7838 | 0.0042 [-0.0074, 0.0163] | 0.470 |
+| formula + context | 0.7866 | 0.0070 [-0.0051, 0.0195] | 0.250 |
 | formula + true persona (oracle) | 0.7833 | 0.0037 [-0.0050, 0.0114] | 0.382 |
 
-**Fraction of the oracle gap recovered: 1.131 [-8.656, 8.857]** (shared bootstrap resamples).
+**Fraction of the oracle gap recovered: 1.869 [-10.590, 12.246]** (shared bootstrap resamples).
 
 Oracle persona weight on the same rows: -0.612 [-1.021, -0.209].
 
-#### Context weights (formula + context fit on all rows; 1,000 bootstrap refits)
+#### Context weights (formula + all 13 context columns fit on all rows; 1,000 bootstrap refits)
+
+| feature | n | weight | lo | hi | significant |
+|---|---|---|---|---|---|
+| ctx_is_real_business=no | 102 | -0.131 | -0.859 | 0.550 | False |
+| ctx_is_real_business=unclear | 469 | -0.086 | -0.552 | 0.306 | False |
+| ctx_persona_group=non_buyer | 320 | -0.383 | -0.887 | 0.156 | False |
+| ctx_persona_group=unclear | 193 | 0.399 | -0.167 | 0.997 | False |
+| ctx_problem_specificity=vague | 408 | 0.272 | -0.121 | 0.695 | False |
+| ctx_problem_specificity=boilerplate | 115 | 0.166 | -0.427 | 0.744 | False |
+| ctx_problem_specificity=unrelated | 13 | -0.196 | -0.379 | -0.060 | True |
+| ctx_urgency=now | 54 | 0.525 | 0.007 | 1.029 | True |
+| ctx_urgency=this_quarter | 189 | 0.552 | 0.030 | 1.117 | True |
+| ctx_urgency=researching | 118 | -0.087 | -0.634 | 0.404 | False |
+| ctx_brief_fit=strong | 147 | 0.232 | -0.212 | 0.718 | False |
+| ctx_brief_fit=weak | 180 | -0.154 | -0.598 | 0.316 | False |
+| ctx_brief_fit=none | 432 | -0.180 | -0.751 | 0.312 | False |
+
+#### Secondary, underpowered: unpooled judgments (persona at its eight contract levels)
 
 | feature | n | weight | lo | hi | significant |
 |---|---|---|---|---|---|
@@ -140,10 +191,6 @@ Oracle persona weight on the same rows: -0.612 [-1.021, -0.209].
 | ctx_brief_fit=weak | 180 | -0.164 | -0.616 | 0.295 | False |
 | ctx_brief_fit=none | 432 | -0.306 | -0.799 | 0.126 | False |
 
-#### Exploratory (chosen after seeing the per-level CIs; not the acceptance test): one pooled `judged persona is not buyer/unclear` indicator
-
-320 rows flagged. Weight in formula + indicator: -0.641 [-1.092, -0.228]. AUC 0.7843, diff vs formula 0.0047 [-0.0049, 0.0133], p 0.296.
-
 #### Persona judged vs planted (evaluation only)
 
 | judged persona | agency_pitching | competitor | job_seeker | none | nonprofit |
@@ -159,19 +206,14 @@ Oracle persona weight on the same rows: -0.612 [-1.021, -0.209].
 
 #### Correlation of each context feature with the formula logit
 
-Formula fit on all pre-2026-05-01 labelled leads. Combined context score (context columns x their weights) vs formula logit: r = 0.134. Largest |r| of a single column: 0.333.
+Formula fit on all pre-2026-05-01 labelled leads. Combined context score (context columns x their weights) vs formula logit: r = 0.136. Largest |r| of a single column: 0.333.
 
 | feature | r |
 |---|---|
 | ctx_is_real_business=no | -0.333 |
 | ctx_is_real_business=unclear | -0.220 |
-| ctx_persona=vendor | -0.022 |
-| ctx_persona=student | -0.144 |
-| ctx_persona=job_seeker | 0.035 |
-| ctx_persona=competitor | 0.027 |
-| ctx_persona=nonprofit | -0.004 |
-| ctx_persona=agency_pitching | -0.011 |
-| ctx_persona=unclear | -0.315 |
+| ctx_persona_group=non_buyer | -0.035 |
+| ctx_persona_group=unclear | -0.315 |
 | ctx_problem_specificity=vague | -0.119 |
 | ctx_problem_specificity=boilerplate | -0.135 |
 | ctx_problem_specificity=unrelated | -0.136 |
@@ -195,20 +237,21 @@ Formula fit on all pre-2026-05-01 labelled leads. Combined context score (contex
 | model | auc | brier | top20_wins | top20_revenue |
 |---|---|---|---|---|
 | formula | 0.8100 | 0.1000 | 0.5830 | 0.7660 |
-| context_only | 0.5560 | 0.1229 | 0.3330 | 0.7050 |
-| formula+context | 0.7940 | 0.1030 | 0.5830 | 0.7660 |
+| context_only | 0.5760 | 0.1223 | 0.2500 | 0.7050 |
+| formula+context | 0.8030 | 0.1019 | 0.5830 | 0.7660 |
 
 ### Reading the weights
 
-- Only `urgency=now` (+0.54), `urgency=this_quarter` (+0.56) and `problem_specificity=unrelated` (-0.20, 13
-  rows) have CIs excluding 0. All persona levels point the right way except `unclear`, which gets +0.49: it
-  marks mostly blank or near-empty leads (r = -0.32 with the formula logit), which the formula already
-  penalises, so the context weight partly undoes that penalty.
-- The persona signal is spread over six non-buyer levels with 29 to 76 rows each, under L2 (C = 0.5)
-  shrinkage and alongside 11 other context columns; per-level CIs are about +/-0.6 wide. Pooled into one
-  indicator (exploratory) the same judgments give a significant -0.64, the same as the oracle's -0.61.
-- On the time split (108 test rows), formula + context is below formula (0.794 vs 0.810); with this few
-  rows neither number is informative.
+- In the full combined model only `urgency=now` (+0.53), `urgency=this_quarter` (+0.55) and
+  `problem_specificity=unrelated` (-0.20, 13 rows) have CIs excluding 0. `ctx_persona_group=non_buyer` is
+  -0.38 [-0.89, 0.16] there: next to eleven other context columns (several correlated with persona, e.g.
+  `brief_fit=none`) and under L2 (C = 0.5), part of its signal is shared. On its own next to the formula it
+  matches the oracle (R12 row).
+- `ctx_persona_group=unclear` gets +0.40: it marks mostly blank or near-empty leads (r = -0.32 with the
+  formula logit), which the formula already penalises, so the context weight partly undoes that penalty.
+- Unpooled, the persona signal is spread over six non-buyer levels with 29 to 76 rows each; per-level CIs
+  are about +/-0.6 wide (secondary table).
+- On the time split (108 test rows) no difference is informative.
 
 ## API usage and cost
 
@@ -217,6 +260,7 @@ Formula fit on all pre-2026-05-01 labelled leads. Combined context score (contex
 | probe (`--probe 20`), inspected before the full run | 20 | 0 | 20 | 20 | 0 | 0 |
 | full sample | 1,000 | 20 | 980 | 1,000 | 0 | 0 |
 | rerun (reproducibility) | 1,000 | 1,000 | 0 | 1,000 | 0 | 0 |
+| rerun after R12/R13 | 1,000 | 1,000 | 0 | 1,000 | 0 | 0 |
 | **total** | | | **1,000** (budget 1,300) | | **0** | **0** |
 
 From `data/v2/context/runs.jsonl`. No retries were needed. Cost estimate (token usage was not logged):
@@ -233,31 +277,27 @@ mocked or forbidden by a factory that raises).
    to either model; proportional allocation would give ~86 persona leads, under the plan's 150.
 3. **Gap computed here.** `origin/phase4-eval-hardening` did not exist when this finished, so the oracle gap
    is this harness's own (cross-fitted, same rows), plus a model-free ceiling from `p_close_true`.
-4. **matplotlib** added to `requirements.txt` (3.10.9, imported lazily inside `plot_power_curve`) for the
-   PNG; installed into the shared `.venv`.
-5. **Env loader.** `emva/context/agent.py` has its own `find_dotenv` / `load_env_var` (same behaviour as
-   `scripts/paraphrase_templates.py`): `emva/` must not import from `scripts/`, and that script is outside
-   this phase's files. Unlike the script, the agent refuses to run without `ANTHROPIC_WORKSPACE_ID`.
+4. **matplotlib** added to `requirements.txt`, pinned 3.10.9 (kept by the orchestrator), imported lazily
+   inside `plot_power_curve` for the PNG; installed into the shared `.venv`.
+5. **Env loader** (resolved at review): `emva/env.py` holds `find_dotenv` / `load_env_var`, imported by
+   `emva/context/agent.py` and `scripts/paraphrase_templates.py`. Unlike the script, the agent refuses to
+   run without `ANTHROPIC_WORKSPACE_ID`.
 6. **Legacy context format kept.** `context_features` still accepts `lead_id,context_score` so
    `tests/test_integration.py::test_context_mode_matches_baseline_script` (baseline byte identity) passes.
    The Phase 0 `requests`-based agent code is gone.
 7. **Parse errors are cached** (they are what the model said); only transport errors are left uncached.
-8. **One exploratory analysis** (pooled non-buyer indicator) was added after seeing the per-level CIs; it
-   is labelled as such and not used for acceptance.
+8. **Pooling chosen after the results** (now R13): the pooled persona feature was first shown as an
+   exploratory line after the per-level CIs were seen; the orchestrator made it the design (fixed in code,
+   same cached judgments, no new calls).
 9. **ADR number 0014** as instructed (0012 and 0013 are presumably Phases 3 and 4).
 10. **Brief**: `baseline/business_brief.md` is the committed brief (frozen, not edited).
 
 ## Open questions for the orchestrator
 
-1. **The persona criterion is underpowered by the generator's design.** With the true close probability the
-   persona term is worth 0.0037 AUC over all labelled leads. Options: (a) judge Phase 6 on detection and
-   weight evidence (87% persona recall, pooled weight = oracle weight) and record the AUC criterion as not
-   measurable (an ADR like 0011); (b) judge all 4,230 labelled leads (~3,230 more calls, ~$3.5; the ceiling
-   is still 0.0037); (c) raise the planted effect or share in a generator revision.
-2. **Persona encoding.** Should the design pool the non-buyer personas into one level (decided up front for
-   the next run, not after the fact), given that per-level weights are not estimable at this size?
-3. **Agency vs vendor.** Haiku calls 38 of 67 agency-pitching leads `vendor`. Both are "selling to us"
-   under the brief; merging them in the contract would be a prompt/contract version bump.
+1. **Combined-model persona weight.** R12 is judged on formula + `ctx_persona_group`. In the full combined
+   model the same column is not significant (-0.38 [-0.89, 0.16]). Should the next customer run judge R12
+   on the full model, or keep one feature at a time (as here)?
+2. The earlier questions (criterion power, persona encoding, agency vs vendor) are answered by R12 to R15.
 
 ## Standard report (`make report DATA=data/v2`)
 
