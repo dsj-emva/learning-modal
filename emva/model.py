@@ -23,14 +23,27 @@ def predict(lr: LogisticRegression, D: pd.DataFrame) -> np.ndarray:
     return lr.predict_proba(D)[:, 1]
 
 
+# Row label of the intercept in ``intercept_row``.
+INTERCEPT: str = "(intercept)"
+
+
+def _points_table(w: pd.Series) -> pd.DataFrame:
+    """``log_odds`` = ``w``, ``odds_multiplier`` = exp(w), ``points`` (``POINTS_TO_DOUBLE_ODDS`` points = odds double)."""
+    return pd.DataFrame({"log_odds": w, "odds_multiplier": np.exp(w), "points": w * POINTS_TO_DOUBLE_ODDS / np.log(2)})
+
+
 def coefficients(lr: LogisticRegression, columns: pd.Index) -> pd.DataFrame:
     """Unrounded coefficient table indexed by design column, in ``columns`` order.
 
     Columns: ``log_odds`` (the coefficient), ``odds_multiplier`` (``exp(log_odds)``) and ``points``
     (``POINTS_TO_DOUBLE_ODDS`` points = odds of closing double). ``scorecard`` is this table rounded and sorted.
     """
-    w = pd.Series(lr.coef_[0], index=columns)
-    return pd.DataFrame({"log_odds": w, "odds_multiplier": np.exp(w), "points": w * POINTS_TO_DOUBLE_ODDS / np.log(2)})
+    return _points_table(pd.Series(lr.coef_[0], index=columns))
+
+
+def intercept_row(lr: LogisticRegression) -> pd.DataFrame:
+    """The intercept as a one-row ``coefficients``-style table indexed by ``INTERCEPT``."""
+    return _points_table(pd.Series(lr.intercept_[:1], index=[INTERCEPT]))
 
 
 def scorecard(lr: LogisticRegression, columns: pd.Index) -> pd.DataFrame:
