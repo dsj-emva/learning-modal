@@ -181,7 +181,7 @@ reports/             one write-up per task; docs/ context layer (this set of fil
 | 5.2-5.8 generator v2 | merged (01c56f4) | `phase5-generator-v2` | `reports/phase5.md` |
 | 3 value layer | merged (a13491d) | `phase3-value` | `reports/phase3.md` |
 | 4 evaluation hardening | pending (needs Phase 2) | | |
-| 6 context agent v2 | ready for merge | `phase6-context-agent` | `reports/phase6.md` |
+| 6 context agent v2 | merged (9e3dfae) | `phase6-context-agent` | `reports/phase6.md` |
 | 7 production readiness doc | pending (needs all) | | |
 
 ## Do not

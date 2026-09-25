@@ -146,7 +146,7 @@ it with the paired bootstrap.
 | 5.2-5.8 generator v2 | merged (01c56f4) | `phase5-generator-v2` | `reports/phase5.md` |
 | 3 value layer | merged (a13491d) | `phase3-value` | `reports/phase3.md` |
 | 4 evaluation hardening | pending (needs 2) | | |
-| 6 context agent v2 | ready for merge | `phase6-context-agent` | `reports/phase6.md` |
+| 6 context agent v2 | merged (9e3dfae) | `phase6-context-agent` | `reports/phase6.md` |
 | 7 production readiness document | pending (needs all) | | |
 
 Open question carried from Phase 1 (not yet ruled): should young `crm_lost` leads be 0 rather than NaN?
