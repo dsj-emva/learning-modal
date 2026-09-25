@@ -362,3 +362,14 @@ def test_pipeline_context_path_joins_judgment_features(tmp_path, data_v1):
     assert res.summary.model.tolist() == ["formula", "context_only", "formula+context"]
     assert any(m.startswith("context weights in combined model: ctx_is_real_business=no") for m in res.messages)
 
+
+# --- the committed real run -------------------------------------------------------------------------
+
+def test_committed_cache_reproduces_the_committed_judgments_without_the_api():
+    ctx = DATA_V2 / "context"
+    ids = pd.read_csv(ctx / "sample_ids.csv").lead_id.tolist()
+    brief = (REPO / "baseline" / "business_brief.md").read_text(encoding="utf-8")
+    out, stats = run_agent(select_leads(DATA_V2, ids), brief, ReplyCache(ctx / "cache.json"), client_factory=no_client)
+    committed = pd.read_csv(ctx / "context_judgments.csv", keep_default_na=False)
+    assert stats.cache_hits == len(ids) == 1000 and stats.api_requests == 0
+    pd.testing.assert_frame_equal(out.fillna("").astype(str), committed.astype(str))
