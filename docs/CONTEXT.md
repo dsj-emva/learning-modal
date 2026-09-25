@@ -143,7 +143,7 @@ Claims policy: nothing from v1 is quoted externally. Internally, always with the
 | Horizon candidate AUC, legacy test set (v1) | 0.812 [0.788, 0.836] | `reports/phase1.md` |
 | Regenerated v1, 8 seeds | AUC 0.805 ± 0.013 | `reports/phase5-1.md` |
 | Baseline AUC on v2, legacy test set | 0.789 [0.763, 0.815] | `reports/phase5.md` |
-| **Rolling-origin headline** (ADR 0013), v2, pipeline defaults | **0.765 [0.739, 0.790]**, 4 sufficient splits, range 0.743 to 0.776 (v1: 0.789 [0.765, 0.813]) | `reports/phase4.md` (ready for review) |
+| **Rolling-origin headline** (ADR 0013), v2, pipeline defaults | **0.765 [0.739, 0.790]**, 4 sufficient splits, range 0.743 to 0.776 (v1: 0.789 [0.765, 0.813]) | `reports/phase4.md` |
 | Oracle ceiling (formula + interactions), v2 | 0.825 [0.800, 0.846] on the legacy test set (pipeline 0.804); 0.777 rolling | `reports/phase4.md` |
 | Planted context-only gap (true persona), v2 | +0.006 [+0.001, +0.009] AUC on the legacy test set; +0.002 [−0.001, +0.004] rolling | `reports/phase4.md` |
 | Customer-sized holdout (400 of 2,000 leads) | 95% CI width about 0.11 (± 0.055) | `reports/phase4.md` |
