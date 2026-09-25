@@ -11,6 +11,7 @@ from emva.constants import TEST_FROM
 from emva.eval.metrics import tie_averaged_top_share
 from emva.eval.regression import EXPECTED_SUMMARY, FROZEN_WEIGHTS, read_weights, weights_mismatches
 from emva.eval.status_quo import load_rules, status_quo_value
+from emva.features import FeatureSet
 from emva.io import load
 from emva.labels import LEGACY, LabelConfig
 from emva.pipeline import run, write_outputs
@@ -50,7 +51,7 @@ def test_context_mode_matches_baseline_script(tmp_path, data_v1):
     b_out.mkdir(), e_out.mkdir()
     proc = subprocess.run([sys.executable, "emva_score.py", "--data", str(data_v1), "--out", str(b_out),
                            "--context", str(ctx)], cwd=REPO / "baseline", capture_output=True, text=True, check=True)
-    result = run(data_v1, context=ctx, labels=LEGACY)
+    result = run(data_v1, context=ctx, labels=LEGACY, features=FeatureSet.LEGACY)
     write_outputs(result, e_out)
     printed = "\n".join(result.messages + [result.summary.to_string(index=False)]) + "\n"
     assert printed == proc.stdout
@@ -64,7 +65,8 @@ def test_cli_legacy_mode_reproduces_baseline_byte_for_byte(tmp_path, data_v1):
     base = subprocess.run([sys.executable, "emva_score.py", "--data", str(data_v1), "--out", str(b_out)],
                           cwd=REPO / "baseline", capture_output=True, text=True, check=True)
     proc = subprocess.run([sys.executable, "-m", "emva", "--data", str(data_v1), "--out", str(e_out),
-                           "--label-mode", "legacy"], cwd=REPO, capture_output=True, text=True, check=True)
+                           "--label-mode", "legacy", "--feature-set", "legacy"], cwd=REPO, capture_output=True, text=True,
+                          check=True)
     assert proc.stdout == base.stdout
     assert "formula 0.814 0.1006       0.571          0.795" in proc.stdout
     for name in ("scores.csv", "weights.csv"):
@@ -150,9 +152,24 @@ def test_report_contains_both_label_definitions(report_text, v1_horizon):
     assert "| legacy | 5588 (847) | 2453 (352) |" in labels
     assert "Candidate trained with: `horizon H=120`." in labels
     ghost = _section(report_text, "Bottom-decile ghosted share")
-    # the plan's "baseline 27%" is the still-New share on all legacy-labelled leads
+    # the plan's "baseline 27%" is the still-New share on all legacy-labelled leads (candidate: v2 features since Phase 2)
     row = next(line for line in ghost.splitlines() if line.startswith("| all leads labelled by legacy rules"))
-    assert row.startswith("| all leads labelled by legacy rules (train + test) | 8041 | 15.0% | 24.5% | 23.9% | 16.5% | 27.5% |")
+    assert row.startswith("| all leads labelled by legacy rules (train + test) | 8041 | 15.0% | 24.5% | 24.4% | 16.5% | 27.5% |")
+
+
+def test_report_runs_the_collinearity_check(report_text):
+    text = _section(report_text, "Design collinearity (plan 2.7)")
+    assert "Candidate design (`v2` features, 38 columns) on its 4049 training rows" in text
+    assert "- PASS: max |corr| = 0.772 between enrichment_missing=yes and band=missing" in text
+    assert "  - time_on_page=missing = channel=meta_leadads" in text
+
+
+def test_report_cli_exits_nonzero_when_the_candidate_is_collinear(data_v1):
+    proc = subprocess.run([sys.executable, "-m", "emva.eval.report", "--data", str(data_v1), "--n-resamples", "5",
+                           "--feature-set", "legacy"], cwd=REPO, capture_output=True, text=True)
+    assert proc.returncode == 1
+    assert "- FAIL (1 pairs with |corr| > 0.95): max |corr| = 1.000 between email=free and no_company=yes" in proc.stdout
+    assert "FAIL: candidate design collinearity check" in proc.stderr
 
 
 def test_horizon_pipeline_uses_mature_leads_only(v1_horizon):
