@@ -10,8 +10,8 @@ from emva.labels import (
     HORIZON,
     LEGACY,
     LabelConfig,
+    LabelMode,
     assign_labels,
-    eligible_rows,
     ghosted_at_horizon,
     horizon_label,
     is_mature,
@@ -116,6 +116,7 @@ HISTORIES: dict[str, tuple[pd.Timestamp, list[tuple[str, pd.Timestamp]]]] = {
                           [("New", EDGE + pd.Timedelta(seconds=1)), ("Contacted", EDGE + d), ("Lost", EDGE + 2 * d)]),
     "young_stalled": (AS_OF - 100 * d, [("New", AS_OF - 100 * d), ("Contacted", AS_OF - 95 * d)]),
     "edge_ghosted": (EDGE, [("New", EDGE)]),
+    "contacted_after_h_still_open": (MATURE, [("New", MATURE), ("Contacted", MATURE + H + d)]),
 }
 
 # lead_id -> (label_source, won_within_h, y default, y --include-ghosted, y --stalled-as-lost, legacy y)
@@ -136,7 +137,8 @@ EXPECTED: dict[str, tuple[str, float, float, float, float, float]] = {
     "young_open": ("open", N, N, N, N, N),
     "young_won": ("won", 1, 1, 1, 1, 1),                              # already Won before H: known 1
     "young_lost": ("crm_lost", N, N, N, N, 0),                        # young, not Won: unlabelled, never Lost
-    "young_new": ("ghosted", N, N, N, N, N),
+    "young_new": ("open", N, N, N, N, N),                             # New but younger than H: not ghosted yet
+    "contacted_after_h_still_open": ("ghosted", 0, N, 0, N, N),       # not contacted by H beats open
     "edge_mature_lost": ("crm_lost", 0, 0, 0, 0, 0),
     "edge_plus_1s_lost": ("crm_lost", N, N, N, N, 0),
     "young_stalled": ("stalled", N, N, N, N, 0),                      # flags never label a young lead
@@ -217,6 +219,7 @@ def test_matured_at_and_maturity(crm_leads):
 def test_ghosted_at_horizon_uses_first_contact_time(crm_leads):
     g = ghosted_at_horizon(crm_leads)
     assert g["ghosted_mature"] and g["contacted_after_h_then_lost"] and g["young_new"]
+    assert label_source(crm_leads)["young_new"] == "open"  # ghosted at H needs a mature lead
     assert not g["contacted_exactly_at_h_then_lost"] and not g["won_early"] and not g["stalled_mature_90d"]
 
 
@@ -235,13 +238,37 @@ def test_assign_labels_columns(crm_leads):
     X = assign_labels(crm_leads.copy(), HORIZON)
     assert {"label_source", "matured_at", "won_within_h", "y"} <= set(X.columns)
     X = assign_labels(crm_leads.copy(), LEGACY)
-    assert "label_source" in X and "matured_at" not in X and "won_within_h" not in X
+    assert "label_source" not in X and "matured_at" not in X and "won_within_h" not in X
     assert X.y.equals(label(crm_leads))
 
 
-def test_eligible_rows(crm_leads):
-    assert eligible_rows(crm_leads, LEGACY).all()
-    assert eligible_rows(crm_leads, HORIZON).equals(is_mature(crm_leads))
+def test_config_eligible_and_extra_columns(crm_leads):
+    assert LEGACY.eligible(crm_leads).all()
+    assert HORIZON.eligible(crm_leads).equals(is_mature(crm_leads))
+    assert LEGACY.extra_score_columns() == ()
+    assert HORIZON.extra_score_columns() == ("won_within_h", "label_source", "matured_at")
+
+
+def test_label_mode_accepts_enum_or_string():
+    assert LabelConfig(mode="legacy") == LEGACY and LEGACY.mode is LabelMode.LEGACY and LEGACY.is_legacy
+    assert LabelConfig(mode=LabelMode.HORIZON) == HORIZON and not HORIZON.is_legacy
+
+
+def test_legacy_mode_tolerates_an_unrecognised_stage(tmp_path):
+    # The baseline leaves an unmapped final stage unlabelled and carries on; legacy mode must too.
+    t0 = pd.Timestamp("2026-01-05T09:00:00Z")
+    pd.DataFrame({"lead_id": ["L1", "L2"], "created_at": [t0.isoformat()] * 2, "answers": ["{}"] * 2,
+                  "company_domain": ["a.example"] * 2}).to_csv(tmp_path / "historical_leads.csv", index=False)
+    pd.DataFrame({"lead_id": ["L1", "L1", "L2", "L2"], "stage": ["New", "On hold", "New", "Closed Lost"],
+                  "deal_value": [None] * 4,
+                  "changed_at": [t0.isoformat(), (t0 + d).isoformat(), t0.isoformat(), (t0 + d).isoformat()]}
+                 ).to_csv(tmp_path / "crm_history.csv", index=False)
+    pd.DataFrame({"domain": ["a.example"], "sector": ["x"], "employee_band": ["1-10"], "monthly_ad_spend_band": ["none"],
+                  "crm_platform": ["x"], "is_hiring": [False]}).to_csv(tmp_path / "companies.csv", index=False)
+    X = assign_labels(load(tmp_path), LEGACY)
+    assert np.isnan(X.y["L1"]) and X.y["L2"] == 0 and "label_source" not in X
+    with pytest.raises(ValueError, match="no recognised final CRM stage"):
+        assign_labels(load(tmp_path), HORIZON)
 
 
 def test_split_masks_eligible_restricts_both_sets():
@@ -255,7 +282,7 @@ def test_split_masks_eligible_restricts_both_sets():
 
 
 def test_label_source_rejects_unknown_stage():
-    X = pd.DataFrame([_row("Won", 10, 1), _row(None, 10, 1)])
+    X = pd.DataFrame([_row("Won", 10, 1), _row(None, 10, 1)]).assign(first_contact_at=pd.NaT)
     with pytest.raises(ValueError, match="no recognised final CRM stage"):
         label_source(X)
 

@@ -26,68 +26,99 @@ Two label definitions exist side by side (``--label-mode``, plan 1.5):
       - ``label_source == "stalled"``. ``stalled_as_lost=True`` (``--stalled-as-lost``)
         counts them as 0 instead.
 
-``label_source`` describes each lead's CRM state at ``as_of`` (plan 1.1); see
-``label_source`` for the exact definitions. Because a lead that is still New at
-``matured_at`` is, on data where stages never go back to New, either still New at ``as_of``
-or contacted after H, "ghosted at H" and ``label_source == "ghosted"`` coincide for mature
-leads unless the first contact came after H (never on v1, where first contact is at most
-10 days after creation).
+``label_source`` describes each lead's CRM state at ``as_of`` (plan 1.1; horizon mode only);
+see ``label_source`` for the exact definitions. Its ``ghosted`` is exactly the ghosted-at-H
+group above, restricted to mature leads; a lead still at New but younger than H is ``open``.
 
 Only mature leads may be used to train or evaluate horizon labels (``split_masks`` with
-``eligible=is_mature(...)``): young leads can only be labelled 1, so including them would
-bias the win rate upwards.
+``eligible=LabelConfig.eligible(X)``): young leads can only be labelled 1, so including them
+would bias the win rate upwards.
+
+Asymmetry between open and stalled (orchestrator ruling R2): a mature lead that is still in
+an open stage at ``as_of`` and was not Won by H is 0, because it demonstrably did not win
+within H. A stalled lead is in the same position but is censored by default (plan 1.4):
+stalling is read as sales neglect rather than a buyer decision. ``--stalled-as-lost`` shows
+the effect of treating it like any other mature non-win.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 
 import numpy as np
 import pandas as pd
 
-from emva.constants import (
-    AS_OF,
-    DEFAULT_LABEL_MODE,
-    GHOSTED_DAYS,
-    HORIZON_DAYS,
-    LABEL_MODES,
-    OPEN_STAGES,
-    STALLED_DAYS,
-    TEST_FROM,
-)
+from emva.constants import AS_OF, GHOSTED_DAYS, HORIZON_DAYS, OPEN_STAGES, STALLED_DAYS, TEST_FROM
+
+
+class LabelMode(str, Enum):
+    """``--label-mode``: ``legacy`` = the baseline rules, ``horizon`` = won within H days (default)."""
+
+    LEGACY = "legacy"
+    HORIZON = "horizon"
+
+
+# Columns the horizon mode adds to scores.csv (plan 1.1, 1.2): raw outcome, where the label came from, maturity date.
+HORIZON_SCORE_COLUMNS: tuple[str, ...] = ("won_within_h", "label_source", "matured_at")
 
 
 @dataclass(frozen=True)
 class LabelConfig:
     """Which label definition to use, and its options.
 
-    ``horizon_days``, ``include_ghosted`` and ``stalled_as_lost`` apply to the ``horizon``
-    mode only; setting either flag in ``legacy`` mode is an error (legacy already counts
-    ghosted and stalled leads as Lost).
+    ``mode`` accepts a ``LabelMode`` or its string value. ``horizon_days``, ``include_ghosted``
+    and ``stalled_as_lost`` apply to the horizon mode only; setting either flag in legacy mode
+    is an error (legacy already counts ghosted and stalled leads as Lost).
     """
 
-    mode: str = DEFAULT_LABEL_MODE
+    mode: LabelMode = LabelMode.HORIZON
     horizon_days: int = HORIZON_DAYS
     include_ghosted: bool = False
     stalled_as_lost: bool = False
 
     def __post_init__(self) -> None:
-        if self.mode not in LABEL_MODES:
-            raise ValueError(f"label mode must be one of {LABEL_MODES}, got {self.mode!r}")
-        if self.mode == "legacy" and (self.include_ghosted or self.stalled_as_lost):
+        """Coerce ``mode`` to ``LabelMode`` and reject option combinations that mean nothing."""
+        object.__setattr__(self, "mode", LabelMode(self.mode))  # ValueError for an unknown mode
+        if self.is_legacy and (self.include_ghosted or self.stalled_as_lost):
             raise ValueError("include_ghosted / stalled_as_lost only apply to the horizon label mode")
         if self.horizon_days < 1:
             raise ValueError(f"horizon_days must be positive, got {self.horizon_days}")
 
+    @property
+    def is_legacy(self) -> bool:
+        """True for the baseline label rules."""
+        return self.mode is LabelMode.LEGACY
+
     def describe(self) -> str:
         """Short human-readable name, e.g. ``horizon H=120`` or ``horizon H=120 +ghosted``."""
-        if self.mode == "legacy":
+        if self.is_legacy:
             return "legacy"
         flags = (" +ghosted" if self.include_ghosted else "") + (" +stalled-as-lost" if self.stalled_as_lost else "")
         return f"horizon H={self.horizon_days}{flags}"
 
+    def eligible(self, X: pd.DataFrame, as_of: pd.Timestamp = AS_OF) -> pd.Series:
+        """Rows allowed into training and evaluation: all rows (legacy) or mature rows (horizon)."""
+        if self.is_legacy:
+            return pd.Series(True, index=X.index)
+        return is_mature(X, self.horizon_days, as_of)
 
-LEGACY = LabelConfig(mode="legacy")
-HORIZON = LabelConfig(mode="horizon")
+    def extra_score_columns(self) -> tuple[str, ...]:
+        """Label columns written to scores.csv after the baseline's: none in legacy mode (byte identity)."""
+        return () if self.is_legacy else HORIZON_SCORE_COLUMNS
+
+
+LEGACY = LabelConfig(mode=LabelMode.LEGACY)
+HORIZON = LabelConfig(mode=LabelMode.HORIZON)
+
+
+def _idle_days(X: pd.DataFrame, as_of: pd.Timestamp) -> pd.Series:
+    """Whole days (floored) since the last CRM change, as the legacy stalled rule counts them."""
+    return (as_of - X.last_change).dt.days
+
+
+def _stalled(X: pd.DataFrame, as_of: pd.Timestamp) -> pd.Series:
+    """Last stage is one of ``OPEN_STAGES`` and unchanged for ``STALLED_DAYS`` or more whole days."""
+    return X.final_stage.isin(list(OPEN_STAGES)) & (_idle_days(X, as_of) >= STALLED_DAYS)
 
 
 def label(X: pd.DataFrame, as_of: pd.Timestamp = AS_OF) -> pd.Series:
@@ -95,45 +126,42 @@ def label(X: pd.DataFrame, as_of: pd.Timestamp = AS_OF) -> pd.Series:
 
     Needs ``created_at``, ``last_change`` and ``final_stage``. Later rules override earlier
     ones in this order: Won, Lost, stalled, ghosted (the rules are disjoint on stage anyway).
+    An unrecognised final stage (NaN) is simply unlabelled, as in the baseline.
     """
     age = (as_of - X.created_at).dt.days
-    idle = (as_of - X.last_change).dt.days
-    open_ = X.final_stage.isin(list(OPEN_STAGES))
     y = pd.Series(np.nan, index=X.index, name="y")
     y.loc[X.final_stage == "Won"] = 1
     y.loc[X.final_stage == "Lost"] = 0
-    y.loc[open_ & (idle >= STALLED_DAYS)] = 0          # stalled 90+ days = Lost
+    y.loc[_stalled(X, as_of)] = 0          # stalled 90+ days = Lost
     y.loc[(X.final_stage == "New") & (age >= GHOSTED_DAYS)] = 0  # ghosted 90+ days = Lost
     return y
 
 
-def label_source(X: pd.DataFrame, as_of: pd.Timestamp = AS_OF) -> pd.Series:
-    """Classify every lead by its CRM state at ``as_of`` (needs ``final_stage``, ``last_change``).
+def label_source(X: pd.DataFrame, horizon_days: int = HORIZON_DAYS, as_of: pd.Timestamp = AS_OF) -> pd.Series:
+    """Classify every lead by its CRM state at ``as_of``; first matching rule wins.
+
+    Needs ``final_stage``, ``last_change``, ``created_at`` and ``first_contact_at``.
 
     - ``won``: last CRM stage is Won.
     - ``crm_lost``: last CRM stage is Lost (the CRM recorded the loss).
+    - ``ghosted``: a mature lead (``created_at + horizon_days <= as_of``) that was not
+      contacted by ``matured_at`` (no change from New to another stage by then).
     - ``stalled``: last CRM stage is one of ``OPEN_STAGES`` (Contacted, Qualified, Demo booked,
       Proposal) and it has not changed for ``STALLED_DAYS`` (90) or more whole days at ``as_of``.
-    - ``ghosted``: last CRM stage is still New (sales never moved it on), whatever its age.
-    - ``open``: last CRM stage is one of ``OPEN_STAGES`` and it changed less than
-      ``STALLED_DAYS`` whole days before ``as_of``: active pipeline, not decided yet.
+    - ``open``: everything else still undecided: an open stage changed less than
+      ``STALLED_DAYS`` whole days ago, or a lead still at New that is younger than H.
 
-    Idle days are whole days (floored), as in the legacy stalled rule. Raises ``ValueError``
-    if any lead has no recognised final stage, rather than guessing a source for it.
+    Raises ``ValueError`` if any lead has no recognised final stage, rather than guessing a
+    source for it (legacy mode does not call this, so it never fails where the baseline runs).
     """
     stage = X.final_stage
     known = stage.isin(["Won", "Lost", "New", *OPEN_STAGES])
     if not known.all():
         bad = X.index[~known]
         raise ValueError(f"{len(bad)} leads have no recognised final CRM stage, e.g. {list(bad[:5])}")
-    idle = (as_of - X.last_change).dt.days
-    open_ = stage.isin(list(OPEN_STAGES))
-    # Every stage is recognised (checked above), so what is left is an open stage idle < STALLED_DAYS.
-    src = np.select(
-        [stage == "Won", stage == "Lost", open_ & (idle >= STALLED_DAYS), stage == "New"],
-        ["won", "crm_lost", "stalled", "ghosted"],
-        default="open",
-    )
+    ghosted = is_mature(X, horizon_days, as_of) & ghosted_at_horizon(X, horizon_days)
+    src = np.select([stage == "Won", stage == "Lost", ghosted, _stalled(X, as_of)], ["won", "crm_lost", "ghosted", "stalled"],
+                    default="open")
     return pd.Series(src, index=X.index, name="label_source")
 
 
@@ -168,14 +196,15 @@ def horizon_label(X: pd.DataFrame, config: LabelConfig = HORIZON, as_of: pd.Time
 
     Needs ``created_at``, ``won_at``, ``first_contact_at``, ``final_stage``, ``last_change``.
     Censoring only ever turns a 0 into NaN: a ghosted-at-H lead cannot have been Won by H,
-    and a stalled lead was never Won.
+    and a stalled lead was never Won. The two groups are censored independently of
+    ``label_source``'s precedence, so each flag controls exactly its own group.
     """
     y = won_within_h(X, config.horizon_days, as_of).rename("y")
     censor = pd.Series(False, index=X.index)
     if not config.include_ghosted:
         censor |= ghosted_at_horizon(X, config.horizon_days)
     if not config.stalled_as_lost:
-        censor |= label_source(X, as_of) == "stalled"
+        censor |= _stalled(X, as_of)
     y[censor & (y == 0)] = np.nan
     return y
 
@@ -183,32 +212,25 @@ def horizon_label(X: pd.DataFrame, config: LabelConfig = HORIZON, as_of: pd.Time
 def assign_labels(X: pd.DataFrame, config: LabelConfig, as_of: pd.Timestamp = AS_OF) -> pd.DataFrame:
     """Add label columns to ``X`` in place and return it.
 
-    Always adds ``label_source``. ``legacy`` adds ``y`` = ``label``. ``horizon`` adds
-    ``matured_at``, ``won_within_h`` (the outcome) and ``y`` = ``horizon_label`` (the outcome
-    with the configured censoring).
+    ``legacy`` adds ``y`` = ``label`` only. ``horizon`` adds ``label_source``, ``matured_at``,
+    ``won_within_h`` (the outcome) and ``y`` = ``horizon_label`` (the outcome with the
+    configured censoring).
     """
-    X["label_source"] = label_source(X, as_of)
-    if config.mode == "legacy":
+    if config.is_legacy:
         X["y"] = label(X, as_of)
         return X
+    X["label_source"] = label_source(X, config.horizon_days, as_of)
     X["matured_at"] = matured_at(X, config.horizon_days)
     X["won_within_h"] = won_within_h(X, config.horizon_days, as_of)
     X["y"] = horizon_label(X, config, as_of)
     return X
 
 
-def eligible_rows(X: pd.DataFrame, config: LabelConfig, as_of: pd.Timestamp = AS_OF) -> pd.Series:
-    """Rows allowed into training and evaluation: all rows (legacy) or mature rows (horizon)."""
-    if config.mode == "legacy":
-        return pd.Series(True, index=X.index)
-    return is_mature(X, config.horizon_days, as_of)
-
-
 def split_masks(X: pd.DataFrame, test_from: str = TEST_FROM,
                 eligible: pd.Series | None = None) -> tuple[pd.Series, pd.Series]:
     """Return ``(train, test)`` boolean masks: labelled rows created before / on-or-after ``test_from``.
 
-    ``eligible`` (for example ``is_mature``) further restricts both masks; None keeps every
+    ``eligible`` (for example ``LabelConfig.eligible(X)``) further restricts both masks; None keeps every
     labelled row (the legacy split).
     """
     lab = X.y.notna()

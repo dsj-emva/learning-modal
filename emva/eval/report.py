@@ -12,7 +12,7 @@ side by side for one release):
 
 (a) legacy: leads the baseline labels, created on or after ``TEST_FROM``, scored with the
     baseline's labels (the Phase 0 frozen test set, ground rule 4);
-(b) horizon: mature leads (``created_at + HORIZON_DAYS <= AS_OF``) created on or after
+(b) horizon (``FROZEN_HORIZON``): mature leads (``created_at + 120 days <= AS_OF``) created on or after
     ``TEST_FROM`` that the default horizon definition labels, scored with ``won_within_h``
     (ghosted leads excluded, stalled censored). This definition is fixed to the defaults
     whatever label options the candidate was trained with.
@@ -55,6 +55,9 @@ from emva.pipeline import run
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BASELINE_SCRIPT = REPO_ROOT / "baseline" / "emva_score.py"
 BOTTOM_FRACTION: float = 0.1
+# The horizon test definition (b) is frozen at the Phase 1 defaults (H = 120, ghosted excluded, stalled
+# censored) whatever options the candidate is trained with: ground rule 4 in REBUILD_PLAN.md.
+FROZEN_HORIZON: LabelConfig = HORIZON
 
 
 @dataclass
@@ -199,11 +202,11 @@ def label_sections(X: pd.DataFrame, legacy_y: pd.Series, test_a: TestSet, test_b
         rows.append({"label_source": src, "leads": int(m.sum()), "legacy y": _counts(legacy_y[m]),
                      "won_within_h": _counts(X.won_within_h[m]), "horizon y": _counts(X.y[m])})
     pre = X.created_at < TEST_FROM
-    mature = is_mature(X, HORIZON.horizon_days)
+    mature = is_mature(X, FROZEN_HORIZON.horizon_days)
     sizes = pd.DataFrame([
         {"definition": "legacy", "train (wins)": f"{int((legacy_y.notna() & pre).sum())} ({int((legacy_y[pre] == 1).sum())})",
          "test (wins)": f"{len(test_a.ids)} ({int(test_a.y.sum())})"},
-        {"definition": HORIZON.describe(),
+        {"definition": FROZEN_HORIZON.describe(),
          "train (wins)": f"{int((X.y.notna() & mature & pre).sum())} ({int((X.y[mature & pre] == 1).sum())})",
          "test (wins)": f"{len(test_b.ids)} ({int(test_b.y.sum())})"},
     ])
@@ -211,11 +214,11 @@ def label_sections(X: pd.DataFrame, legacy_y: pd.Series, test_a: TestSet, test_b
     return [
         "## Label definitions", "",
         f"Counts over all {len(X)} scored leads, as wins / losses / unlabelled. `label_source` is the CRM state at "
-        f"{AS_OF.date()}. legacy y = baseline rules. won_within_h = Won within {HORIZON.horizon_days} days of "
+        f"{AS_OF.date()}. legacy y = baseline rules. won_within_h = Won within {FROZEN_HORIZON.horizon_days} days of "
         "created_at (NaN if younger and not Won). horizon y = won_within_h with ghosted-at-H leads excluded and "
         "stalled leads censored (the default training and test label).", "",
         md_table(pd.DataFrame(rows)), "",
-        f"Mature = created_at + {HORIZON.horizon_days} days <= {AS_OF.isoformat()}: the latest mature lead was created "
+        f"Mature = created_at + {FROZEN_HORIZON.horizon_days} days <= {AS_OF.isoformat()}: the latest mature lead was created "
         f"{last.isoformat()}. Train = created before {TEST_FROM} (all mature); test = created on or after {TEST_FROM}.",
         "",
         md_table(sizes), "",
@@ -225,8 +228,8 @@ def label_sections(X: pd.DataFrame, legacy_y: pd.Series, test_a: TestSet, test_b
 
 def ghosted_share_section(X: pd.DataFrame, legacy_y: pd.Series, test_a: TestSet,
                           models: list[ScoredModel]) -> list[str]:
-    """Share of ghosted leads (``label_source == "ghosted"``) in the bottom decile of each model's p."""
-    mature = is_mature(X, HORIZON.horizon_days)
+    """Share of ghosted and of still-New leads in the bottom decile of each model's p, on several populations."""
+    mature = is_mature(X, FROZEN_HORIZON.horizon_days)
     window = X.created_at >= TEST_FROM
     populations = [
         ("all leads labelled by legacy rules (train + test)", legacy_y.notna()),
@@ -234,33 +237,38 @@ def ghosted_share_section(X: pd.DataFrame, legacy_y: pd.Series, test_a: TestSet,
         ("all mature leads, every label_source", mature),
         ("mature leads created on or after " + TEST_FROM + ", every label_source", mature & window),
     ]
-    gh = X.label_source == "ghosted"
+    flags = [("ghosted", X.label_source == "ghosted"), ("still New", X.final_stage == "New")]
     rows = []
     for name, mask in populations:
         mask = pd.Series(mask, index=X.index)
-        row = {"population": name, "n": int(mask.sum()), "ghosted share overall": f"{gh[mask].mean():.1%}"}
-        for m in models:
-            if m.p is not None:
-                row[f"{m.name} bottom decile"] = f"{bottom_share(gh[mask], m.p.loc[X.index[mask]].values, BOTTOM_FRACTION):.1%}"
+        row: dict[str, object] = {"population": name, "n": int(mask.sum())}
+        for flag_name, flag in flags:
+            row[f"{flag_name}: overall"] = f"{flag[mask].mean():.1%}"
+            for m in models:
+                if m.p is not None:
+                    share = bottom_share(flag[mask], m.p.loc[X.index[mask]].values, BOTTOM_FRACTION)
+                    row[f"{flag_name}: {m.name} bottom decile"] = f"{share:.1%}"
         rows.append(row)
     return ["## Bottom-decile ghosted share", "",
-            "Share of leads still at stage New (`label_source == ghosted`) among the 10% of each population with the "
-            "lowest p. The horizon test set (b) excludes ghosted leads, so the comparison uses populations that "
-            "keep them.", "", md_table(pd.DataFrame(rows)), ""]
+            "Share of leads in the 10% of each population with the lowest p that are *ghosted* (`label_source`: "
+            f"mature and not contacted within {FROZEN_HORIZON.horizon_days} days) or *still New* at "
+            f"{AS_OF.date()} whatever their age (the definition behind the plan's baseline figure of 27%). The "
+            "horizon test set (b) excludes ghosted leads, so the comparison uses populations that keep them.", "",
+            md_table(pd.DataFrame(rows)), ""]
 
 
 def frozen_test_labels(L: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series, pd.Series, pd.Series]:
     """Both frozen test definitions, independent of any candidate's label options.
 
     Returns ``(X, legacy_y, y_a, y_b)``: the cleaned leads with default horizon labels
-    (``emva.labels.assign_labels(..., HORIZON)``), the legacy label for every cleaned lead,
+    (``emva.labels.assign_labels(..., FROZEN_HORIZON)``), the legacy label for every cleaned lead,
     and the labels of the (a) legacy and (b) horizon test sets, indexed by their ``lead_id``s.
     """
-    X = assign_labels(clean(L), HORIZON)
+    X = assign_labels(clean(L), FROZEN_HORIZON)
     legacy_y = label(X)
     window = X.created_at >= TEST_FROM
     y_a = legacy_y[legacy_y.notna() & window]
-    y_b = X.y[X.y.notna() & is_mature(X, HORIZON.horizon_days) & window]
+    y_b = X.y[X.y.notna() & is_mature(X, FROZEN_HORIZON.horizon_days) & window]
     return X, legacy_y, y_a, y_b
 
 
@@ -280,7 +288,7 @@ def build_report(data: str | Path, n_resamples: int = N_RESAMPLES, seed: int = S
         missing = ids.difference(cand.index[cand.p_formula.notna()])
         if len(missing):
             raise ValueError(f"candidate has no score for {len(missing)} {name} test leads, e.g. {list(missing[:5])}")
-    last_mature = X.created_at[is_mature(X, HORIZON.horizon_days)].max()
+    last_mature = X.created_at[is_mature(X, FROZEN_HORIZON.horizon_days)].max()
     test_a = TestSet(
         "(a) Legacy labels, legacy test set",
         f"{len(ids_a)} leads labelled by the baseline rules, created on or after {TEST_FROM} "
@@ -290,7 +298,7 @@ def build_report(data: str | Path, n_resamples: int = N_RESAMPLES, seed: int = S
         "(b) Horizon labels, mature test set",
         f"{len(ids_b)} mature leads created on or after {TEST_FROM} and up to {last_mature.isoformat()} that the "
         f"default horizon definition labels ({int(X.y[ids_b].sum())} won). Label = won within "
-        f"{HORIZON.horizon_days} days; ghosted-at-H leads excluded, stalled leads censored.",
+        f"{FROZEN_HORIZON.horizon_days} days; ghosted-at-H leads excluded, stalled leads censored.",
         y_b, L.loc[ids_b])
 
     sq = status_quo_value(L.loc[X.index], load_rules(Path(data) / "status_quo_rules.json")).sq_value

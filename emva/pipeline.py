@@ -1,6 +1,6 @@
 """End-to-end pipeline: load -> clean -> label -> features -> design -> fit -> value -> summary.
 
-With ``LabelConfig(mode="legacy")`` ``run`` reproduces ``baseline/emva_score.py::main`` step
+With ``labels=LEGACY`` ``run`` reproduces ``baseline/emva_score.py::main`` step
 for step, byte for byte. The default (``horizon``, plan 1.2 to 1.5) trains and evaluates on
 the fixed-horizon label over mature leads only. ``emva/__main__.py`` does the printing and
 file writing.
@@ -19,14 +19,12 @@ from emva.design import design
 from emva.eval.metrics import summary
 from emva.features import add_features
 from emva.io import clean, load
-from emva.labels import HORIZON, LabelConfig, assign_labels, eligible_rows, split_masks
+from emva.labels import HORIZON, LabelConfig, assign_labels, split_masks
 from emva.model import fit_lr, predict, scorecard
 from emva.value import deal_value_design, expected_value, fit_deal_value, predict_deal_value, realised_revenue
 
 # Columns written to scores.csv, in this order, when present (legacy mode: exactly the baseline's).
 SCORE_COLUMNS: tuple[str, ...] = ("p_formula", "deal_value_hat", "value_formula", "p_combined", "value_combined", "y")
-# Appended in horizon mode (plan 1.1, 1.2): the raw outcome, where the label came from, and when it matured.
-HORIZON_SCORE_COLUMNS: tuple[str, ...] = ("won_within_h", "label_source", "matured_at")
 
 
 @dataclass
@@ -50,8 +48,8 @@ class PipelineResult:
     messages: list[str] = field(default_factory=list)
 
     def scores(self) -> pd.DataFrame:
-        """The scores.csv frame (indexed by ``lead_id``); horizon mode adds ``HORIZON_SCORE_COLUMNS``."""
-        cols = SCORE_COLUMNS + (HORIZON_SCORE_COLUMNS if self.labels.mode == "horizon" else ())
+        """The scores.csv frame (indexed by ``lead_id``): ``SCORE_COLUMNS`` plus the label config's extra columns."""
+        cols = SCORE_COLUMNS + self.labels.extra_score_columns()
         return self.X[[c for c in cols if c in self.X]]
 
 
@@ -72,7 +70,7 @@ def run(data: str | Path, margin: float = 1.0, context: str | Path | None = None
     summarise all three.
     """
     X = build(load(data), labels)
-    tr, te = split_masks(X, test_from, eligible_rows(X, labels))
+    tr, te = split_masks(X, test_from, labels.eligible(X))
     D = design(X)
     lr = fit_lr(D, X.y, tr)
     X["p_formula"] = predict(lr, D)
@@ -126,4 +124,4 @@ def write_outputs(result: PipelineResult, out: str | Path) -> None:
     result.scores().to_csv(f"{out}/scores.csv")
 
 
-__all__ = ["HORIZON_SCORE_COLUMNS", "PipelineResult", "SCORE_COLUMNS", "build", "run", "write_outputs"]
+__all__ = ["PipelineResult", "SCORE_COLUMNS", "build", "run", "write_outputs"]

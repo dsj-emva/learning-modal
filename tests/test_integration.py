@@ -91,7 +91,8 @@ def test_cli_rejects_horizon_options_without_horizon_mode(tmp_path, data_v1, fla
 
 
 def test_make_baseline_passes():
-    proc = subprocess.run(["make", "baseline"], cwd=REPO, capture_output=True, text=True)
+    # PY= so the test also works where .venv/ is not under REPO (e.g. a git worktree)
+    proc = subprocess.run(["make", "baseline", f"PY={sys.executable}"], cwd=REPO, capture_output=True, text=True)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "PASS: baseline and emva/" in proc.stdout
     assert "emva scores.csv vs baseline run: byte-identical" in proc.stdout
@@ -143,10 +144,15 @@ def test_report_contains_both_label_definitions(report_text, v1_horizon):
     labels = _section(report_text, "Label definitions")
     for src in ("won", "crm_lost", "stalled", "ghosted", "open", "all"):
         assert f"| {src} | " in labels
+    # ghosted = mature and never contacted by H; the 528 young still-New leads are open
+    assert "| ghosted | 1207 | 0 / 1207 / 0 | 0 / 1207 / 0 | 0 / 0 / 1207 |" in labels
+    assert "| open | 1391 | 0 / 121 / 1270 | 0 / 70 / 1321 | 0 / 70 / 1321 |" in labels
     assert "| legacy | 5588 (847) | 2453 (352) |" in labels
     assert "Candidate trained with: `horizon H=120`." in labels
     ghost = _section(report_text, "Bottom-decile ghosted share")
-    assert "| all leads labelled by legacy rules (train + test) | 8041 | 16.5% | 27.5% |" in ghost
+    # the plan's "baseline 27%" is the still-New share on all legacy-labelled leads
+    row = next(line for line in ghost.splitlines() if line.startswith("| all leads labelled by legacy rules"))
+    assert row.startswith("| all leads labelled by legacy rules (train + test) | 8041 | 15.0% | 24.5% | 23.9% | 16.5% | 27.5% |")
 
 
 def test_horizon_pipeline_uses_mature_leads_only(v1_horizon):

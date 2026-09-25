@@ -20,10 +20,7 @@ OPEN_STAGES: tuple[str, ...] = ("Contacted", "Qualified", "Demo booked", "Propos
 # Fixed-horizon label (plan 1.2): won_within_H with the same H for every lead. A lead is
 # mature once created_at + H <= AS_OF. CLI: --horizon-days.
 HORIZON_DAYS: int = 120
-# --label-mode: "legacy" = the baseline rules above (reproduces baseline/ byte for byte),
-# "horizon" = won_within_H with ghosted excluded and stalled censored (plan 1.2 to 1.5).
-LABEL_MODES: tuple[str, ...] = ("legacy", "horizon")
-DEFAULT_LABEL_MODE: str = "horizon"
+# The label modes themselves are emva.labels.LabelMode (default horizon).
 # Every row gets exactly one label_source (plan 1.1); definitions in emva/labels.py.
 LABEL_SOURCES: tuple[str, ...] = ("won", "crm_lost", "stalled", "ghosted", "open")
 
