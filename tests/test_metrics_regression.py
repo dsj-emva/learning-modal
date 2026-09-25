@@ -4,6 +4,7 @@ import pytest
 
 from emva.eval.metrics import (
     auc_by_month,
+    bottom_share,
     calibration_by_decile,
     tie_averaged_top_share,
     ties_at_cut,
@@ -82,3 +83,12 @@ def test_reordered_rows_rejects_length_mismatch(tmp_path):
     assert reordered_rows(tmp_path / "c.csv", tmp_path / "a.csv") == ["y", "x"]
     with pytest.raises(ValueError, match="2 and 1 rows"):
         reordered_rows(tmp_path / "a.csv", tmp_path / "b.csv")
+
+
+def test_bottom_share():
+    flag = pd.Series([True, False, True, False, False, False, False, False, False, True])
+    score = np.arange(10.0)  # rows 0 and 1 are the bottom 20%
+    assert bottom_share(flag, score, 0.2) == 0.5
+    assert bottom_share(flag, score[::-1], 0.1) == 1.0
+    with pytest.raises(ValueError, match="length"):
+        bottom_share(flag, score[:5], 0.2)

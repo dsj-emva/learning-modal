@@ -102,12 +102,59 @@ def test_test_set_is_frozen_definition(v1_result):
     assert (X.created_at[v1_result.test] >= TEST_FROM).all() and X.y[v1_result.test].notna().all()
 
 
-def test_report_builds_with_status_quo_targets(data_v1):
+@pytest.fixture(scope="module")
+def report_text(data_v1) -> str:
     from emva.eval.report import build_report
-    text = build_report(data_v1, n_resamples=20)
+    return build_report(data_v1, n_resamples=20)
+
+
+def _section(text: str, title: str) -> str:
+    """The markdown between ``## title`` and the next ``## `` heading."""
+    start = text.index(f"\n## {title}\n")
+    end = text.find("\n## ", start + 1)
+    return text[start:end if end != -1 else None]
+
+
+def test_report_builds_with_status_quo_targets(report_text):
+    # Section (a) is the Phase 0 report on the frozen legacy test set.
+    text = _section(report_text, "(a) Legacy labels, legacy test set")
     # Only sort-independent numbers here: the table's status-quo top-20% cells use the unstable
     # sort (ties at the cut), so check the tie-averaged footnote values instead.
     assert "| status quo | 0.639 [" in text
     assert "ranking wins; the table uses numpy's default argsort (as the baseline does), tie-averaged value is 0.397" in text
     assert "ranking revenue by p×value; the table uses numpy's default argsort (as the baseline does), tie-averaged value is 0.454" in text
-    assert "| baseline | 0.814 [" in text and "| candidate | 0.814 [" in text
+    # Phase 0 also asserted "| candidate | 0.814 [": no longer true by design, because the candidate is now
+    # trained on horizon labels (Phase 1); the legacy-mode pipeline's 0.814 is asserted in
+    # test_pipeline_reproduces_baseline_metrics instead.
+    assert "| baseline | 0.814 [" in text and "| candidate | " in text
+    assert "2453 leads labelled by the baseline rules" in text
+
+
+def test_report_contains_both_label_definitions(report_text, v1_horizon):
+    assert report_text.index("## (a) Legacy labels, legacy test set") < report_text.index("## (b) Horizon labels, mature test set")
+    b = _section(report_text, "(b) Horizon labels, mature test set")
+    n = int(v1_horizon.test.sum())
+    assert f"{n} mature leads created on or after 2026-05-01 and up to 2026-05-26T20:06:58+00:00" in b
+    for model in ("baseline", "candidate", "status quo"):
+        assert f"| {model} | 0." in b
+    for heading in ("### Headline", "### Paired AUC comparison vs baseline", "### Calibration by decile of p",
+                    "### AUC by test month", "### Value scale"):
+        assert heading in b and heading in _section(report_text, "(a) Legacy labels, legacy test set")
+    labels = _section(report_text, "Label definitions")
+    for src in ("won", "crm_lost", "stalled", "ghosted", "open", "all"):
+        assert f"| {src} | " in labels
+    assert "| legacy | 5588 (847) | 2453 (352) |" in labels
+    assert "Candidate trained with: `horizon H=120`." in labels
+    ghost = _section(report_text, "Bottom-decile ghosted share")
+    assert "| all leads labelled by legacy rules (train + test) | 8041 | 16.5% | 27.5% |" in ghost
+
+
+def test_horizon_pipeline_uses_mature_leads_only(v1_horizon):
+    X, tr, te = v1_horizon.X, v1_horizon.train, v1_horizon.test
+    mature_cut = pd.Timestamp("2026-05-27T00:00:00Z")
+    assert (X.created_at[tr | te] <= mature_cut).all()
+    assert (X.created_at[te] >= TEST_FROM).all() and (X.created_at[tr] < TEST_FROM).all()
+    assert X.y[tr | te].notna().all()
+    assert not X.label_source[tr | te].isin(["ghosted", "stalled"]).any()
+    assert int(tr.sum()) == 4049 and int(te.sum()) == 458 and int(X.y[te].sum()) == 80
+    assert v1_horizon.labels.describe() == "horizon H=120"
