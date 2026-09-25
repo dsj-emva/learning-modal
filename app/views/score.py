@@ -8,6 +8,7 @@ import streamlit as st
 from app import charts, scoring, storage, ui
 from app import components as C
 from app.scoring import FormField
+from emva.model import INTERCEPT
 from emva.persist import BUNDLE_FILE
 from emva.scoring import UnknownLevelError, is_blank
 
@@ -68,8 +69,8 @@ def _result(res: scoring.LeadScore, base: float, transform: str) -> None:
         ui.html(C.callout("Under 15 seconds on the page or a headless browser: the batch pipeline would drop this "
                           "lead before training and scoring. It is scored here anyway.", "warn"))
     pts = res.points
-    icpt = pts[pts.feature == "(intercept)"]
-    rest = pts[pts.feature != "(intercept)"].sort_values("points", ascending=False, kind="stable")
+    icpt = pts[pts.feature == INTERCEPT]
+    rest = pts[pts.feature != INTERCEPT].sort_values("points", ascending=False, kind="stable")
     ui.html(C.section("Why this score", "Every signal that moved this lead away from the starting score. Signals at "
                                         "their comparison level add nothing and are not listed."))
     ui.html(C.stats([("Starting score", C.points(float(icpt.points.iloc[0])) + " pts"),

@@ -36,14 +36,16 @@ import pandas as pd
 from emva.boilerplate import is_boilerplate
 from emva.constants import (
     CATS_V2_CANDIDATES,
+    CHANNEL_SOURCES,
     COPY_PASTE_PREFIXES,
     FREE,
+    LEAD_ADS_MEDIUM,
     MID_TITLE_PATTERN,
     MISSING,
     SENIOR_TITLE_PATTERN,
     SPECIFIC_TEXT_PATTERN,
     VAGUE,
-    WEEKDAYS,
+    WEEKEND,
 )
 
 
@@ -61,21 +63,12 @@ class FeatureSet(str, Enum):
 V2_DROPPED: tuple[str, ...] = ("c_budget", "c_timeline", "ip_type", "edits_1_4")
 CATS_V2: dict[str, str] = {k: v for k, v in CATS_V2_CANDIDATES.items() if k not in V2_DROPPED}
 
-# ``business_hours`` counts these ``submitted_weekday`` values as outside business hours.
-WEEKEND: tuple[str, ...] = WEEKDAYS[5:]
-
 # Behavioural (on-site session) features whose absence session_missing carries in v2 (plan 2.1).
 BEHAVIOURAL_FEATURES: tuple[str, ...] = ("time_on_page", "hesitation_90s", "sessions_3plus", "viewed_pricing",
                                          "ip_country", "ip_type", "business_hours")
 # Raw inputs of those features; any of them blank (or no landing_url) means the session is absent.
 SESSION_INPUTS: tuple[str, ...] = ("time_on_page_s", "hesitation_ms", "sessions_before_convert", "viewed_pricing",
                                    "ip_country", "is_datacenter_ip", "submitted_weekday", "local_submit_hour")
-
-
-# ``channel`` rules: this utm_medium means Meta lead ads; otherwise channel <- utm_source values, first match wins.
-LEAD_ADS_MEDIUM: str = "lead_form"
-CHANNEL_SOURCES: dict[str, tuple[str, ...]] = {"meta": ("facebook", "instagram"), "google": ("google",),
-                                               "linkedin": ("linkedin",), "chatgpt": ("chatgpt",)}
 
 
 def _normalise_text(s: object) -> str:

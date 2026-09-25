@@ -31,9 +31,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from emva.constants import ANSWER_KEYS, MISSING, V2_LEVELS, WEEKDAYS
+from emva.constants import ANSWER_KEYS, CHANNEL_SOURCES, LEAD_ADS_MEDIUM, MISSING, V2_LEVELS, WEEKDAYS
 from emva.feature_spec import feature_spec
-from emva.features import CHANNEL_SOURCES, LEAD_ADS_MEDIUM
 from emva.io import enrich, flag_bots_and_duplicates, read_companies
 from emva.model import coefficients, intercept_row, predict
 from emva.persist import ModelBundle
@@ -259,7 +258,7 @@ def points_breakdown(bundle: ModelBundle, leads: pd.DataFrame, data: str | Path)
 
     Returns columns ``lead_id``, ``feature``, ``level``, ``log_odds``, ``odds_multiplier``, ``points`` (unrounded
     ``model.coefficients``; ``weights.csv`` is the same table rounded), leads in input order, each lead's
-    intercept row (feature ``(intercept)``, level ``""``) first and then its active columns in design order.
+    intercept row (feature ``emva.model.INTERCEPT``, level ``""``) first and then its active columns in design order.
     A feature at its reference level has no row (it adds 0). Per lead, ``log_odds`` sums to
     ``logit(p_formula)`` up to floating-point rounding. Same inputs and errors as ``score_leads``.
     """

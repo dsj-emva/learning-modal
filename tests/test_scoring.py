@@ -10,8 +10,10 @@ import pytest
 
 from emva.constants import ANSWER_KEYS, FREE, MISSING, V2_LEVELS
 from emva.feature_spec import feature_spec
-from emva.features import CHANNEL_SOURCES, SESSION_INPUTS, FeatureSet, session_absent
+from emva.constants import CHANNEL_SOURCES
+from emva.features import SESSION_INPUTS, FeatureSet, session_absent
 from emva.io import read_leads
+from emva.model import INTERCEPT
 from emva.persist import ModelBundle, load_bundle, save_bundle
 from emva.pipeline import PipelineResult
 from emva.scoring import (
@@ -212,7 +214,7 @@ def test_points_breakdown_sums_to_the_logit(trained, data, fs):
     total = pb.groupby("lead_id").log_odds.sum()
     assert np.allclose(total.loc[ids].to_numpy(), np.log(p / (1 - p)).loc[ids].to_numpy(), rtol=0, atol=1e-9)
     first = pb[pb.lead_id == ids[0]]
-    assert first.feature.iloc[0] == "(intercept)" and first.log_odds.iloc[0] == bundle.model.intercept_[0]
+    assert first.feature.iloc[0] == INTERCEPT and first.log_odds.iloc[0] == bundle.model.intercept_[0]
     for _, row in first.iloc[1:].iterrows():
         assert f"{row.feature}={row.level}" in bundle.design_columns
     assert np.allclose(pb.points, pb.log_odds * 20 / np.log(2)) and np.allclose(pb.odds_multiplier, np.exp(pb.log_odds))

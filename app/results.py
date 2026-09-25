@@ -26,6 +26,7 @@ from emva.eval.report import ScoredModel, TestSet, frozen_test_labels, headline_
 from emva.eval.status_quo import load_rules, status_quo_value
 from emva.eval.value_report import scale_stats
 from emva.io import load
+from emva.model import INTERCEPT
 
 log = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ FEATURE_LABELS: dict[str, str] = {
     "sessions_3plus": "3+ visits before converting", "viewed_pricing": "Viewed pricing",
     "search_term": "Search term", "business_hours": "Submitted", "ip_country": "IP vs typed country",
     "ip_type": "IP address type", "c_budget": "Budget answer", "c_timeline": "Timeline answer",
-    "edits_1_4": "Edited 1-4 form fields", "no_company": "No company given", "(intercept)": "Starting score",
+    "edits_1_4": "Edited 1-4 form fields", "no_company": "No company given", INTERCEPT: "Starting score",
 }
 REFERENCE_LEVELS: dict[str, str] = {**CATS, **CATS_V2_CANDIDATES}
 
