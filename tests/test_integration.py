@@ -12,7 +12,7 @@ from emva.eval.metrics import tie_averaged_top_share
 from emva.eval.regression import EXPECTED_SUMMARY, FROZEN_WEIGHTS, read_weights, weights_mismatches
 from emva.eval.status_quo import load_rules, status_quo_value
 from emva.io import load
-from emva.labels import LEGACY
+from emva.labels import LEGACY, LabelConfig
 from emva.pipeline import run, write_outputs
 from sklearn.metrics import roc_auc_score
 
@@ -158,3 +158,11 @@ def test_horizon_pipeline_uses_mature_leads_only(v1_horizon):
     assert not X.label_source[tr | te].isin(["ghosted", "stalled"]).any()
     assert int(tr.sum()) == 4049 and int(te.sum()) == 458 and int(X.y[te].sum()) == 80
     assert v1_horizon.labels.describe() == "horizon H=120"
+
+
+def test_pipeline_with_no_mature_test_leads_skips_metrics(data_v1):
+    r = run(data_v1, labels=LabelConfig(horizon_days=180))
+    assert r.summary.empty and int(r.test.sum()) == 0
+    assert r.messages == ["no labelled test leads (horizon H=180 labels, created on or after 2026-05-01); "
+                          "test metrics skipped"]
+    assert r.X.p_formula.notna().all()

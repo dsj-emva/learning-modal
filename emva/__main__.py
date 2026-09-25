@@ -27,7 +27,8 @@ def main(argv: list[str] | None = None) -> None:
     result = run(a.data, margin=a.margin, context=a.context, labels=label_config(ap, a))
     for line in result.messages:
         print(line)
-    print(result.summary.to_string(index=False))
+    if not result.summary.empty:
+        print(result.summary.to_string(index=False))
     write_outputs(result, a.out)
 
 

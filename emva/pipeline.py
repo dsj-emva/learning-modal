@@ -34,7 +34,8 @@ class PipelineResult:
     """Everything ``run`` produces.
 
     ``X`` holds one row per cleaned lead with features, label columns and all score columns;
-    ``train``/``test`` are boolean masks over ``X``; ``summary`` is the printed metrics table;
+    ``train``/``test`` are boolean masks over ``X``; ``summary`` is the printed metrics table
+    (empty when there are no labelled test leads, with a line in ``messages`` saying so);
     ``messages`` are the context-mode lines printed before it; ``labels`` is the label
     definition used.
     """
@@ -85,8 +86,14 @@ def run(data: str | Path, margin: float = 1.0, context: str | Path | None = None
     weights = scorecard(lr, D.columns)
 
     T = X[te]
-    rows = [summary("formula", T.y, T.p_formula.values, realised_revenue(T), T.value_formula.values)]
     messages: list[str] = []
+    if te.any():
+        rows = [summary("formula", T.y, T.p_formula.values, realised_revenue(T), T.value_formula.values)]
+    else:
+        # e.g. a horizon so long that no lead created on or after test_from is mature yet
+        rows = []
+        messages.append(f"no labelled test leads ({labels.describe()} labels, created on or after {test_from}); "
+                        "test metrics skipped")
 
     if context:
         X["context_logit"] = context_logit(context, X.index)
@@ -94,6 +101,8 @@ def run(data: str | Path, margin: float = 1.0, context: str | Path | None = None
         messages.append(f"context scores for {have.sum()} of {len(X)} leads")
         # same rows for both models so the comparison is fair
         tr2, te2 = tr & have, te & have
+        if not te2.any():
+            raise ValueError("no labelled test leads have a context score; cannot compare the context models")
         base = fit_lr(D, X.y, tr2)
         both = fit_lr(D.join(X.context_logit), X.y, tr2)
         X["p_base"] = predict(base, D)
