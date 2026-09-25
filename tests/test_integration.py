@@ -84,9 +84,30 @@ def test_cli_default_is_horizon_and_writes_label_columns(tmp_path, data_v1):
     subprocess.run([sys.executable, "-m", "emva", "--data", str(data_v1), "--out", str(tmp_path)],
                    cwd=REPO, capture_output=True, text=True, check=True)
     scores = pd.read_csv(tmp_path / "scores.csv", index_col="lead_id")
-    assert list(scores.columns[-4:]) == ["y", "won_within_h", "label_source", "matured_at"]
+    assert list(scores.columns[-9:]) == ["y", "won_within_h", "label_source", "matured_at", "value_at_submit",
+                                         "value_at_submit_ts", "value_at_close", "value_at_close_ts",
+                                         "value_at_close_status"]
     assert set(scores.label_source) == {"won", "crm_lost", "stalled", "ghosted", "open"}
     assert (tmp_path / "weights.csv").exists()
+
+
+def test_cli_value_options_reach_value_at_submit(tmp_path, data_v1):
+    subprocess.run([sys.executable, "-m", "emva", "--data", str(data_v1), "--out", str(tmp_path),
+                    "--no-value-cap", "--value-compression", "none", "--value-floor", "0"],
+                   cwd=REPO, capture_output=True, text=True, check=True)
+    scores = pd.read_csv(tmp_path / "scores.csv", index_col="lead_id")
+    assert np.allclose(scores.value_at_submit, scores.value_formula)
+
+
+@pytest.mark.parametrize("flags", [["--label-mode", "legacy", "--value-tiers", "5"],
+                                   ["--label-mode", "legacy", "--no-value-cap"],
+                                   ["--value-tiers", "1"],
+                                   ["--value-compression", "cube"],
+                                   ["--no-value-floor", "--value-floor", "10"]])
+def test_cli_rejects_bad_value_options(tmp_path, data_v1, flags):
+    proc = subprocess.run([sys.executable, "-m", "emva", "--data", str(data_v1), "--out", str(tmp_path), *flags],
+                          cwd=REPO, capture_output=True, text=True)
+    assert proc.returncode == 2 and "error:" in proc.stderr
 
 
 @pytest.mark.parametrize("flags", [["--label-mode", "legacy", "--include-ghosted"],
@@ -162,6 +183,13 @@ def test_report_contains_both_label_definitions(report_text, v1_horizon):
     # the plan's "baseline 27%" is the still-New share on all legacy-labelled leads (candidate: v2 features since Phase 2)
     row = next(line for line in ghost.splitlines() if line.startswith("| all leads labelled by legacy rules"))
     assert row.startswith("| all leads labelled by legacy rules (train + test) | 8041 | 15.0% | 24.5% | 24.4% | 16.5% | 27.5% |")
+
+
+def test_report_contains_the_value_sections(report_text):
+    assert "## Value transforms (plan 3.2)" in report_text and "## Click-ID coverage (plan 3.5)" in report_text
+    # the baseline's scale over all scored leads (Phase 0 measured 121.7× / 11.5%)
+    assert "| baseline (identity) | 11 | 374 | 6317 | 17841 | 45562 | 121.7× | 11.5% |" in report_text
+    assert "| cap p97 + log + floor £25 | PASS |" in report_text
 
 
 def test_report_runs_the_collinearity_check(report_text):

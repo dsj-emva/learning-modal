@@ -74,8 +74,15 @@ wins and this file is wrong: fix it in the same PR. State: `main` 92168cf, 2026-
   Revenue = recorded deal value, blank = 0 (ADR 0002).
 - **Value** (today): `p × deal_value_hat × margin` (`emva/value.py::expected_value`), with
   `deal_value_hat` = exp(ridge prediction of log value) × exp(sd²/2).
-- **value_at_submit / value_at_close**: planned, Phase 3 (plan 3.3), not implemented: the predicted value
-  sent at submit, and the actual deal value (or 0) sent as an adjustment when the deal closes.
+- **Value transform** (Phase 3, `emva/value_transform.py`): `ValueTransform` = cap at a percentile of the
+  training leads' values, optional log/sqrt compression (anchored at the capped median, rescaled so the training
+  total is unchanged), floor in GBP, optional N quantile tiers (value = tier mean). Fitted once on the training
+  leads, then fixed. Default cap p97 + log + floor £25 (ADR 0012, accepted). Step order: cap, compression, floor, tiers.
+- **value_at_submit / value_at_close** (Phase 3, plan 3.3; horizon `scores.csv` only): `value_at_submit` =
+  `value_formula` through the fitted transform, timestamp `value_at_submit_ts` = `created_at`.
+  `value_at_close` = recorded deal value if Won by AS_OF, at `won_at` (blank amount: blank value, still at
+  `won_at`); 0 at `matured_at` for a mature non-win; blank while immature (`emva.value.value_at_close`).
+  `value_at_close_status`: `known`, `unknown_amount` (Won, amount blank; R10), `pending` (immature, not Won). Upload design: `docs/platform_contract.md`.
 - **Reference level**: the level of each feature that gets no design column; every weight is relative to
   it (`CATS` in `emva/constants.py`, e.g. band `1-10`, channel `google`, email `business`).
 - **Scorecard points**: `log_odds × 20 / ln 2`, rounded, in `weights.csv`; **+20 points = odds of closing
@@ -137,7 +144,7 @@ it with the paired bootstrap.
 | 1 labels | merged 92168cf | `phase1-labels` | `reports/phase1.md` |
 | 2 features and leakage | merged (c1b465f) | `phase2-features` | `reports/phase2.md` |
 | 5.2-5.8 generator v2 | merged (01c56f4) | `phase5-generator-v2` | `reports/phase5.md` |
-| 3 value layer and platform contract | pending (needs 2) | | |
+| 3 value layer | merged (a13491d) | `phase3-value` | `reports/phase3.md` |
 | 4 evaluation hardening | pending (needs 2) | | |
 | 6 context agent v2 | ready for review | `phase6-context-agent` | `reports/phase6.md` |
 | 7 production readiness document | pending (needs all) | | |
