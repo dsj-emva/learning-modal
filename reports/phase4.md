@@ -14,7 +14,7 @@ data/v1 --out reports/phase4.md`); this preamble is hand-written and is kept on 
 | `emva/eval/ceiling.py` | oracle feature sets from ground truth (evaluation only; declared columns only, no reply time) |
 | `emva/eval/calibration_decay.py` | fit through month M, calibration on M+1..M+3 (Brier, slope, calibration-in-the-large, deciles) |
 | `emva/eval/regularisation.py` | C sweep on both frozen test sets and the rolling headline |
-| `emva/eval/interactions.py` | LinkedIn × band 51+ and senior × form D from the pipeline's own features |
+| `emva/eval/interactions.py` | LinkedIn × band 51+ and senior × form D from the pipeline's own features; `null_coefficients` simulates their sampling distribution under the planted truth and the horizon label (reads ground truth) |
 | `emva/eval/hardening.py` | entry point; per-(section, dataset) cache under `runs/phase4/cache/`; writes between markers |
 | `Makefile` `report-full`, `scripts/run_experiments.py hardening` | regenerate this report / one dataset into `runs/hardening/` |
 | tests | `test_rolling.py` (maturity-at-split boundary to the second, window edges, unlabelled rows, v1 baseline spread reproduced), `test_subsampling.py`, `test_ceiling.py`, `test_calibration_decay.py`, `test_regularisation.py`, `test_interactions.py`, `test_hardening.py` |
@@ -62,9 +62,11 @@ No change to `emva/model.py`, `emva/pipeline.py` or `emva/features.py`; the GBDT
 9. **Interactions (Phase 5 hand-off):** on v2 senior × form D is detected (−0.67 [−1.14, −0.24], planted −0.8);
    LinkedIn × 51+ is not (+0.27 [−0.11, +0.67], planted +0.8; the pipeline's band is missing or typed for many
    LinkedIn leads after enrichment dropout). Neither improves held-out AUC materially (rolling +0.002
-   [−0.000, +0.005]). The v1 null control is not clean: LinkedIn × 51+ comes out +0.56 [+0.18, +0.98] on v1,
-   where nothing is planted, so a significant coefficient here is not by itself evidence of a planted term
-   (open finding under "Orchestrator decisions").
+   [−0.000, +0.005]). Both v2 coefficients sit inside their simulated sampling distributions under the planted
+   truth. The v1 null control is not clean: LinkedIn × 51+ comes out +0.56 [+0.18, +0.98] on v1, where nothing is
+   planted, and that lies **outside** its simulated null distribution under the 120-day label (central 95%
+   [−0.25, +0.48], 2.3% of 1,000 draws as extreme). It is unexplained (open finding under "Orchestrator
+   decisions").
 
 ## Acceptance
 
@@ -76,7 +78,7 @@ No change to `emva/model.py`, `emva/pipeline.py` or `emva/features.py`; the GBDT
 
 ## Deviations and decisions made here (for review)
 
-- **Rolling split definition** is ADR 0013 (Proposed): strict maturity at S, one-month windows mature at AS_OF,
+- **Rolling split definition** is ADR 0013 (Accepted at review): strict maturity at S, one-month windows mature at AS_OF,
   sufficiency threshold 100 leads / 10 per class, headline = mean over sufficient splits on v2. Labels are
   computed at AS_OF; only the stalled censoring uses CRM state after S (no stage history in the frame).
 - **Oracle features** include, besides the ground-truth categorical columns, the recorded session inputs and the
@@ -96,6 +98,13 @@ No change to `emva/model.py`, `emva/pipeline.py` or `emva/features.py`; the GBDT
   (0.2 s vs 2.7 s per GBDT fit).
 - Docstrings of `ground_truth_reference.py` and `phase2_study.py` now list `ceiling.py` as the third
   ground-truth reader.
+- **Inheritance mechanism (R16).** The plan asked for the Phase 4 report to become part of `make report`. It is a
+  separate cached target, `make report-full`, instead, so `make report` stays fast; later phases inherit Phase 4 by
+  running it. The cache key hashes the contents of the data files, `requirements.txt`, every `emva`/`baseline`
+  source file and the numpy / pandas / scikit-learn / scipy versions.
+- **Null simulation for the interaction check** (`interactions.null_coefficients`) holds the training rows fixed
+  (ghosting and stalling are drawn from the status-quo tier only in the generator) and redraws the win and the
+  time to close; it reads `ground_truth_labels.csv` and the "Time to close" sentence of `ground_truth.md`.
 
 ## Orchestrator decisions (review of Phase 4)
 
@@ -105,24 +114,42 @@ No change to `emva/model.py`, `emva/pipeline.py` or `emva/features.py`; the GBDT
   `origin/phase6-context-agent`: the context weight's CI excludes zero and its point lies inside the oracle
   weight's CI), consistent with the planted context-only gap of about +0.005 AUC measured here (finding 6).
 - **LinkedIn × 51+ on v1 stays an open finding, flagged for the reviewers** (paragraph below).
+- **R16. `make report-full` is accepted as the inheritance mechanism**: a separate cached target next to the fast
+  `make report` (see Deviations). ADR 0013 records it and is now Accepted.
+- **Review fixes applied:** content-hashed cache key including `requirements.txt` and library versions; prose
+  derived from the data and constants (the last mature lead was created 2026-05-26: the cutoff is
+  2026-05-27T00:00Z); typed facts; the committed null simulation below. Every previously reported number was
+  unchanged by the recompute.
 
-### Open finding: LinkedIn × 51+ is "significant" on v1, where nothing is planted
+### Open finding: LinkedIn × 51+ is "significant" on v1, where nothing is planted, and outside its null
 
-The pipeline gives it +0.56 [+0.18, +0.98] on the v1 horizon training set (4,049 leads). Checks run for this
-paragraph (scratch scripts, not committed code) rule out an encoding artefact: with the *true* band and channel
-(oracle formula design) the coefficient is the same, +0.55 [+0.19, +0.97], although the pipeline's band agrees
-with the true band more often for LinkedIn leads (94.5% vs 82.0%). The planted structure itself gives almost
-nothing: fitting the same oracle design to `p_close_true` as soft labels gives +0.11 on those rows (+0.04 on all
-cleaned leads; the non-zero part is the planted noise term, which makes the true model non-logistic in the
-features), and 200 label sets drawn from `p_close_true` on the same rows give +0.10 ± 0.17, none reaching +0.55.
-The realised eventual outcome (Won at any time) on the same rows gives +0.32, which is within about 1.3 sd of
-those draws: a chance realisation of the win draws. The horizon label adds the rest (won within 120 days with
-ghosted excluded and stalled censored: +0.55; all mature leads with those counted as 0: +0.42). Best explanation:
-**mostly sampling chance in this particular set of outcomes, amplified by the 120-day label's truncation and
-censoring**, not a planted or encoded effect. With about 40 coefficients per model and two interaction terms
-tested per dataset, one CI excluding zero on the null dataset is not surprising. Consequence for the v2 reading:
-a significant interaction coefficient on its own is weak evidence that a planted term was recovered; the senior
-× form D detection on v2 should be read with that in mind.
+The pipeline gives it +0.561 [+0.179, +0.977] on the v1 horizon training set (4,049 leads). With the *true* band
+and channel (oracle formula design) it is the same, +0.55 [+0.19, +0.97], so it is not an artefact of the
+pipeline's band encoding. The committed simulation (`emva.eval.interactions.null_coefficients`, section
+"Interaction detectability") draws 1,000 horizon-label sets for the same rows from the generator's documented
+mechanism: Won ~ `p_close_true`, planted lognormal time to close (median 40 days, log-sd 1.09, ×1.8 for true 1000+,
+clipped to 2-330 days), generator-stalled leads never Won, label = Won within 120 days. Under that null the
+coefficient is +0.123 ± 0.189, central 95% [−0.254, +0.478]; **+0.561 is outside it (23 of 1,000 draws are at
+least as far from the null mean)**. The same simulation puts both v2 coefficients comfortably inside their
+distributions (LinkedIn × 51+ +0.268 vs [+0.012, +0.816]; senior × form D −0.669 vs [−0.971, −0.070]).
+
+So the finding is **unexplained**. Two things the simulation does not reproduce: the simulated training win rate
+is 0.179 against 0.186 observed on v1 (0.184 vs 0.194 on v2), so the simulation misses some mechanism that raises
+wins among the training rows; and cell by cell (500 draws, scratch check) the v1 excess comes from two moderate,
+opposite deviations rather than one: LinkedIn × 51+ observed 0.401 vs simulated 0.359 (z +1.7), LinkedIn under 51
+observed 0.116 vs 0.137 (z −1.3), while the other two cells are within about 1.5 sd. What would settle it:
+
+1. The full generator as the null: regenerate v1 with 20 or more seeds (`scripts/generate_data_v1.py`, about 17 s
+   each) and refit the same model on each; if +0.56 falls inside that spread, the gap is a mechanism missing from the
+   simulation, not a planted effect.
+2. Find the missing mechanism behind the win-rate gap: check whether membership of the training set depends on the
+   outcome (the pipeline's stalled censoring reads CRM timing; won and lost deals have different stage paths and
+   close times), and whether the reply-time floor or duplicates change who is mature and labelled.
+3. Check the generator code path for LinkedIn leads with 51+ employees in v1 (company assignment by channel, the
+   channel effect's interaction with the free-email and company draws) for an unintended dependence.
+
+Consequence for the v2 reading: a coefficient whose CI excludes zero is weak evidence on its own that a planted term
+was recovered; the simulated-distribution check is the comparison to use.
 
 ## Open questions
 
@@ -168,19 +195,21 @@ Data: `data/v2`, `data/v1` (v2 is the headline). All numbers are on simulated da
 | 4.5 calibration intercept range (headline rule) | -0.22 to +0.13 | -0.17 to +0.29 |
 | 4.6 flat over C in [0.1, 10]? (rolling / (a) legacy features) | no / yes | no / yes |
 | interaction linkedin_x_51plus: coefficient [95% CI] | +0.268 [-0.109, +0.669] | +0.561 [+0.179, +0.977] |
+| interaction linkedin_x_51plus: simulated central 95% | [+0.012, +0.816] (observed inside) | [-0.254, +0.478] (observed outside) |
 | interaction senior_x_formD: coefficient [95% CI] | -0.669 [-1.141, -0.235] | -0.241 [-0.656, +0.183] |
+| interaction senior_x_formD: simulated central 95% | [-0.971, -0.070] (observed inside) | [-0.472, +0.322] (observed inside) |
 | interactions: rolling AUC gain | +0.002 [-0.000, +0.005] | +0.001 [-0.003, +0.004] |
 
 ## 4.1 Rolling-origin evaluation
 
 Split at S in 2026-02-01, 2026-03-01, 2026-04-01, 2026-05-01, 2026-06-01, 2026-07-01 (ADR 0013). **Headline rule:** train on
-labelled leads created before S whose H = 120 horizon label is mature at S (`created_at + H <= S`); test on labelled
-leads created in [S, S + 1 month) whose label is mature at AS_OF. Labels are the pipeline's default (ghosted-at-H
-excluded, stalled censored; the stalled flag reads the CRM state at AS_OF, see `emva/eval/rolling.py`). A split is
-left out of the mean when its test set has fewer than 100 labelled leads or fewer than
-10 of a class; it is still listed. The last mature lead was created 2026-05-27, so the 2026-05-01
-window is partial (26 days) and the 2026-06-01 and 2026-07-01 windows have no mature test lead under H = 120.
-Mean AUC CI: each split's test set resampled independently (1000 resamples, seeds 0, 1, ...).
+labelled leads created before S whose H = 120 horizon label is mature at S (`created_at + H <= S`); test on
+labelled leads created in [S, S + 1 month) whose label is mature at AS_OF (2026-09-24). Labels are the pipeline's
+default (ghosted-at-H excluded, stalled censored; the stalled flag reads the CRM state at AS_OF, see
+`emva/eval/rolling.py`). A split is left out of the mean when its test set has fewer than 100 labelled
+leads or fewer than 10 of a class; it is still listed. Only leads created before
+2026-05-27T00:00:00+00:00 are mature, so the 2026-05-01 window is partial (26 days), and the 2026-06-01 and 2026-07-01 windows have no mature test lead under H = 120. Mean AUC CI: each split's test set resampled independently
+(1000 resamples, seeds 0, 1, ...).
 
 Comparisons: *relaxed* = the same test windows but training on every lead created before S that is mature at
 AS_OF (look-ahead: this is how the frozen split trains); *legacy labels, one-month test* = baseline labels at AS_OF;
@@ -188,6 +217,8 @@ AS_OF (look-ahead: this is how the frozen split trains); *legacy labels, one-mon
 spread (0.814 to 0.836 on v1; at S = 2026-05-01 it is exactly the frozen legacy test set).
 
 ### v2 (headline)
+
+Last mature lead in this data: created 2026-05-26T23:04:04+00:00.
 
 | variant | labels / training rule / test window | features | mean AUC [95% CI] | per-split range (spread) | splits used | left out |
 |---|---|---|---|---|---|---|
@@ -242,6 +273,8 @@ spread (0.814 to 0.836 on v1; at S = 2026-05-01 it is exactly the frozen legacy 
 
 ### v1
 
+Last mature lead in this data: created 2026-05-26T20:06:58+00:00.
+
 | variant | labels / training rule / test window | features | mean AUC [95% CI] | per-split range (spread) | splits used | left out |
 |---|---|---|---|---|---|---|
 | **headline** | horizon H=120, train mature at S | v2 | 0.789 [0.765, 0.813] | 0.764 to 0.819 (0.055) | 4 | 2026-06-01 (no labelled test leads); 2026-07-01 (no labelled test leads) |
@@ -295,11 +328,11 @@ spread (0.814 to 0.836 on v1; at S = 2026-05-01 it is exactly the frozen legacy 
 
 ## 4.2 Subsampling curve: LR vs monotone GBDT
 
-N training rows drawn without replacement from the training pool (seeds 0-19; the same rows for every
-model within a seed), scored on a fixed test set; "full" is one fit on the whole pool. GBDT =
-`HistGradientBoostingClassifier` (100 iterations, learning rate 0.1) on one column per v2 feature: the four
-ordered features are ranks with a +1 monotone constraint, the rest categorical. The constraint vector (column order =
-the GBDT design):
+N training rows drawn without replacement from the training pool (seeds 0-19; the same
+rows for every model within a seed), scored on a fixed test set; "full" is one fit on the whole pool. GBDT =
+`HistGradientBoostingClassifier` (100 iterations, learning rate 0.1) on one column
+per v2 feature: the 4 ordered features are ranks with a +1 monotone constraint, the rest
+categorical. The constraint vector (column order = the GBDT design):
 
 | column | kind | constraint | order (low to high) | absent |
 |---|---|---|---|---|
@@ -376,9 +409,11 @@ Baseline continuity: legacy labels, legacy features, pool = legacy training set 
 
 ## 4.3 Customer-sized test set
 
-A customer with 2,000 mature labelled leads validates on their most recent 20% (400 leads): draw 2,000
-leads from the mature labelled pool (seeds 0-19), sort by `created_at`, fit the formula model on the first 1,600 and
-bootstrap the AUC on the last 400 (1000 resamples, seed 0). The width is what that customer's CI would look like.
+A customer with 2,000 mature labelled leads validates on their most recent
+20% (400 leads): draw 2,000 leads from the mature labelled pool (seeds
+0-19), sort by `created_at`, fit the formula model on the first 1,600 and
+bootstrap the AUC on the last 400 (1000 resamples, seed 0). The width is what that customer's
+CI would look like.
 
 ### v2 (headline)
 
@@ -398,8 +433,8 @@ bootstrap the AUC on the last 400 (1000 resamples, seed 0). The width is what th
 
 ## 4.4 Oracle-feature ceiling and the planted context-only gap
 
-Formula model (same C, same rows, same splits) fitted on the generator's own inputs instead of the
-pipeline's features (`emva/eval/ceiling.py`; ground truth, evaluation only). *truth file only* = the planted
+Formula model (same C = 0.5, same rows, same splits) fitted on the generator's own inputs instead
+of the pipeline's features (`emva/eval/ceiling.py`; ground truth, evaluation only). *truth file only* = the planted
 categorical columns of `ground_truth_labels.csv` (true size, free email, true text category, channel, lead ads, true
 seniority). *formula* = every planted main effect without the noise term and the sales reply time: those plus the true
 company's spend / CRM / hiring, IP country vs the true country and the recorded session inputs at the planted cut
@@ -449,10 +484,11 @@ Paired differences (same rows, shared resamples; rolling = mean of per-split pai
 ## 4.5 Calibration decay
 
 Fit at the end of month M (split = first day of M+1, same training rule as the rolling headline),
-evaluate each of M+1, M+2, M+3. Slope = logistic regression of y on logit p (1 = well spread, < 1 = over-confident);
-intercept = calibration-in-the-large (y on an offset of logit p; 0 = right level, < 0 = over-predicting). Months with no
-mature labelled lead are listed as 0. The legacy-label table is for comparison only: legacy labels are read at AS_OF,
-so the youngest months (2026-08, 2026-09) hold mostly fast decisions and are not comparable with older months.
+evaluate each of M+1..M+3. Slope = logistic regression of y on logit p (1 = well spread, < 1 =
+over-confident); intercept = calibration-in-the-large (y on an offset of logit p; 0 = right level, < 0 =
+over-predicting). Months with no mature labelled lead are listed as 0. The legacy-label table is for comparison only:
+legacy labels are read at AS_OF, so the youngest months hold mostly fast decisions and are not comparable with older
+months.
 
 ### v2 (headline)
 
@@ -574,9 +610,9 @@ Deciles of p over each fit's pooled evaluation months, as mean p / observed:
 
 ## 4.6 Regularisation sweep
 
-L2 strength C over a log grid; everything else as the pipeline's model (C = 0.5). Standing check:
-flat = AUC range below 0.005 over C in [0.1, 10]. Baseline (review, v1,
-legacy test set): flat, 0.8107 to 0.8138.
+L2 strength C over a log grid; everything else as the pipeline's model (C = 0.5). Standing
+check: flat = AUC range below 0.005 over C in [0.1, 10]. Baseline
+(review, v1, legacy test set): flat, 0.8107 to 0.8138.
 
 ### v2 (headline)
 
@@ -628,9 +664,11 @@ legacy test set): flat, 0.8107 to 0.8138.
 
 ## Interaction detectability (Phase 5 hand-off)
 
-Phase 5 planted LinkedIn × company size 51+ (+0.8) and senior title × form D (-0.8) on v2 and asked
-whether the models can detect them. The two products of the pipeline's own features (`channel`, `band`, `seniority`,
-`form_variant`; no ground truth) are added to the v2 design. v1 has neither term planted: it is the null control.
+Phase 5 planted LinkedIn × company size 51+ (+0.8) and senior
+title × form D (-0.8) on v2 and asked whether the models can detect them. The two
+products of the pipeline's own features (`channel`, `band`, `seniority`, `form_variant`; no ground truth) are added to
+the v2 design. v1 has neither term planted: it is the null control. The simulated sampling distribution (reads ground
+truth) says how far an observed coefficient is from what the planted truth and the 120-day label produce.
 
 ### v2 (headline)
 
@@ -640,6 +678,13 @@ Coefficients: formula model + the two terms, fitted on the horizon training set 
 |---|---|---|---|---|
 | linkedin_x_51plus | +0.8 | 252 (124) | +0.268 [-0.109, +0.669] | no |
 | senior_x_formD | -0.8 | 326 (42) | -0.669 [-1.141, -0.235] | yes |
+
+Simulated sampling distribution of the same coefficients: 1000 horizon-label sets drawn for the same training rows from `p_close_true`, the planted time to close and the generator's stalled flag (`emva.eval.interactions.null_coefficients`, seed 0); on v1 this is the null. Mean simulated training win rate 0.1844 vs observed 0.1937.
+
+| term | observed | simulated mean ± sd | simulated central 95% | share of draws at least as far from the mean | observed inside the 95% |
+|---|---|---|---|---|---|
+| linkedin_x_51plus | +0.268 | +0.445 ± 0.204 | [+0.012, +0.816] | 0.361 | yes |
+| senior_x_formD | -0.669 | -0.509 ± 0.227 | [-0.971, -0.070] | 0.479 | yes |
 
 | evaluation | AUC without | AUC with | with − without [95% CI] |
 |---|---|---|---|
@@ -655,6 +700,13 @@ Coefficients: formula model + the two terms, fitted on the horizon training set 
 |---|---|---|---|---|
 | linkedin_x_51plus | +0.8 | 289 (116) | +0.561 [+0.179, +0.977] | yes |
 | senior_x_formD | -0.8 | 386 (64) | -0.241 [-0.656, +0.183] | no |
+
+Simulated sampling distribution of the same coefficients: 1000 horizon-label sets drawn for the same training rows from `p_close_true`, the planted time to close and the generator's stalled flag (`emva.eval.interactions.null_coefficients`, seed 0); on v1 this is the null. Mean simulated training win rate 0.1790 vs observed 0.1857.
+
+| term | observed | simulated mean ± sd | simulated central 95% | share of draws at least as far from the mean | observed inside the 95% |
+|---|---|---|---|---|---|
+| linkedin_x_51plus | +0.561 | +0.123 ± 0.189 | [-0.254, +0.478] | 0.023 | **no** |
+| senior_x_formD | -0.241 | -0.065 ± 0.209 | [-0.472, +0.322] | 0.401 | yes |
 
 | evaluation | AUC without | AUC with | with − without [95% CI] |
 |---|---|---|---|
@@ -1176,24 +1228,24 @@ formula 0.814 0.1006       0.571          0.795
 
 ## Runtime
 
-Total compute 585 s (9.7 min) on the machine that produced the cache entries (single-threaded fits); an unchanged rerun reads `runs/phase4/cache/` in seconds and writes the same text.
+Total compute 623 s (10.4 min) on the machine that produced the cache entries (single-threaded fits; numpy 2.4.6; pandas 3.0.6; scikit-learn 1.9.1; scipy 1.17.1); an unchanged rerun reads `runs/phase4/cache/` in seconds and writes the same text.
 
 | section | data | seconds |
 |---|---|---|
-| rolling | v2 | 56.7 |
-| subsampling | v2 | 28.7 |
-| customer | v2 | 27.7 |
-| ceiling | v2 | 152.7 |
+| rolling | v2 | 56.8 |
+| subsampling | v2 | 28.6 |
+| customer | v2 | 27.8 |
+| ceiling | v2 | 158.2 |
 | calibration | v2 | 0.2 |
 | regularisation | v2 | 1.0 |
-| interactions | v2 | 26.0 |
-| standard | v2 | 23.1 |
-| rolling | v1 | 59.4 |
-| subsampling | v1 | 29.6 |
-| customer | v1 | 28.7 |
-| ceiling | v1 | 99.2 |
+| interactions | v2 | 38.2 |
+| standard | v2 | 25.1 |
+| rolling | v1 | 60.9 |
+| subsampling | v1 | 30.5 |
+| customer | v1 | 29.3 |
+| ceiling | v1 | 100.9 |
 | calibration | v1 | 0.2 |
 | regularisation | v1 | 1.0 |
-| interactions | v1 | 27.0 |
-| standard | v1 | 23.5 |
+| interactions | v1 | 38.7 |
+| standard | v1 | 25.2 |
 <!-- END GENERATED -->

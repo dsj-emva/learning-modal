@@ -71,7 +71,7 @@ python3.11 -m venv .venv && .venv/bin/pip install -r requirements.txt   # pinned
 make baseline      # frozen baseline + `python -m emva --label-mode legacy` must give AUC 0.814, Brier 0.1006, top-20% wins 0.571, revenue 0.795, canonical weights
 make test          # pytest (193 passed at the Phase 1 merge, ~60 s) then compileall
 make report        # standard report on data/v1, both test definitions
-make report-full   # Phase 4 hardening + standard report on data/v2 and data/v1 -> reports/phase4.md (cached in runs/phase4/)
+make report-full   # Phase 4 hardening + standard report, data/v2 + data/v1 -> reports/phase4.md; how later phases inherit Phase 4 (R16, ADR 0013); ~10 min uncached, cached in runs/phase4/
 make experiment NAME=horizon   # runs/NAME/ outputs + report; names in scripts/run_experiments.py
 ```
 

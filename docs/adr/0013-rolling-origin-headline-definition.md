@@ -1,6 +1,6 @@
 # 0013. Rolling-origin headline: training mature at the split, one-month mature test windows, mean AUC over sufficient splits
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-09-25
 - Source: plan 4.1; `reports/phase4.md`, section 4.1; `emva/eval/rolling.py`; branch `phase4-eval-hardening`
 
@@ -56,7 +56,12 @@ rule), legacy labels with the same one-month windows, and the baseline reproduct
 - The planted context-only gap measured with this machinery (about +0.005 AUC on v2) is consistent with
   Phase 6's coefficient-level acceptance (ADR 0016).
 
-## Orchestrator ruling (Phase 4 review, 2026-09-25)
+## Orchestrator rulings (Phase 4 review, 2026-09-25)
 
-AS_OF and H stay frozen; the headline is the mean over the four sufficient splits with the empty splits listed.
-Status stays Proposed until the orchestrator merges Phase 4.
+- AS_OF and H stay frozen; the headline is the mean over the four sufficient splits with the empty splits listed.
+- **R16.** `make report-full` (`python -m emva.eval.hardening`), a separate cached target next to the fast
+  `make report`, is accepted as the mechanism by which later phases inherit the Phase 4 evaluation (the plan
+  asked for the report to become part of `make report`). Its cache is keyed by the contents of the data files,
+  `requirements.txt`, every `emva`/`baseline` source and the numeric library versions, so a cached rerun can
+  only reproduce numbers computed from the same inputs.
+- Status Accepted at the Phase 4 review.
