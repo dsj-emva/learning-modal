@@ -10,7 +10,7 @@ from app import components as C
 from app.scoring import FormField
 from emva.model import INTERCEPT
 from emva.persist import BUNDLE_FILE
-from emva.scoring import UnknownLevelError, is_blank
+from emva.scoring import FieldType, UnknownLevelError
 
 LONG_TEXT = {"what_to_solve", "user_agent", "landing_url"}
 
@@ -23,11 +23,11 @@ def _widget(f: FormField, default: object, key: str) -> object:
         index = opts.index(default) if default in opts else 0
         return st.selectbox(label, opts, index=index, key=key, help=f.spec.description,
                             format_func=lambda o: "— not answered —" if o == "" else o)
-    if f.spec.dtype == "bool":
+    if f.spec.dtype is FieldType.BOOL:
         return st.toggle(label, value=bool(default), key=key, help=f.spec.description)
-    if f.spec.dtype in ("int", "float"):
-        is_int = f.spec.dtype == "int"
-        value = None if is_blank(default) else (int(default) if is_int else float(default))
+    if f.spec.dtype.is_numeric:
+        is_int = f.spec.dtype is FieldType.INT
+        value = f.spec.coerce(default)
         return st.number_input(label, value=value, min_value=0 if is_int else 0.0, step=1 if is_int else 1.0,
                                format="%d" if is_int else "%.0f", key=key, help=f.spec.description,
                                placeholder="blank")

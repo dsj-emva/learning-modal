@@ -26,7 +26,7 @@ from emva.eval.report import ScoredModel, TestSet, frozen_test_labels, headline_
 from emva.eval.status_quo import load_rules, status_quo_value
 from emva.eval.value_report import scale_stats
 from emva.io import load
-from emva.model import INTERCEPT
+from emva.model import INTERCEPT, split_design_column
 
 log = logging.getLogger(__name__)
 
@@ -52,12 +52,6 @@ REFERENCE_LEVELS: dict[str, str] = {**CATS, **CATS_V2_CANDIDATES}
 def feature_label(feature: str) -> str:
     """Plain-language name of a model feature (the raw name when it has none)."""
     return FEATURE_LABELS.get(feature, feature.replace("_", " ").capitalize())
-
-
-def split_design_column(column: str) -> tuple[str, str]:
-    """``"channel=linkedin"`` -> ``("channel", "linkedin")``."""
-    feature, _, level = column.partition("=")
-    return feature, level
 
 
 def load_scores(run_dir: str | Path) -> pd.DataFrame:

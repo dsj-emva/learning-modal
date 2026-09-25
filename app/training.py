@@ -74,14 +74,35 @@ def report_command(dataset: str | Path, config: TrainingConfig, python: str = sy
     return [python, "-m", "emva.eval.report", "--data", str(dataset), *config.cli_args(), *extra]
 
 
-def pre_training_summary(dataset_path: str | Path, config: TrainingConfig) -> dict[str, object]:
+@dataclass(frozen=True)
+class TrainingSummary:
+    """What a training run on a dataset would use (``pre_training_summary``): raw ``leads``, ``scored`` leads after
+    bot/duplicate removal, the run's own ``train`` / ``test`` sizes and wins, the standard report's frozen
+    ``mature_test`` set and wins, ``label_counts`` (per ``label_source``: leads, wins, losses, unlabelled) and the
+    label definition's name."""
+
+    leads: int
+    scored: int
+    train: int
+    train_wins: int
+    test: int
+    test_wins: int
+    mature_test: int
+    mature_test_wins: int
+    label_counts: dict[str, dict[str, int]]
+    labels: str
+
+    def label_counts_frame(self) -> pd.DataFrame:
+        """``label_counts`` as a table, one row per ``label_source``."""
+        return pd.DataFrame([{"label_source": k, **v} for k, v in self.label_counts.items()])
+
+
+def pre_training_summary(dataset_path: str | Path, config: TrainingConfig) -> TrainingSummary:
     """What training on ``dataset_path`` with ``config`` would use, computed by the CLI's own code.
 
     ``emva.pipeline.build`` (clean, label, featurise) and ``emva.labels.split_masks`` with the config's eligibility,
-    exactly as ``emva.pipeline.run``. Returns ``leads`` (raw rows), ``scored`` (after bot/duplicate removal),
-    ``train`` / ``train_wins`` and ``test`` / ``test_wins`` (the run's own split), ``mature_test`` /
-    ``mature_test_wins`` (the standard report's frozen mature test set, ``emva.eval.report.frozen_test_labels``) and
-    ``label_counts``: per ``label_source`` the leads and their wins / losses / unlabelled under the config's label.
+    exactly as ``emva.pipeline.run``; the mature test set is ``emva.eval.report.frozen_test_labels``. Label counts
+    are per ``label_source`` under the config's label.
     Raises what ``emva.io.load`` and the label code raise on malformed data (validate first).
     """
     L = load(dataset_path)
@@ -95,10 +116,11 @@ def pre_training_summary(dataset_path: str | Path, config: TrainingConfig) -> di
         counts[s] = {"leads": int(m.sum()), "wins": int((X.y[m] == 1).sum()), "losses": int((X.y[m] == 0).sum()),
                      "unlabelled": int(X.y[m].isna().sum())}
     y_mature = frozen_test_labels(L)[3]
-    return {"leads": len(L), "scored": len(X), "train": int(train.sum()), "train_wins": int((X.y[train] == 1).sum()),
-            "test": int(test.sum()), "test_wins": int((X.y[test] == 1).sum()),
-            "mature_test": len(y_mature), "mature_test_wins": int((y_mature == 1).sum()),
-            "label_counts": counts, "labels": labels.describe()}
+    return TrainingSummary(leads=len(L), scored=len(X), train=int(train.sum()),
+                           train_wins=int((X.y[train] == 1).sum()), test=int(test.sum()),
+                           test_wins=int((X.y[test] == 1).sum()), mature_test=len(y_mature),
+                           mature_test_wins=int((y_mature == 1).sum()), label_counts=counts,
+                           labels=labels.describe())
 
 
 # Environment variables the job and ``python -m emva`` may see; everything else (APP_PASSWORD, ANTHROPIC_*, cloud
@@ -171,11 +193,6 @@ def rules_available(dataset_path: str | Path) -> bool:
     return (Path(dataset_path) / RULES_FILE).exists()
 
 
-def label_counts_frame(summary: dict[str, object]) -> pd.DataFrame:
-    """``pre_training_summary``'s label counts as a table (one row per ``label_source``)."""
-    return pd.DataFrame([{"label_source": k, **v} for k, v in summary["label_counts"].items()])
-
-
-__all__ = ["CHILD_ENV_KEYS", "RUN_OUTPUTS", "TrainingConfig", "child_env", "finish_run", "label_counts_frame", "parse_summary",
-           "pre_training_summary", "report_command", "rules_available",
-           "start_training", "training_command"]
+__all__ = ["CHILD_ENV_KEYS", "RUN_OUTPUTS", "TrainingConfig", "TrainingSummary", "child_env", "finish_run",
+           "parse_summary", "pre_training_summary", "report_command", "rules_available", "start_training",
+           "training_command"]

@@ -69,17 +69,7 @@ def values_from_lead(row: pd.Series) -> dict[str, object]:
     answers = json.loads(row["answers"]) if isinstance(row.get("answers"), str) else {}
     out: dict[str, object] = {}
     for f in submit_time_fields():
-        v = answers.get(f.name) if f.source == "answers" else row.get(f.name)
-        if is_blank(v):
-            out[f.name] = None
-        elif f.dtype == "bool":
-            out[f.name] = bool(v)
-        elif f.dtype == "int":
-            out[f.name] = int(v)
-        elif f.dtype == "float":
-            out[f.name] = float(v)
-        else:
-            out[f.name] = str(v)
+        out[f.name] = f.coerce(answers.get(f.name) if f.source == "answers" else row.get(f.name))
     return out
 
 
@@ -117,18 +107,12 @@ def form_sections() -> dict[str, list[FormField]]:
 
 
 def clean_values(values: dict[str, object]) -> dict[str, object]:
-    """Form widget values as ``lead_from_form`` expects them: strings stripped, blank strings dropped from
-    numeric fields, whole-number floats as ints for integer fields."""
+    """Form widget values as ``lead_from_form`` expects them: strings stripped, then ``FieldSpec.coerce`` (blank
+    numbers None, whole-number floats as ints for integer fields)."""
     specs = {f.name: f for f in submit_time_fields()}
     out: dict[str, object] = {}
     for k, v in values.items():
-        if isinstance(v, str):
-            v = v.strip()
-        if specs[k].dtype == "int" and isinstance(v, float) and v.is_integer():
-            v = int(v)
-        if specs[k].dtype in ("int", "float") and is_blank(v):
-            v = None
-        out[k] = v
+        out[k] = specs[k].coerce(v.strip() if isinstance(v, str) else v)
     return out
 
 

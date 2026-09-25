@@ -43,7 +43,7 @@ from app.storage import (
 )
 from emva.constants import AS_OF, DEAL_VALUE_LEVELS, ENRICHMENT_COLUMNS, MISSING, STAGE, V2_LEVELS, WEEKDAYS
 from emva.eval.status_quo import RULE_FIELDS
-from emva.scoring import submit_time_fields
+from emva.scoring import FieldType, submit_time_fields
 
 # Fewer leads than this cannot give a train and a test set worth reporting.
 MIN_LEADS: int = 200
@@ -59,8 +59,8 @@ REQUIRED_COLUMNS: dict[str, tuple[str, ...]] = {
     COMPANIES_FILE: ("company_name", "domain", *ENRICHMENT_COLUMNS),
     PEOPLE_FILE: ("email",),
 }
-_NUMERIC_LEAD = tuple(f.name for f in _LEAD_FIELDS if f.dtype in ("float", "int")) + ("pages_visited",)
-_BOOL_LEAD = tuple(f.name for f in _LEAD_FIELDS if f.dtype == "bool")
+_NUMERIC_LEAD = tuple(f.name for f in _LEAD_FIELDS if f.dtype.is_numeric) + ("pages_visited",)
+_BOOL_LEAD = tuple(f.name for f in _LEAD_FIELDS if f.dtype is FieldType.BOOL)
 _ANSWER_OPTIONS = {f.name: f.allowed for f in submit_time_fields() if f.source == "answers" and f.allowed}
 _BOOL_TEXT = frozenset({"true", "false"})
 RULES_KEYS: tuple[str, ...] = ("base_value_by_form", "value_rules", "lead_score")

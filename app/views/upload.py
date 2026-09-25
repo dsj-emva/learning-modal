@@ -110,7 +110,7 @@ def _upload_section() -> None:
 
 
 @st.cache_data(show_spinner="Counting training and test leads…")
-def _summary(dataset_path: str, label_mode: str, feature_set: str, _stamp: str) -> dict[str, object]:
+def _summary(dataset_path: str, label_mode: str, feature_set: str, _stamp: str) -> training.TrainingSummary:
     """Cached ``pre_training_summary`` (``_stamp`` = dataset creation time, so a replaced dataset recomputes)."""
     return training.pre_training_summary(dataset_path, training.TrainingConfig(label_mode, feature_set))
 
@@ -145,12 +145,12 @@ def _train_section() -> None:
     except ValueError as e:
         ui.html(C.callout(str(e), "bad", lead="This dataset cannot be trained as it is."))
         return
-    ui.html(C.stats([("Leads after bot/duplicate removal", f"{s['scored']:,}"),
-                     ("Training leads (won)", f"{s['train']:,} ({s['train_wins']:,})"),
-                     ("Test leads (won)", f"{s['test']:,} ({s['test_wins']:,})"),
-                     ("Mature test set (won)", f"{s['mature_test']:,} ({s['mature_test_wins']:,})")]))
+    ui.html(C.stats([("Leads after bot/duplicate removal", f"{s.scored:,}"),
+                     ("Training leads (won)", f"{s.train:,} ({s.train_wins:,})"),
+                     ("Test leads (won)", f"{s.test:,} ({s.test_wins:,})"),
+                     ("Mature test set (won)", f"{s.mature_test:,} ({s.mature_test_wins:,})")]))
     with st.expander("Labels by CRM state (label_source)"):
-        t = training.label_counts_frame(s)
+        t = s.label_counts_frame()
         st.dataframe(t, hide_index=True, width="stretch", column_config={
             "label_source": st.column_config.TextColumn("CRM state at the snapshot"),
             "leads": st.column_config.NumberColumn("Leads", format="%d"),
@@ -160,7 +160,7 @@ def _train_section() -> None:
         st.caption("won = closed won; crm_lost = marked lost in the CRM; stalled = no stage change for 90+ days "
                    "(left out by horizon labels); ghosted = never contacted within the horizon; open = still "
                    "in progress.")
-    if s["train"] == 0 or s["train_wins"] == 0:
+    if s.train == 0 or s.train_wins == 0:
         ui.html(C.callout("The model cannot be trained on this dataset with these labels.", "bad",
                           lead="No labelled training leads with wins."))
         return

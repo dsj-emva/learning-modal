@@ -287,3 +287,17 @@ def test_submit_time_fields(trained):
 def test_is_blank(value: object, blank: bool) -> None:
     from emva.scoring import is_blank
     assert is_blank(value) is blank
+
+
+def test_field_types_check_and_coerce_in_one_place() -> None:
+    from emva.scoring import FieldType
+
+    assert FieldType.INT.coerce(3.0) == 3 and isinstance(FieldType.INT.coerce(np.float64(2.0)), int)
+    assert FieldType.FLOAT.coerce(" ") is None and FieldType.FLOAT.coerce(np.nan) is None
+    assert FieldType.BOOL.coerce(np.bool_(True)) is True and FieldType.STR.coerce(5) == "5"
+    assert FieldType.STR.coerce(" as typed ") == " as typed "
+    assert FieldType.INT.accepts(4.0) and not FieldType.INT.accepts(4.5) and not FieldType.FLOAT.accepts(True)
+    spec = {f.name: f for f in submit_time_fields()}
+    assert spec["email"].required and not spec["company"].required
+    with pytest.raises(ValueError, match="must be an integer"):
+        spec["local_submit_hour"].check(3.5)

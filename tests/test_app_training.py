@@ -25,12 +25,12 @@ def test_pre_training_summary_matches_pipeline(labels, mode) -> None:
     L = load(DATA_V1)
     X = build(L, labels, FeatureSet.V2)
     tr, te = split_masks(X, TEST_FROM, labels.eligible(X))
-    assert (s["leads"], s["scored"], s["train"], s["test"]) == (len(L), len(X), int(tr.sum()), int(te.sum()))
-    assert s["train_wins"] == int((X.y[tr] == 1).sum())
-    assert s["mature_test"] == len(frozen_test_labels(L)[3]) == 458  # CLAUDE.md: the frozen horizon test set
-    assert sum(v["leads"] for v in s["label_counts"].values()) == len(X)
+    assert (s.leads, s.scored, s.train, s.test) == (len(L), len(X), int(tr.sum()), int(te.sum()))
+    assert s.train_wins == int((X.y[tr] == 1).sum())
+    assert s.mature_test == len(frozen_test_labels(L)[3]) == 458  # CLAUDE.md: the frozen horizon test set
+    assert sum(v["leads"] for v in s.label_counts.values()) == len(X)
     if mode == "horizon":
-        assert s["train"] == 4049 and s["label_counts"]["stalled"]["unlabelled"] == 618  # standard report figures
+        assert s.train == 4049 and s.label_counts["stalled"]["unlabelled"] == 618  # standard report figures
 
 
 def test_config_rejects_unknown_options() -> None:

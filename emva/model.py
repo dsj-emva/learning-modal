@@ -27,6 +27,12 @@ def predict(lr: LogisticRegression, D: pd.DataFrame) -> np.ndarray:
 INTERCEPT: str = "(intercept)"
 
 
+def split_design_column(column: str) -> tuple[str, str]:
+    """``"channel=linkedin"`` -> ``("channel", "linkedin")``; a column without ``=`` (``INTERCEPT``) has level ``""``."""
+    feature, _, level = column.partition("=")
+    return feature, level
+
+
 def _points_table(w: pd.Series) -> pd.DataFrame:
     """``log_odds`` = ``w``, ``odds_multiplier`` = exp(w), ``points`` (``POINTS_TO_DOUBLE_ODDS`` points = odds double)."""
     return pd.DataFrame({"log_odds": w, "odds_multiplier": np.exp(w), "points": w * POINTS_TO_DOUBLE_ODDS / np.log(2)})

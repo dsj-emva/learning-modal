@@ -26,6 +26,7 @@ import json
 import numbers
 import uuid
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 
 import numpy as np
@@ -34,7 +35,7 @@ import pandas as pd
 from emva.constants import ANSWER_KEYS, CHANNEL_SOURCES, LEAD_ADS_MEDIUM, MISSING, V2_LEVELS, WEEKDAYS
 from emva.feature_spec import feature_spec
 from emva.io import enrich, flag_bots_and_duplicates, read_companies
-from emva.model import coefficients, intercept_row, predict
+from emva.model import coefficients, intercept_row, predict, split_design_column
 from emva.persist import ModelBundle
 from emva.value import expected_value, predict_deal_value
 
@@ -43,59 +44,120 @@ class UnknownLevelError(ValueError):
     """A lead has a categorical feature value the saved models were not trained with."""
 
 
+class FieldType(str, Enum):
+    """A form field's type. The one place that knows how each type is checked and coerced (``FieldSpec`` delegates
+    here; the app's form uses the same methods)."""
+
+    STR = "str"
+    FLOAT = "float"
+    INT = "int"
+    BOOL = "bool"
+
+    @property
+    def kind(self) -> str:
+        """How the type is named in an error message."""
+        return {"str": "a string", "float": "a number", "int": "an integer", "bool": "a bool"}[self.value]
+
+    @property
+    def is_numeric(self) -> bool:
+        """True for ``FLOAT`` and ``INT``."""
+        return self in (FieldType.FLOAT, FieldType.INT)
+
+    def accepts(self, v: object) -> bool:
+        """True when non-blank ``v`` is of this type (an integral float counts as an int; a bool is not a number)."""
+        is_bool = isinstance(v, (bool, np.bool_))
+        if self is FieldType.STR:
+            return isinstance(v, str)
+        if self is FieldType.BOOL:
+            return is_bool
+        if self is FieldType.FLOAT:
+            return isinstance(v, numbers.Real) and not is_bool
+        return (isinstance(v, numbers.Integral) and not is_bool) or (isinstance(v, float) and v.is_integer())
+
+    def coerce(self, v: object) -> object:
+        """A widget or CSV value in the form ``lead_from_form`` expects: blanks (``is_blank``, and whitespace in a
+        numeric field) as None, bools as ``bool``, integral numbers as ``int`` for ``INT``, numbers as ``float`` for
+        ``FLOAT``, anything else for ``STR`` as text (not stripped: text features read it as typed)."""
+        if is_blank(v) or (self.is_numeric and isinstance(v, str) and not v.strip()):
+            return None
+        if self is FieldType.STR:
+            return v if isinstance(v, str) else str(v)
+        if self is FieldType.BOOL:
+            return bool(v)
+        if self is FieldType.INT and isinstance(v, numbers.Real) and float(v).is_integer():
+            return int(v)
+        if self is FieldType.FLOAT and isinstance(v, numbers.Real):
+            return float(v)
+        return v
+
+
 @dataclass(frozen=True)
 class FieldSpec:
     """One input the app collects for a lead.
 
-    ``dtype`` is ``"str"``, ``"float"``, ``"int"`` or ``"bool"``; ``source`` is ``"answers"`` (a key of the
-    ``answers`` JSON) or ``"column"`` (a top-level ``historical_leads.csv`` column); ``allowed`` lists the valid
-    values of a categorical field (None = free input); ``required`` fields must be present and non-blank.
+    ``dtype`` is a ``FieldType``; ``source`` is ``"answers"`` (a key of the ``answers`` JSON) or ``"column"`` (a
+    top-level ``historical_leads.csv`` column); ``allowed`` lists the valid values of a categorical field (None =
+    free input); ``required`` fields must be present and non-blank.
     """
 
     name: str
-    dtype: str
+    dtype: FieldType
     source: str
-    allowed: tuple[str, ...] | None
-    required: bool
     description: str
+    allowed: tuple[str, ...] | None = None
+    required: bool = False
+
+    def check(self, v: object) -> None:
+        """Raise ``ValueError`` if non-blank ``v`` does not fit this field's type or allowed values."""
+        if not self.dtype.accepts(v):
+            raise ValueError(f"form field {self.name!r} must be {self.dtype.kind}, got {v!r}")
+        if self.allowed is not None and v not in self.allowed and v != "":
+            raise ValueError(f"form field {self.name!r} has value {v!r}; allowed: {list(self.allowed)}")
+
+    def coerce(self, v: object) -> object:
+        """``FieldType.coerce`` for this field."""
+        return self.dtype.coerce(v)
 
 
-# Form answers (``constants.ANSWER_KEYS``): dtype, allowed values, description.
-_ANSWERS: dict[str, tuple[str, tuple[str, ...] | None, str]] = {
-    "country": ("str", None, "Country the lead typed (e.g. UK); compared with ip_country"),
-    "what_to_solve": ("str", None, "Free text: what they want to solve (scored as specific / vague / boilerplate)"),
-    "job_title": ("str", None, "Job title (bucketed into seniority)"),
-    "company_size": ("str", tuple(b for b in V2_LEVELS["band"] if b != MISSING),
-                     "Typed company size; used when the company is not found in companies.csv"),
-    "budget": ("str", tuple(b for b in V2_LEVELS["c_budget"] if b != "not_asked"), "Budget answer (legacy features)"),
-    "timeline": ("str", tuple(t for t in V2_LEVELS["c_timeline"] if t != "not_asked"),
-                 "Timeline answer (legacy features)"),
-    "company": ("str", None, "Company name typed in the form (name enrichment fallback)"),
-}
-
-# Top-level columns the scoring path reads: dtype, allowed values, description. ``features.SESSION_INPUTS`` and
-# ``landing_url`` are the on-site session: any of them blank means session_missing (v2 features).
-_COLUMNS: dict[str, tuple[str, tuple[str, ...] | None, str]] = {
-    "email": ("str", None, "Email address (free-mail domain, duplicate check)"),
-    "company_name": ("str", None, "Company name (name enrichment when the domain is unknown)"),
-    "company_domain": ("str", None, "Company domain (enrichment join with companies.csv)"),
-    "form_variant": ("str", V2_LEVELS["form_variant"], "Landing-page form variant"),
-    "utm_source": ("str", tuple(s for sources in CHANNEL_SOURCES.values() for s in sources),
-                   "UTM source; blank or anything else = organic/direct"),
-    "utm_medium": ("str", None, f"UTM medium; '{LEAD_ADS_MEDIUM}' = Meta lead ads"),
-    "utm_term": ("str", None, "Search term (Google only; brand vs generic)"),
-    "landing_url": ("str", None, "Landing page URL; blank = no on-site session"),
-    "time_on_page_s": ("float", None, "Seconds on the page before submitting (< 15 s is flagged as a bot)"),
-    "hesitation_ms": ("float", None, "Longest pause while filling the form, in ms"),
-    "sessions_before_convert": ("int", None, "Sessions before this submission"),
-    "viewed_pricing": ("bool", None, "Viewed the pricing page"),
-    "ip_country": ("str", None, "Country of the IP address"),
-    "is_datacenter_ip": ("bool", None, "IP address is a data-centre IP"),
-    "submitted_weekday": ("str", WEEKDAYS, "Weekday of submission in the lead's local time"),
-    "local_submit_hour": ("int", None, "Hour of submission in the lead's local time, 0-23"),
-    "field_edit_count": ("int", None, "Number of form fields edited (legacy features)"),
-    "user_agent": ("str", None, "Browser user agent ('Headless' is flagged as a bot)"),
-}
+S, F, I, B = FieldType.STR, FieldType.FLOAT, FieldType.INT, FieldType.BOOL
+# Top-level columns the scoring path reads. ``features.SESSION_INPUTS`` and ``landing_url`` are the on-site session:
+# any of them blank means session_missing (v2 features).
+_COLUMN_FIELDS: tuple[FieldSpec, ...] = (
+    FieldSpec("email", S, "column", "Email address (free-mail domain, duplicate check)", required=True),
+    FieldSpec("company_name", S, "column", "Company name (name enrichment when the domain is unknown)"),
+    FieldSpec("company_domain", S, "column", "Company domain (enrichment join with companies.csv)"),
+    FieldSpec("form_variant", S, "column", "Landing-page form variant", V2_LEVELS["form_variant"]),
+    FieldSpec("utm_source", S, "column", "UTM source; blank or anything else = organic/direct",
+              tuple(s for sources in CHANNEL_SOURCES.values() for s in sources)),
+    FieldSpec("utm_medium", S, "column", f"UTM medium; '{LEAD_ADS_MEDIUM}' = Meta lead ads"),
+    FieldSpec("utm_term", S, "column", "Search term (Google only; brand vs generic)"),
+    FieldSpec("landing_url", S, "column", "Landing page URL; blank = no on-site session"),
+    FieldSpec("time_on_page_s", F, "column", "Seconds on the page before submitting (< 15 s is flagged as a bot)"),
+    FieldSpec("hesitation_ms", F, "column", "Longest pause while filling the form, in ms"),
+    FieldSpec("sessions_before_convert", I, "column", "Sessions before this submission"),
+    FieldSpec("viewed_pricing", B, "column", "Viewed the pricing page"),
+    FieldSpec("ip_country", S, "column", "Country of the IP address"),
+    FieldSpec("is_datacenter_ip", B, "column", "IP address is a data-centre IP"),
+    FieldSpec("submitted_weekday", S, "column", "Weekday of submission in the lead's local time", WEEKDAYS),
+    FieldSpec("local_submit_hour", I, "column", "Hour of submission in the lead's local time, 0-23"),
+    FieldSpec("field_edit_count", I, "column", "Number of form fields edited (legacy features)"),
+    FieldSpec("user_agent", S, "column", "Browser user agent ('Headless' is flagged as a bot)"),
+)
+# Form answers (``constants.ANSWER_KEYS``), keys of the ``answers`` JSON.
+_ANSWER_FIELDS: dict[str, FieldSpec] = {f.name: f for f in (
+    FieldSpec("country", S, "answers", "Country the lead typed (e.g. UK); compared with ip_country"),
+    FieldSpec("what_to_solve", S, "answers",
+              "Free text: what they want to solve (scored as specific / vague / boilerplate)"),
+    FieldSpec("job_title", S, "answers", "Job title (bucketed into seniority)"),
+    FieldSpec("company_size", S, "answers", "Typed company size; used when the company is not found in companies.csv",
+              tuple(b for b in V2_LEVELS["band"] if b != MISSING)),
+    FieldSpec("budget", S, "answers", "Budget answer (legacy features)",
+              tuple(b for b in V2_LEVELS["c_budget"] if b != "not_asked")),
+    FieldSpec("timeline", S, "answers", "Timeline answer (legacy features)",
+              tuple(t for t in V2_LEVELS["c_timeline"] if t != "not_asked")),
+    FieldSpec("company", S, "answers", "Company name typed in the form (name enrichment fallback)"),
+)}
+del S, F, I, B
 
 
 def is_blank(value: object) -> bool:
@@ -117,22 +179,7 @@ def submit_time_fields() -> list[FieldSpec]:
     ``lead_id`` and ``created_at`` are not fields (``lead_from_form`` generates them); only ``email`` is
     required. Fields the models never read (consent, device, pages visited, click IDs, ...) are not listed.
     """
-    cols = [FieldSpec(n, t, "column", a, n == "email", d) for n, (t, a, d) in _COLUMNS.items()]
-    return cols + [FieldSpec(k, _ANSWERS[k][0], "answers", _ANSWERS[k][1], False, _ANSWERS[k][2]) for k in ANSWER_KEYS]
-
-
-def _check_field(f: FieldSpec, v: object) -> None:
-    """Raise ``ValueError`` if ``v`` does not fit field ``f``'s dtype or allowed values."""
-    ok = {"str": isinstance(v, str), "bool": isinstance(v, (bool, np.bool_)),
-          "float": isinstance(v, numbers.Real) and not isinstance(v, (bool, np.bool_)),
-          "int": isinstance(v, numbers.Integral) and not isinstance(v, (bool, np.bool_))}[f.dtype]
-    if f.dtype == "int" and isinstance(v, float) and v.is_integer():
-        ok = True
-    if not ok:
-        kind = {"str": "a string", "bool": "a bool", "float": "a number", "int": "an integer"}[f.dtype]
-        raise ValueError(f"form field {f.name!r} must be {kind}, got {v!r}")
-    if f.allowed is not None and v not in f.allowed and v != "":
-        raise ValueError(f"form field {f.name!r} has value {v!r}; allowed: {list(f.allowed)}")
+    return [*_COLUMN_FIELDS, *(_ANSWER_FIELDS[k] for k in ANSWER_KEYS)]
 
 
 def lead_from_form(fields: dict[str, object]) -> pd.DataFrame:
@@ -154,7 +201,7 @@ def lead_from_form(fields: dict[str, object]) -> pd.DataFrame:
         if f.required and not (isinstance(given.get(name), str) and given[name].strip()):
             raise ValueError(f"form field {name!r} is required")
     for k, v in given.items():
-        _check_field(spec[k], v)
+        spec[k].check(v)
     row: dict[str, object] = {"lead_id": f"form-{uuid.uuid4().hex}", "created_at": pd.Timestamp.now(tz="UTC"),
                               "answers": json.dumps({k: v for k, v in given.items() if spec[k].source == "answers"})}
     row.update({k: v for k, v in given.items() if spec[k].source == "column"})
@@ -268,12 +315,11 @@ def points_breakdown(bundle: ModelBundle, leads: pd.DataFrame, data: str | Path)
     parts = []
     for lead_id, row in D.iterrows():
         t = pd.concat([icpt, coef[row.to_numpy() == 1.0]])
-        split = t.index.to_series().str.split("=", n=1)
-        parts.append(t.reset_index(drop=True).assign(
-            lead_id=lead_id, feature=split.str[0].to_numpy(), level=split.str[1].fillna("").to_numpy()))
+        feature, level = zip(*map(split_design_column, t.index))
+        parts.append(t.reset_index(drop=True).assign(lead_id=lead_id, feature=list(feature), level=list(level)))
     return pd.concat(parts, ignore_index=True)[["lead_id", "feature", "level", "log_odds", "odds_multiplier",
                                                 "points"]]
 
 
-__all__ = ["FieldSpec", "UnknownLevelError", "check_levels", "is_blank", "lead_from_form", "points_breakdown", "prepare",
+__all__ = ["FieldSpec", "FieldType", "UnknownLevelError", "check_levels", "is_blank", "lead_from_form", "points_breakdown", "prepare",
            "score_leads", "submit_time_fields"]
