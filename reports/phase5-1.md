@@ -32,6 +32,11 @@ One weak hint: Python's `random.Random(20260924)`, drawing from alphabetically s
 already diverges and the second company could not be aligned, so the attempt stopped there. Distributional fidelity
 is reported instead.
 
+## Orchestrator decision
+
+Exact row-level reproduction of v1 is accepted as infeasible. Distributional fidelity, as measured below, is the
+accepted pass criterion for 5.1.
+
 ## Fidelity (seed 20260924, n = 10,000)
 
 | Statistic | v1 | Generated |
@@ -65,6 +70,13 @@ is reported instead.
 - Seed choice alone moves these metrics by about ±0.015 AUC and ±0.03 on the top-20% shares. Later phases should compare baseline and candidate on the same data, or across seeds, not against v1's single numbers.
 - 31 of the 35 planted-effect weights put v1 within 2 seed-sd of the generated mean. Outside: student (−1.47 v1 vs −0.86 generated; looks like v1 luck, since true p is the same 0.043 vs 0.045 but v1 had 9 student wins where about 16 were expected), band 201-1000, time on page 60-300s and hiring (each about 2 sd).
 - Seed 20260924 vs v1 across all 47 weights: correlation 0.863, mean absolute difference 0.166.
+- The second-largest single-seed weight gap is a sign flip on `ip_country=mismatch`: +0.303 generated vs −0.331 v1
+  (the largest is student, 0.89). The planted −0.3 is applied in code (`Config.ip_mismatch_eff`, used in
+  `close_log_odds`), and across the 8 other seeds the learned weight is −0.375 ± 0.339, so the flip is sampling noise
+  on a small group (about 7% of decided leads), not a missing effect.
+- `no_company=yes` always equals `email=free` in the table. That is an artefact of the baseline encoding: both columns
+  are identical for every lead, so the L2 fit splits the free-email weight evenly between them. It is not a planted
+  signal. Phase 2 (2.2, 2.7) removes the collinearity.
 
 Full tables: `python scripts/compare_to_v1.py --gen DIR --seeds 1,2,3,4,5,6,7,8 --md out.md`.
 
