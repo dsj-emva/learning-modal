@@ -46,7 +46,7 @@ class PairedComparison:
     p_value: float
 
 
-def _resample_indices(y: np.ndarray, n_resamples: int, rng: np.random.Generator) -> list[np.ndarray]:
+def resample_indices(y: np.ndarray, n_resamples: int, rng: np.random.Generator) -> list[np.ndarray]:
     """Draw ``n_resamples`` index vectors of length ``len(y)``, each containing both classes."""
     n = len(y)
     out: list[np.ndarray] = []
@@ -57,7 +57,7 @@ def _resample_indices(y: np.ndarray, n_resamples: int, rng: np.random.Generator)
     return out
 
 
-def _percentile_ci(point: float, samples: np.ndarray, level: float) -> BootstrapCI:
+def percentile_ci(point: float, samples: np.ndarray, level: float) -> BootstrapCI:
     """Wrap ``point`` and the equal-tailed ``level`` percentile interval of ``samples``."""
     alpha = (1 - level) / 2
     lo, hi = np.quantile(samples, [alpha, 1 - alpha])
@@ -81,8 +81,8 @@ def auc_ci(y: np.ndarray, score: np.ndarray, n_resamples: int = N_RESAMPLES,
     y, score = np.asarray(y, dtype=float), np.asarray(score, dtype=float)
     _check(y, score)
     rng = np.random.default_rng(seed)
-    samples = np.array([roc_auc_score(y[i], score[i]) for i in _resample_indices(y, n_resamples, rng)])
-    return _percentile_ci(float(roc_auc_score(y, score)), samples, level)
+    samples = np.array([roc_auc_score(y[i], score[i]) for i in resample_indices(y, n_resamples, rng)])
+    return percentile_ci(float(roc_auc_score(y, score)), samples, level)
 
 
 def paired_auc(y: np.ndarray, score_a: np.ndarray, score_b: np.ndarray, n_resamples: int = N_RESAMPLES,
@@ -93,10 +93,10 @@ def paired_auc(y: np.ndarray, score_a: np.ndarray, score_b: np.ndarray, n_resamp
     _check(y, a, b)
     rng = np.random.default_rng(seed)
     diffs = np.array([roc_auc_score(y[i], b[i]) - roc_auc_score(y[i], a[i])
-                      for i in _resample_indices(y, n_resamples, rng)])
+                      for i in resample_indices(y, n_resamples, rng)])
     auc_a, auc_b = float(roc_auc_score(y, a)), float(roc_auc_score(y, b))
     p = min(1.0, 2 * min(float((diffs <= 0).mean()), float((diffs >= 0).mean())))
-    return PairedComparison(auc_a=auc_a, auc_b=auc_b, diff=_percentile_ci(auc_b - auc_a, diffs, level), p_value=p)
+    return PairedComparison(auc_a=auc_a, auc_b=auc_b, diff=percentile_ci(auc_b - auc_a, diffs, level), p_value=p)
 
 
 def coef_bootstrap(X: np.ndarray, y: np.ndarray, fit: Callable[[np.ndarray, np.ndarray], np.ndarray],
@@ -113,5 +113,5 @@ def coef_bootstrap(X: np.ndarray, y: np.ndarray, fit: Callable[[np.ndarray, np.n
     _check(y)
     point = np.asarray(fit(X, y), dtype=float)
     rng = np.random.default_rng(seed)
-    samples = np.array([fit(X[i], y[i]) for i in _resample_indices(y, n_resamples, rng)], dtype=float)
-    return [_percentile_ci(float(point[j]), samples[:, j], level) for j in range(len(point))]
+    samples = np.array([fit(X[i], y[i]) for i in resample_indices(y, n_resamples, rng)], dtype=float)
+    return [percentile_ci(float(point[j]), samples[:, j], level) for j in range(len(point))]

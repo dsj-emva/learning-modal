@@ -25,6 +25,12 @@ import string
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
+if ROOT not in sys.path:          # emva.env: the .env loader shared with the context agent
+    sys.path.insert(0, ROOT)
+
+from emva.env import load_env_var  # noqa: E402
+
 CACHE_PATH = os.path.join(HERE, "paraphrase_cache.json")
 MODEL_ID = "claude-haiku-4-5-20251001"
 PROMPT_VERSION = "v2"   # v1 named "{team}" as an example and Haiku copied it into answers without placeholders
@@ -113,46 +119,14 @@ def lookup(templates: list[str], path: str | None = None) -> dict[str, list[str]
     return out
 
 
-def find_dotenv(start: str = HERE) -> str | None:
-    """Path of the first ``.env`` file found walking up from ``start`` to the filesystem root, else None."""
-    d = os.path.abspath(start)
-    while True:
-        cand = os.path.join(d, ".env")
-        if os.path.isfile(cand):
-            return cand
-        parent = os.path.dirname(d)
-        if parent == d:
-            return None
-        d = parent
-
-
-def load_env_var(name: str) -> str | None:
-    """``name`` from the environment, else from the nearest ``.env`` (``NAME=value`` lines), else None."""
-    value = os.environ.get(name)
-    if value:
-        return value
-    path = find_dotenv()
-    if path is None:
-        return None
-    with open(path, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line.startswith("export "):
-                line = line[len("export "):]
-            key, sep, value = line.partition("=")
-            if sep and key.strip() == name:
-                return value.strip().strip('"').strip("'") or None
-    return None
-
-
 def make_client() -> "anthropic.Anthropic":  # noqa: F821
     """Anthropic client from ANTHROPIC_API_KEY, adding the ``anthropic-workspace-id`` header when
     ANTHROPIC_WORKSPACE_ID is set (keys that are not workspace-scoped need it). Exits if no key is found."""
     import anthropic
-    key = load_env_var("ANTHROPIC_API_KEY")
+    key = load_env_var("ANTHROPIC_API_KEY", HERE)
     if not key:
         raise SystemExit("ANTHROPIC_API_KEY is not set and no .env with it was found; cannot call the API.")
-    workspace = load_env_var("ANTHROPIC_WORKSPACE_ID")
+    workspace = load_env_var("ANTHROPIC_WORKSPACE_ID", HERE)
     headers = {"anthropic-workspace-id": workspace} if workspace else None
     return anthropic.Anthropic(api_key=key, default_headers=headers)
 

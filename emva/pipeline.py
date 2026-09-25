@@ -17,7 +17,7 @@ import pandas as pd
 from sklearn.linear_model import LogisticRegression
 
 from emva.constants import TEST_FROM
-from emva.context.features import context_logit
+from emva.context.features import context_features
 from emva.eval.metrics import summary
 from emva.feature_spec import feature_spec
 from emva.features import FeatureSet
@@ -80,8 +80,9 @@ def run(data: str | Path, margin: float = 1.0, context: str | Path | None = None
     ``labels`` picks the label definition; in horizon mode only mature leads enter the
     train and test sets. ``features`` picks the feature set; the legacy set also keeps the
     baseline's fixed deal-value residual sd, v2 estimates it from training residuals. With
-    ``context`` (an agent output CSV), also fit formula-only, context-only and formula+context
-    models on the rows that have a context score and summarise all three. In horizon mode
+    ``context`` (an agent output CSV: v2 judgments or the legacy ``context_score``; see
+    ``emva.context.features.context_features``), also fit formula-only, context-only and formula+context
+    models on the rows that have context and summarise all three. In horizon mode
     ``value_transform`` is fitted on the training leads' ``value_formula`` and gives ``value_at_submit``
     (legacy mode ignores it: its outputs stay the baseline's).
     """
@@ -119,24 +120,29 @@ def run(data: str | Path, margin: float = 1.0, context: str | Path | None = None
                         "test metrics skipped")
 
     if context:
-        X["context_logit"] = context_logit(context, X.index)
-        have = X.context_logit.notna()
+        C = context_features(context, X.index)
+        have = C.notna().all(axis=1)
+        X[list(C.columns)] = C
         messages.append(f"context scores for {have.sum()} of {len(X)} leads")
         # same rows for both models so the comparison is fair
         tr2, te2 = tr & have, te & have
         if not te2.any():
             raise ValueError("no labelled test leads have a context score; cannot compare the context models")
         base = fit_lr(D, X.y, tr2)
-        both = fit_lr(D.join(X.context_logit), X.y, tr2)
+        both = fit_lr(D.join(C), X.y, tr2)
         X["p_base"] = predict(base, D)
-        X.loc[have, "p_combined"] = predict(both, D.join(X.context_logit)[have])
-        ctx_only = LogisticRegression().fit(X.loc[tr2, ["context_logit"]], X.y[tr2])
-        X.loc[have, "p_context_only"] = ctx_only.predict_proba(X.loc[have, ["context_logit"]])[:, 1]
+        X.loc[have, "p_combined"] = predict(both, D.join(C)[have])
+        ctx_only = LogisticRegression().fit(C[tr2], X.y[tr2])
+        X.loc[have, "p_context_only"] = ctx_only.predict_proba(C[have])[:, 1]
         T2 = X[te2]
         rev2 = realised_revenue(T2)
         rows = [summary(n, T2.y, T2[c].values, rev2, (T2[c] * T2.deal_value_hat).values) for n, c in
                 [("formula", "p_base"), ("context_only", "p_context_only"), ("formula+context", "p_combined")]]
-        messages.append(f"context weight in combined model: {both.coef_[0][-1]:.3f} (0 = context adds nothing)")
+        w = both.coef_[0][-C.shape[1]:]
+        if list(C.columns) == ["context_logit"]:
+            messages.append(f"context weight in combined model: {w[0]:.3f} (0 = context adds nothing)")
+        else:
+            messages.append("context weights in combined model: " + ", ".join(f"{c} {v:+.3f}" for c, v in zip(C.columns, w)))
         X["value_combined"] = expected_value(X.p_combined, X.deal_value_hat, margin)
 
     return PipelineResult(X=X, train=tr, test=te, design=D, weights=weights, summary=pd.DataFrame(rows),
