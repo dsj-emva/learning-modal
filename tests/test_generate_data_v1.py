@@ -11,10 +11,13 @@ import pytest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 V1 = os.path.join(ROOT, "data", "v1")
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
-sys.path.insert(0, os.path.join(ROOT, "LearningPYApp"))
+sys.path.insert(0, ROOT)
 
 import generate_data_v1 as gen  # noqa: E402
-import emva_score  # noqa: E402
+from emva.design import design  # noqa: E402
+from emva.features import text_cat  # noqa: E402
+from emva.io import load  # noqa: E402
+from emva.pipeline import build  # noqa: E402
 
 N = 2000
 CSVS = ["historical_leads", "crm_history", "companies", "people", "ground_truth_labels"]
@@ -136,7 +139,7 @@ def test_crm_comment_vocabulary_within_v1(v1, g):
 def test_regex_text_category_agrees_with_truth(g):
     """v1 property that Phase 5.2 will deliberately break: the POC regex recovers every category."""
     L = g["historical_leads"].merge(g["ground_truth_labels"], on="lead_id")
-    cat = L.answers.apply(lambda s: emva_score.text_cat(json.loads(s)["what_to_solve"]))
+    cat = L.answers.apply(lambda s: text_cat(json.loads(s)["what_to_solve"]))
     assert (cat == L.text_category).all()
 
 
@@ -171,11 +174,11 @@ def test_sanity_ranges(v1, g):
 
 
 def test_baseline_pipeline_runs_on_output(run_a):
-    X = emva_score.build(emva_score.load(run_a))
+    X = build(load(run_a))
     assert len(X) > 0.9 * N * 0.9
     assert X.y.notna().sum() > 0.6 * len(X)
     assert 0.08 < X.y.mean() < 0.25
-    D = emva_score.design(X)
+    D = design(X)
     assert D.shape[0] == len(X) and D.notna().all().all()
 
 

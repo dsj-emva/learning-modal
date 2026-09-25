@@ -7,17 +7,15 @@ Prints (and optionally writes as markdown):
   1. every ground_truth.md table, v1 vs generated, with absolute differences (share of decided leads
      and win rate, in percentage points);
   2. scalar statistics (outcome mix, bot/duplicate share, deal values, time to close, data problems);
-  3. the baseline model from LearningPYApp/emva_score.py (run as-is via its CLI) on both directories:
+  3. the baseline model via emva.pipeline.run (Phase 0 split of the frozen POC, no behaviour change):
      AUC, top-20% wins, top-20% revenue, and the learned weights for the planted effects;
-  4. the pipeline's own cleaning view via emva_score.build(load(dir)): bot share, duplicate share,
+  4. the pipeline's own cleaning view via emva.io / emva.pipeline.build: bot share, duplicate share,
      label balance.
 """
 from __future__ import annotations
 
 import argparse
-import io
 import os
-import subprocess
 import sys
 import tempfile
 
@@ -27,10 +25,12 @@ import pandas as pd
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
-sys.path.insert(0, os.path.join(ROOT, "LearningPYApp"))
+sys.path.insert(0, ROOT)
 
 from ground_truth_report import load as gt_load, measure  # noqa: E402
-import emva_score  # noqa: E402  (baseline pipeline; imported, not copied)
+from emva.constants import TEST_FROM  # noqa: E402
+from emva.io import flag_bots_and_duplicates, load as emva_load  # noqa: E402
+from emva.pipeline import build, run  # noqa: E402
 
 PLANTED = ["band=11-50", "band=51-200", "band=201-1000", "band=1000+", "email=free", "text=specific", "text=vague",
            "text=copy_paste", "time_on_page=60-300s", "time_on_page=>600s", "hesitation_90s=yes", "edits_1_4=yes",
@@ -42,24 +42,17 @@ PLANTED = ["band=11-50", "band=51-200", "band=201-1000", "band=1000+", "email=fr
 
 
 def run_baseline(data_dir: str) -> tuple[dict, pd.Series]:
-    with tempfile.TemporaryDirectory() as out:
-        r = subprocess.run([sys.executable, os.path.join(ROOT, "LearningPYApp", "emva_score.py"), "--data", data_dir,
-                            "--out", out], capture_output=True, text=True, check=True)
-        res = pd.read_csv(io.StringIO(r.stdout), sep=r"\s+").iloc[0].to_dict()
-        w = pd.read_csv(os.path.join(out, "weights.csv"), index_col=0)["log_odds"]
-    return res, w
+    r = run(data_dir)
+    return r.summary.iloc[0].to_dict(), r.weights["log_odds"]
 
 
 def cleaning_view(data_dir: str) -> dict:
-    L = emva_score.load(data_dir)
-    X = L.copy()
-    X["email_l"] = X.email.str.strip().str.lower()
-    bot = X.user_agent.fillna("").str.contains("Headless", case=False) | (X.time_on_page_s < 15)
-    dup = X.groupby("email_l").created_at.rank(method="first") > 1
-    B = emva_score.build(L)
-    return {"rows": len(L), "bot_share": bot.mean(), "dup_share": (dup & ~bot).mean(), "kept": len(B),
+    L = emva_load(data_dir)
+    F = flag_bots_and_duplicates(L)
+    B = build(L)
+    return {"rows": len(L), "bot_share": F.bot.mean(), "dup_share": (F.dup & ~F.bot).mean(), "kept": len(B),
             "labelled": int(B.y.notna().sum()), "label_pos_rate": B.y.mean(),
-            "test_labelled": int((B.y.notna() & (B.created_at >= emva_score.TEST_FROM)).sum())}
+            "test_labelled": int((B.y.notna() & (B.created_at >= TEST_FROM)).sum())}
 
 
 def side_by_side(a: pd.DataFrame, b: pd.DataFrame) -> pd.DataFrame:
@@ -165,7 +158,7 @@ def main(argv=None):
             md.append(f"| {k} | {f(v)} | {f(g)} | {f(diff) if isinstance(v, float) else f'{int(diff):,}'} |")
     md.append("")
 
-    md.append("### Baseline pipeline cleaning view (emva_score.load/build)\n")
+    md.append("### Baseline pipeline cleaning view (emva.io.load / emva.pipeline.build)\n")
     cr, cg = cleaning_view(a.ref), cleaning_view(a.gen)
     md.append("| statistic | v1 | generated |")
     md.append("|---|---|---|")
@@ -174,7 +167,7 @@ def main(argv=None):
         md.append(f"| {k} | {f(cr[k])} | {f(cg[k])} |")
     md.append("")
 
-    md.append("### Baseline model (LearningPYApp/emva_score.py, unmodified)\n")
+    md.append("### Baseline model (emva.pipeline.run = frozen baseline behaviour)\n")
     br, wr = run_baseline(a.ref)
     bg, wg = run_baseline(a.gen)
     md.append("| metric | v1 | generated | abs diff |")
