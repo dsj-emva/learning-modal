@@ -1,7 +1,7 @@
-"""Every constant the Phase 0 pipeline uses, in one place.
+"""Every constant the pipeline uses, in one place.
 
-Values are copied verbatim from ``baseline/emva_score.py``. Changing any of them changes
-model behaviour, so each change belongs to a numbered plan task with its own report.
+Phase 0 values are copied verbatim from ``baseline/emva_score.py``; Phase 1 added the label
+horizon and label modes. Changing any of them changes model behaviour, so each change belongs to a numbered plan task with its own report.
 """
 from __future__ import annotations
 
@@ -12,10 +12,20 @@ AS_OF: pd.Timestamp = pd.Timestamp("2026-09-24", tz="UTC")
 TEST_FROM: str = "2026-05-01"
 
 # Label rules (baseline decision log): open deals idle this long, and never-contacted
-# leads this old, are labelled Lost.
+# leads this old, are labelled Lost. STALLED_DAYS also defines ``label_source == "stalled"``.
 STALLED_DAYS: int = 90
 GHOSTED_DAYS: int = 90
 OPEN_STAGES: tuple[str, ...] = ("Contacted", "Qualified", "Demo booked", "Proposal")
+
+# Fixed-horizon label (plan 1.2): won_within_H with the same H for every lead. A lead is
+# mature once created_at + H <= AS_OF. CLI: --horizon-days.
+HORIZON_DAYS: int = 120
+# --label-mode: "legacy" = the baseline rules above (reproduces baseline/ byte for byte),
+# "horizon" = won_within_H with ghosted excluded and stalled censored (plan 1.2 to 1.5).
+LABEL_MODES: tuple[str, ...] = ("legacy", "horizon")
+DEFAULT_LABEL_MODE: str = "horizon"
+# Every row gets exactly one label_source (plan 1.1); definitions in emva/labels.py.
+LABEL_SOURCES: tuple[str, ...] = ("won", "crm_lost", "stalled", "ghosted", "open")
 
 # Bot rule: headless user agent or less than this many seconds on the page.
 BOT_MIN_TIME_ON_PAGE_S: int = 15

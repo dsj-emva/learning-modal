@@ -1,7 +1,8 @@
 """Ingest: load the CSVs, normalise CRM stages, join enrichment, drop bots and repeats.
 
-``load`` is ``baseline/emva_score.py::load`` and ``clean`` is the cleaning block at the top
-of ``baseline/emva_score.py::build``, both unchanged in behaviour.
+``load`` is ``baseline/emva_score.py::load`` plus the two CRM timestamps the Phase 1 labels
+need (``won_at``, ``first_contact_at``); ``clean`` is the cleaning block at the top of
+``baseline/emva_score.py::build``. Neither changes any column the baseline uses.
 """
 from __future__ import annotations
 
@@ -16,19 +17,30 @@ from emva.constants import ANSWER_KEYS, BOT_MIN_TIME_ON_PAGE_S, ENRICHMENT_COLUM
 def load(data: str | Path) -> pd.DataFrame:
     """Load leads indexed by ``lead_id`` with final CRM stage, deal value, answers and enrichment.
 
-    Adds ``final_stage``, ``last_change``, ``deal_value``, ``a_<answer>`` for each of
+    Adds ``final_stage``, ``last_change``, ``deal_value``, ``won_at`` (time of the Won stage
+    change, NaT if never Won), ``first_contact_at`` (time of the first change to a recognised
+    stage other than New, NaT if the lead never left New), ``a_<answer>`` for each of
     ``ANSWER_KEYS``, ``dom`` (normalised company domain) and ``co_<column>`` for each of
     ``ENRICHMENT_COLUMNS`` (NaN when the domain is not in companies.csv).
+
+    Raises ``ValueError`` if a lead has more than one Won row (``deal_value`` and ``won_at``
+    would be ambiguous).
     """
     L = pd.read_csv(f"{data}/historical_leads.csv", parse_dates=["created_at"]).set_index("lead_id")
     C = pd.read_csv(f"{data}/crm_history.csv", parse_dates=["changed_at"])
     CO = pd.read_csv(f"{data}/companies.csv")
     C["stage_n"] = C.stage.str.lower().map(STAGE)
     C = C.sort_values(["lead_id", "changed_at"])
+    multi_won = C[C.stage_n == "Won"].lead_id.duplicated()
+    if multi_won.any():
+        raise ValueError(f"leads with more than one Won row: {sorted(C[C.stage_n == 'Won'].lead_id[multi_won].unique())[:5]}")
     last = C.groupby("lead_id").tail(1).set_index("lead_id")
     L["final_stage"] = last.stage_n
     L["last_change"] = last.changed_at
-    L["deal_value"] = C[C.stage_n == "Won"].set_index("lead_id").deal_value
+    won = C[C.stage_n == "Won"].set_index("lead_id")
+    L["deal_value"] = won.deal_value
+    L["won_at"] = won.changed_at
+    L["first_contact_at"] = C[C.stage_n.notna() & (C.stage_n != "New")].groupby("lead_id").changed_at.min()
     ans = L.answers.apply(json.loads)
     for k in ANSWER_KEYS:
         L["a_" + k] = ans.apply(lambda d: d.get(k))

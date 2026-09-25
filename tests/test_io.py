@@ -1,6 +1,7 @@
 import json
 
 import pandas as pd
+import pytest
 
 from emva.io import clean, flag_bots_and_duplicates, load
 
@@ -35,3 +36,18 @@ def test_load_normalises_stages_and_joins_enrichment(tmp_path):
     assert L.loc["L1", "deal_value"] == 5000 and pd.isna(L.loc["L2", "deal_value"])
     assert L.loc["L1", "a_job_title"] == "CEO" and L.loc["L1", "a_budget"] is None
     assert L.loc["L1", "co_employee_band"] == "51-200" and pd.isna(L.loc["L2", "co_sector"])
+    assert L.loc["L1", "won_at"] == pd.Timestamp("2026-02-01T00:00:00Z") and pd.isna(L.loc["L2", "won_at"])
+    assert L.loc["L1", "first_contact_at"] == pd.Timestamp("2026-02-01T00:00:00Z")
+    assert L.loc["L2", "first_contact_at"] == pd.Timestamp("2026-01-05T00:00:00Z")
+
+
+def test_load_rejects_two_won_rows(tmp_path):
+    pd.DataFrame({"lead_id": ["L1"], "created_at": ["2026-01-01T00:00:00Z"], "answers": ["{}"],
+                  "company_domain": ["a.example"]}).to_csv(tmp_path / "historical_leads.csv", index=False)
+    pd.DataFrame({"lead_id": ["L1", "L1"], "stage": ["Won", "closed won"], "deal_value": [1, 2],
+                  "changed_at": ["2026-01-02T00:00:00Z", "2026-01-03T00:00:00Z"]}
+                 ).to_csv(tmp_path / "crm_history.csv", index=False)
+    pd.DataFrame({"domain": ["a.example"], "sector": ["x"], "employee_band": ["1-10"], "monthly_ad_spend_band": ["none"],
+                  "crm_platform": ["x"], "is_hiring": [False]}).to_csv(tmp_path / "companies.csv", index=False)
+    with pytest.raises(ValueError, match="more than one Won row"):
+        load(tmp_path)
