@@ -32,6 +32,7 @@ def test_dockerignore_excludes_ground_truth_and_env() -> None:
     patterns = {line.strip() for line in _read(".dockerignore").splitlines() if line.strip()}
     assert "data/**/ground_truth*" in patterns
     assert ".env" in patterns
+    assert "runs" in patterns  # local app data (datasets, runs, registry) never enters the image
 
 
 def test_railway_toml_parses_with_streamlit_healthcheck() -> None:
@@ -56,3 +57,25 @@ def test_makefile_docker_recipe_never_echoes_the_password() -> None:
         if "APP_PASSWORD" in line:
             assert line.startswith("\t@"), line
     assert '-e APP_PASSWORD="' not in recipe  # not on the docker command line either
+
+
+def test_serve_sh_refuses_an_unwritable_data_dir(tmp_path: Path) -> None:
+    """Non-root branch of scripts/serve.sh: an unwritable DATA_DIR stops the container with an explanation before
+    Streamlit starts. (The root branch chowns /data and drops privileges with setpriv; it needs root and Linux, so it
+    is not exercised here.)"""
+    import os
+    import subprocess
+
+    if os.geteuid() == 0:
+        import pytest
+        pytest.skip("runs as root: the unwritable-directory branch cannot be reached")
+    data = tmp_path / "data"
+    data.mkdir()
+    data.chmod(0o555)
+    try:
+        proc = subprocess.run(["sh", str(ROOT / "scripts" / "serve.sh")], cwd=ROOT, capture_output=True, text=True,
+                              env={"PATH": os.environ["PATH"], "DATA_DIR": str(data), "PORT": "18999"}, timeout=30)
+    finally:
+        data.chmod(0o755)
+    assert proc.returncode == 1
+    assert "is not writable" in proc.stderr and "RAILWAY_RUN_UID=0" in proc.stderr

@@ -1,4 +1,4 @@
-"""app.scoring and app.auth: the form adapter scores through emva.scoring; the password gate."""
+"""app.scoring: the form adapter scores through emva.scoring, matching the batch run (R17, ADR 0018)."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -8,7 +8,6 @@ import pandas as pd
 import pytest
 
 from app import results, scoring
-from app.auth import check_password, expected_password
 from emva.io import read_leads
 from emva.persist import load_bundle
 from emva.scoring import UnknownLevelError, lead_from_form, points_breakdown, score_leads
@@ -88,16 +87,3 @@ def test_bot_flag_is_reported_not_dropped(trained) -> None:
 def test_describe_transform(trained) -> None:
     text = scoring.describe_transform(trained[0])
     assert text.startswith("p × expected deal value, capped at £") and "floored at £25" in text
-
-
-def test_check_password() -> None:
-    assert check_password("s3cret-é", "s3cret-é")
-    assert not check_password("wrong", "s3cret")
-    assert not check_password("", "s3cret") and not check_password(None, "s3cret")
-    assert not check_password("", "") and not check_password("x", None)
-
-
-def test_unset_password_refuses() -> None:
-    assert expected_password({}) is None
-    assert expected_password({"APP_PASSWORD": "   "}) is None
-    assert expected_password({"APP_PASSWORD": "pw"}) == "pw"
