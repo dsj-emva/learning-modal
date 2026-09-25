@@ -190,6 +190,65 @@ def test_ground_truth_md_written_from_output(run_a, g):
     assert f"{int((G.outcome == 'never_contacted').sum())} leads (plus duplicates" in md
 
 
-def test_v2_options_refused_until_implemented():
+@pytest.mark.parametrize("option", sorted(gen.V2_OPTIONS))
+def test_v2_options_refused_until_implemented(option):
+    off = gen.V2_OPTIONS[option]
+    on = (not off) if isinstance(off, bool) else 0.1
     with pytest.raises(NotImplementedError):
-        gen.generate(gen.Config(n=100, interactions=True))
+        gen.generate(gen.Config(n=100, **{option: on}))
+
+
+def test_v2_options_cover_all_seven_phase5_tasks():
+    assert sorted(gen.V2_OPTIONS) == sorted(["text_paraphrase", "enrichment_dropout", "consent_missing_share",
+                                             "interactions", "ghosting_follows_tier", "context_only_signal",
+                                             "fast_human_share"])
+
+
+# ---------------------------------------------------------------- review fixes
+
+@pytest.fixture(scope="session")
+def run_3k(tmp_path_factory):
+    cfg = gen.Config(seed=20260924, n=3000)
+    d = str(tmp_path_factory.mktemp("n3000"))
+    gen.write(gen.generate(cfg), d, cfg)
+    return {n: read(d, n) for n in CSVS}
+
+
+def test_duplicates_of_phoneless_originals_never_edit_phone(run_3k):
+    L = run_3k["historical_leads"].set_index("lead_id")
+    G = run_3k["ground_truth_labels"]
+    dups = G[G.duplicate_of.notna()]
+    phoneless = dups[L.phone.reindex(dups.duplicate_of).isna().to_numpy()]
+    assert len(phoneless) > 20
+    edited = L.fields_edited.reindex(phoneless.lead_id).dropna()
+    assert not edited.apply(lambda s: "phone" in json.loads(s)).any()
+
+
+def _lead_and_person(viewed_pricing):
+    lead = pd.Series({"text_category": "neutral", "time_on_page_s": 120.0, "hesitation_ms": 5000, "field_edit_count": 0,
+                      "form_variant": "A", "viewed_pricing": viewed_pricing, "sessions_before_convert": 1,
+                      "utm_term": None, "submitted_weekday": "Tuesday", "local_submit_hour": 11, "ip_country": "UK"})
+    person = pd.Series({"employee_band": "1-10", "is_free_email": False, "channel": "google", "is_lead_ads": False,
+                        "seniority": "junior", "country": "UK"})
+    return lead, person
+
+
+@pytest.mark.parametrize("yes,no", [(True, False), (np.True_, np.False_),
+                                    (pd.array([True], dtype="boolean")[0], pd.array([False], dtype="boolean")[0]),
+                                    (True, np.nan), (True, None), (True, pd.NA)])
+def test_pricing_effect_applied_for_any_bool_dtype(yes, no):
+    cfg = gen.Config()
+    z_yes = gen.close_log_odds(cfg, *_lead_and_person(yes), None, 5.0)
+    z_no = gen.close_log_odds(cfg, *_lead_and_person(no), None, 5.0)
+    assert z_yes - z_no == pytest.approx(cfg.pricing_eff)
+
+
+def test_planted_effects_visible_in_decided_win_rates(run_3k):
+    G = run_3k["ground_truth_labels"]
+    D = G[G.outcome.isin(["won", "lost"])]
+
+    def win(mask):
+        return (D.outcome[mask] == "won").mean()
+    assert win(D.employee_band == "51-200") > 2 * win(D.employee_band == "1-10")
+    assert win(D.is_free_email) < win(~D.is_free_email)
+    assert win(D.text_category == "specific") > win(D.text_category == "vague")

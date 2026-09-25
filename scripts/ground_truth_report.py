@@ -8,9 +8,13 @@ from __future__ import annotations
 
 import json
 import os
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
+
+if TYPE_CHECKING:
+    from generate_data_v1 import Config
 
 AS_OF_DEFAULT = "2026-09-24"
 STAGE = {"closed won": "Won", "won": "Won", "closed lost": "Lost", "lost": "Lost", "qualified": "Qualified",
@@ -19,6 +23,7 @@ CANON = {"New", "Contacted", "Qualified", "Demo booked", "Proposal", "Won", "Los
 
 
 def load(d: str) -> dict:
+    """Read the five CSVs and status_quo_rules.json of a data directory."""
     t = {n: pd.read_csv(os.path.join(d, f"{n}.csv")) for n in
          ["historical_leads", "crm_history", "companies", "people", "ground_truth_labels"]}
     with open(os.path.join(d, "status_quo_rules.json")) as f:
@@ -26,7 +31,8 @@ def load(d: str) -> dict:
     return t
 
 
-def tier_of(answers: dict, pages, rules) -> str:
+def tier_of(answers: dict, pages: float | None, rules: dict) -> str:
+    """Status-quo tier (A/B/C) of one lead under ``rules``."""
     ls = rules["lead_score"]
     pts = 0
     jt = (answers.get("job_title") or "").lower()
@@ -59,6 +65,7 @@ def frame(t: dict) -> pd.DataFrame:
 
 
 def table(X: pd.DataFrame, levels: pd.Series, order: list) -> pd.DataFrame:
+    """Decided-lead count and win rate per level, in ``order``."""
     D = X[X.decided]
     lv = levels[X.decided]
     rows = []
@@ -69,12 +76,14 @@ def table(X: pd.DataFrame, levels: pd.Series, order: list) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def top_bucket(s):
+def top_bucket(s: pd.Series) -> pd.Series:
+    """Time-on-page bucket labels as in ground_truth.md ("missing" for Lead Ads)."""
     return pd.Series(np.select([s < 15, s < 60, s < 300, s <= 600, s > 600],
                                ["<15s (bot-like)", "15-60s", "60-300s", "300-600s", ">600s"], "missing"), index=s.index)
 
 
 def measure(t: dict, as_of: str = AS_OF_DEFAULT) -> dict:
+    """Every ground_truth.md table (``tables``) and scalar statistic (``scalars``) for loaded tables ``t``."""
     X = frame(t)
     C = t["crm_history"].copy()
     tabs = {}
@@ -177,6 +186,7 @@ def measure(t: dict, as_of: str = AS_OF_DEFAULT) -> dict:
 # ---------------------------------------------------------------------------------------------
 
 def md_table(tab: pd.DataFrame, head: str) -> str:
+    """Render one decided-leads / win-rate table as markdown."""
     out = [f"| {head} | decided leads | win rate |", "|---|---|---|"]
     for _, r in tab.iterrows():
         wr = "n/a" if r.win_rate != r.win_rate else f"{100 * r.win_rate:.1f}%"
@@ -184,7 +194,8 @@ def md_table(tab: pd.DataFrame, head: str) -> str:
     return "\n".join(out)
 
 
-def render_ground_truth(d: str, cfg) -> str:
+def render_ground_truth(d: str, cfg: "Config") -> str:
+    """ground_truth.md for the data in ``d`` generated with ``cfg``."""
     m = measure(load(d), cfg.as_of)
     T, s = m["tables"], m["scalars"]
     band_base = {k: v for k, v in cfg.deal_base.items()}

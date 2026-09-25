@@ -42,11 +42,13 @@ PLANTED = ["band=11-50", "band=51-200", "band=201-1000", "band=1000+", "email=fr
 
 
 def run_baseline(data_dir: str) -> tuple[dict, pd.Series]:
+    """Baseline pipeline (emva.pipeline.run) on ``data_dir``: summary metrics and learned log-odds weights."""
     r = run(data_dir)
     return r.summary.iloc[0].to_dict(), r.weights["log_odds"]
 
 
 def cleaning_view(data_dir: str) -> dict:
+    """Bot/duplicate shares and label counts as the baseline pipeline's cleaning step sees them."""
     L = emva_load(data_dir)
     F = flag_bots_and_duplicates(L)
     B = build(L)
@@ -56,6 +58,7 @@ def cleaning_view(data_dir: str) -> dict:
 
 
 def side_by_side(a: pd.DataFrame, b: pd.DataFrame) -> pd.DataFrame:
+    """Share of decided leads and win rate per level for two tables, with absolute gaps in pp."""
     A = a.set_index("level")
     B_ = b.set_index("level")
     out = pd.DataFrame({"v1_share": A.decided / A.decided.sum(), "gen_share": B_.decided / B_.decided.sum(),
@@ -66,6 +69,7 @@ def side_by_side(a: pd.DataFrame, b: pd.DataFrame) -> pd.DataFrame:
 
 
 def to_md(df: pd.DataFrame) -> str:
+    """Minimal markdown table (pandas' to_markdown needs tabulate, which is not installed)."""
     cols = list(df.columns)
     out = ["| " + " | ".join(cols) + " |", "|" + "---|" * len(cols)]
     for _, r in df.iterrows():
@@ -73,7 +77,8 @@ def to_md(df: pd.DataFrame) -> str:
     return "\n".join(out)
 
 
-def fmt_pct(x):
+def fmt_pct(x: float) -> str:
+    """Percentage with one decimal, "n/a" for NaN."""
     return "n/a" if x != x else f"{100 * x:.1f}%"
 
 
@@ -114,7 +119,8 @@ def seed_spread(ref_dir: str, seeds: list[int], n: int) -> str:
     return "\n".join(out) + "\n"
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> None:
+    """CLI entry point."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--ref", default=os.path.join(ROOT, "data", "v1"))
     ap.add_argument("--gen", required=True)

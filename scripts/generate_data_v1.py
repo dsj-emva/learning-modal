@@ -9,11 +9,14 @@ output. The original generator is not in the repo; this file was rebuilt from da
 and a profile of the v1 files, so it reproduces v1's schema and distributions, not its rows.
 
 Pipeline (one function per stage, each with its own RNG stream so later phases can add options to one
-stage without shifting the random draws of the others):
+stage without shifting the random draws of the other stages):
 
   companies -> people (lead personas) -> leads (channel, form, answers skeleton, timestamps)
   -> behaviour -> text -> hidden log-odds -> outcome -> duplicates -> CRM history -> vendor people
   -> labels -> ground_truth.md
+
+Random streams are independent per stage, not per row: a Phase 5.x option that adds a draw inside a
+stage shifts every later row of that stage (other stages are untouched).
 
 This is the one place in the repo that knows the hidden truth. Only emva/eval/ may read
 ground_truth_labels.csv or ground_truth.md.
@@ -23,13 +26,19 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 import zlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from datetime import datetime, timedelta, timezone
+from typing import Any, Sequence
 from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:          # ground_truth_report is a sibling module in scripts/
+    sys.path.insert(0, _HERE)
 
 # ---------------------------------------------------------------------------------------------
 # Configuration: every planted effect and every distribution constant lives here.
@@ -111,13 +120,32 @@ class Config:
 
     # Phase 5.2-5.8 options (v1 behaviour = all off). Declared so later phases have a fixed place to
     # add them; generate() refuses any non-default value until the option is implemented.
-    text_paraphrase: bool = False          # 5.2
-    enrichment_dropout: float = 0.0        # 5.3
-    consent_missing_share: float = 0.0     # 5.4
-    interactions: bool = False             # 5.5
-    ghosting_follows_tier: bool = False    # 5.6
-    context_only_signal: bool = False      # 5.7
-    fast_human_share: float = 0.0          # 5.8
+    text_paraphrase: bool = field(default=False, metadata={"v2": "5.2"})
+    enrichment_dropout: float = field(default=0.0, metadata={"v2": "5.3"})
+    consent_missing_share: float = field(default=0.0, metadata={"v2": "5.4"})
+    interactions: bool = field(default=False, metadata={"v2": "5.5"})
+    ghosting_follows_tier: bool = field(default=False, metadata={"v2": "5.6"})
+    context_only_signal: bool = field(default=False, metadata={"v2": "5.7"})
+    fast_human_share: float = field(default=0.0, metadata={"v2": "5.8"})
+
+    @property
+    def as_of_dt(self) -> datetime:
+        """``as_of`` as a UTC datetime (midnight at the start of that day)."""
+        return datetime.fromisoformat(self.as_of).replace(tzinfo=timezone.utc)
+
+
+# Phase 5.2-5.8 options and their v1 (off) values, read from the Config field metadata.
+V2_OPTIONS = {f.name: f.default for f in fields(Config) if "v2" in f.metadata}
+
+
+def _present(x: Any) -> bool:
+    """True unless ``x`` is None or NaN (pandas turns missing values into NaN in object/float columns)."""
+    return x is not None and not (isinstance(x, float) and x != x) and not (x is pd.NA)
+
+
+def _flag(x: Any) -> bool:
+    """Truthiness that works for Python bools, numpy bools, pandas BooleanDtype and missing values."""
+    return bool(x) if _present(x) else False
 
 
 def rng_for(cfg: Config, stage: str) -> np.random.Generator:
@@ -125,7 +153,8 @@ def rng_for(cfg: Config, stage: str) -> np.random.Generator:
     return np.random.default_rng([cfg.seed, zlib.crc32(stage.encode())])
 
 
-def pick(rng, options, p=None, size=None):
+def pick(rng: np.random.Generator, options: Sequence, p: Sequence[float] | None = None, size: int | None = None) -> Any:
+    """Choose one element of ``options`` (or a list of ``size`` elements), optionally weighted by ``p``."""
     idx = rng.choice(len(options), p=None if p is None else np.asarray(p, float) / np.sum(p), size=size)
     if size is None:
         return options[idx]
@@ -276,7 +305,8 @@ INT_COLUMNS = ["field_edit_count", "hesitation_ms", "pages_visited", "sessions_b
                "days_since_first_visit", "scroll_depth_pct"]
 
 
-def rand_str(rng, alphabet, n):
+def rand_str(rng: np.random.Generator, alphabet: np.ndarray, n: int) -> str:
+    """Random string of ``n`` characters drawn from ``alphabet``."""
     return "".join(rng.choice(alphabet, n))
 
 
@@ -285,6 +315,7 @@ def rand_str(rng, alphabet, n):
 # ---------------------------------------------------------------------------------------------
 
 def make_companies(cfg: Config) -> pd.DataFrame:
+    """companies.csv: firmographics for n_companies fake companies (band drives revenue, funding, CRM, spend, hiring)."""
     rng = rng_for(cfg, "companies")
     band_p = [0.263, 0.286, 0.2145, 0.155, 0.0815]
     country_p = [0.34, 0.296, 0.125, 0.1325, 0.1065]
@@ -417,15 +448,17 @@ def make_people(cfg: Config, companies: pd.DataFrame, n_orig: int) -> pd.DataFra
 WEB_VARIANT_P = [0.357, 0.296, 0.10, 0.247]
 
 
-def lead_timezone(country, city):
+def lead_timezone(country: str, city: str) -> str:
+    """IANA timezone of a lead: by city in the US, by country elsewhere."""
     return TZ_BY_CITY_US[city] if country == "US" else TZ[country]
 
 
-def draw_timestamp(rng, cfg: Config, tzname: str, bot: bool, start=None, end=None):
-    """Local submit time: humans mostly weekday office hours, weekend traffic partly shifted to Friday."""
-    as_of = datetime.fromisoformat(cfg.as_of).replace(tzinfo=timezone.utc)
-    lo = start if start is not None else as_of - timedelta(days=365)
-    hi = end if end is not None else as_of
+def draw_timestamp(rng: np.random.Generator, cfg: Config, tzname: str, bot: bool) -> tuple[datetime, datetime]:
+    """Local submit time: humans mostly weekday office hours, weekend traffic partly shifted to Friday.
+
+    Returns (UTC time, local time) within the year before ``as_of``."""
+    as_of = cfg.as_of_dt
+    lo, hi = as_of - timedelta(days=365), as_of
     tz = ZoneInfo(tzname)
     base = lo + timedelta(seconds=float(rng.uniform(0, (hi - lo).total_seconds())))
     local = base.astimezone(tz)
@@ -449,7 +482,8 @@ def draw_timestamp(rng, cfg: Config, tzname: str, bot: bool, start=None, end=Non
     return utc, local
 
 
-def typed_company(rng, name):
+def typed_company(rng: np.random.Generator, name: str) -> str:
+    """Company name as typed into the form: half drop the legal suffix, 10% lowercase."""
     if rng.random() < 0.5:
         name = name.rsplit(" ", 1)[0]
     if rng.random() < 0.1:
@@ -457,7 +491,8 @@ def typed_company(rng, name):
     return name
 
 
-def typed_band(rng, band):
+def typed_band(rng: np.random.Generator, band: str) -> str:
+    """Company-size dropdown answer: the true band, 15% one band off; individuals answer "1-10" or blank."""
     if band == "none":
         return "1-10" if rng.random() < 0.67 else ""
     if rng.random() < 0.15:
@@ -467,7 +502,7 @@ def typed_band(rng, band):
     return band
 
 
-def session_attribution(rng, channel: str, lead_ads: bool):
+def session_attribution(rng: np.random.Generator, channel: str, lead_ads: bool) -> dict[str, str | None]:
     """utm fields for one session (source, medium, campaign, content)."""
     if channel == "organic_direct":
         return {"utm_source": None, "utm_medium": None, "utm_campaign": None, "utm_content": None}
@@ -485,6 +520,7 @@ def session_attribution(rng, channel: str, lead_ads: bool):
 
 
 def make_leads(cfg: Config, people: pd.DataFrame, companies: pd.DataFrame) -> pd.DataFrame:
+    """One lead per persona: submit time, form variant, UTM attribution, answers skeleton, phone, consent."""
     rng = rng_for(cfg, "leads")
     rows = []
     for i, p in people.iterrows():
@@ -531,7 +567,8 @@ def make_leads(cfg: Config, people: pd.DataFrame, companies: pd.DataFrame) -> pd
     return pd.DataFrame(rows)
 
 
-def make_phone(rng, country):
+def make_phone(rng: np.random.Generator, country: str) -> str:
+    """Phone number in one of three national formats; about 4% invalid ("12345")."""
     u = rng.random()
     if u < 0.042:
         return pick(rng, ["12345", "0000 000000", "07700"], [0.45, 0.35, 0.20])
@@ -552,7 +589,9 @@ DEVICE_P = {"meta": [0.354, 0.604, 0.042], "google": [0.542, 0.419, 0.039], "lin
             "chatgpt": [0.600, 0.364, 0.036], "organic_direct": [0.594, 0.359, 0.047]}
 
 
-def session_behaviour(rng, cfg: Config, channel, lead_ads, bot, country, city, variant, has_phone, attrib, created):
+def session_behaviour(rng: np.random.Generator, cfg: Config, channel: str, lead_ads: bool, bot: bool, country: str,
+                      city: str, variant: str, has_phone: bool, attrib: dict[str, str | None],
+                      created: datetime) -> dict[str, Any]:
     """All website telemetry for one session. Lead Ads leads have no website session."""
     b = {k: None for k in ["fbclid", "fbc", "fbp", "gclid", "gbraid", "wbraid", "li_fat_id", "oppref", "meta_lead_id",
                            "landing_url", "time_on_page_s", "fields_edited", "field_edit_count", "hesitation_ms",
@@ -660,6 +699,7 @@ def session_behaviour(rng, cfg: Config, channel, lead_ads, bot, country, city, v
 
 
 def add_behaviour(cfg: Config, leads: pd.DataFrame, people: pd.DataFrame) -> pd.DataFrame:
+    """Append website telemetry, click IDs, IP and device columns (``session_behaviour``) to every lead."""
     rng = rng_for(cfg, "behaviour")
     rows = []
     for _, l in leads.iterrows():
@@ -678,7 +718,8 @@ TEXT_CATS = ["copy_paste", "neutral", "specific", "vague"]
 TEXT_LOGIT = {"intercept": [-0.96, 0.73, 0.04, 0.18], "C": [-0.52, 0.05, 0.94, -0.46], "meta": [0.24, -0.19, -0.32, 0.26]}
 
 
-def specific_text(rng, team):
+def specific_text(rng: np.random.Generator, team: int) -> str:
+    """A "specific" what_to_solve answer (budget, timeline or team size), matched by the POC regex."""
     k = int(rng.integers(0, 6))
     if k == 0:
         return f"Looking for pricing for {team} seats, want to go live within {int(rng.integers(2, 10))} weeks."
@@ -695,7 +736,9 @@ def specific_text(rng, team):
 
 
 def add_text(cfg: Config, leads: pd.DataFrame, people: pd.DataFrame) -> pd.DataFrame:
-    """Hook for Phase 5.2 (paraphrase, typos, languages, boilerplate) and 5.7 (context-only signal)."""
+    """Draw the text category and what_to_solve answer (plus the C-form timeline) for every lead.
+
+    Hook for Phase 5.2 (paraphrase, typos, languages, boilerplate) and 5.7 (context-only signal)."""
     rng = rng_for(cfg, "text")
     cats = []
     for i, l in leads.iterrows():
@@ -730,7 +773,8 @@ def add_text(cfg: Config, leads: pd.DataFrame, people: pd.DataFrame) -> pd.DataF
 # Stage 6: status-quo tier, speed to lead, hidden close log-odds
 # ---------------------------------------------------------------------------------------------
 
-def status_quo_tier(answers: dict, pages_visited) -> str:
+def status_quo_tier(answers: dict, pages_visited: float | None) -> str:
+    """Status-quo lead-score tier (A/B/C) from STATUS_QUO_RULES, as a typical advertiser computes it."""
     ls = STATUS_QUO_RULES["lead_score"]
     pts = 0
     jt = (answers.get("job_title") or "").lower()
@@ -738,15 +782,45 @@ def status_quo_tier(answers: dict, pages_visited) -> str:
         hit = next((k["points"] for k in ls["job_title"]["keywords"] if k["keyword"] in jt), None)
         pts += ls["job_title"]["default_points"] if hit is None else hit
     pts += ls["company_size_points"].get(answers.get("company_size") or "", 0)
-    if pages_visited is not None and pages_visited == pages_visited:
+    if _present(pages_visited):
         pts += next((r["points"] for r in ls["pages_visited_points"] if pages_visited >= r["min_pages"]), 0)
     return next(t["name"] for t in ls["tiers"] if pts >= t["min_points"])
 
 
-def top_bucket(t):
-    if t is None or t != t:
+def top_bucket(t: float | None) -> str | None:
+    """Time-on-page bucket used by the planted effect; None when there was no web session."""
+    if not _present(t):
         return None
     return "<15s" if t < 15 else "15-60s" if t < 60 else "60-300s" if t < 300 else "300-600s" if t <= 600 else ">600s"
+
+
+def close_log_odds(cfg: Config, l: pd.Series, p: pd.Series, co: pd.Series | None, reply: float | None) -> float:
+    """Planted close log-odds of one lead before noise: intercept plus every effect in ground_truth.md.
+
+    ``l`` is the lead row, ``p`` its persona, ``co`` its company row (None for individuals), ``reply`` the first
+    reply time in hours (None when never contacted)."""
+    z = cfg.intercept + cfg.band_eff[p.employee_band] + cfg.free_eff * _flag(p.is_free_email) + cfg.text_eff[l.text_category]
+    tb = top_bucket(l.time_on_page_s)
+    if tb:
+        z += cfg.top_eff[tb]
+    if _present(l.hesitation_ms) and l.hesitation_ms > 90000:
+        z += cfg.hes_eff
+    if _present(l.field_edit_count) and 1 <= l.field_edit_count <= 4:
+        z += cfg.edits_eff
+    z += cfg.form_eff[l.form_variant] + cfg.channel_eff[p.channel] + cfg.lead_ads_eff * _flag(p.is_lead_ads)
+    z += cfg.seniority_eff[p.seniority]
+    z += cfg.pricing_eff * _flag(l.viewed_pricing)
+    z += cfg.sessions3_eff * (_present(l.sessions_before_convert) and l.sessions_before_convert >= 3)
+    z += cfg.brand_eff * (isinstance(l.utm_term, str) and "northstar" in l.utm_term)
+    biz = l.submitted_weekday not in ("Saturday", "Sunday") and 9 <= l.local_submit_hour <= 17
+    z += cfg.bizhours_eff * biz
+    z += cfg.ip_mismatch_eff * (isinstance(l.ip_country, str) and l.ip_country != p.country)
+    if co is not None:
+        z += cfg.spend_eff[co.monthly_ad_spend_band] + cfg.crm_eff * (co.crm_platform in ("HubSpot", "Salesforce"))
+        z += cfg.hiring_eff * _flag(co.is_hiring)
+    if reply is not None:
+        z += cfg.reply_fast_eff * (reply < 1) + cfg.reply_slow_eff * (reply > 48)
+    return float(z)
 
 
 def hidden_log_odds(cfg: Config, leads: pd.DataFrame, people: pd.DataFrame, companies: pd.DataFrame) -> pd.DataFrame:
@@ -767,29 +841,7 @@ def hidden_log_odds(cfg: Config, leads: pd.DataFrame, people: pd.DataFrame, comp
             mu = np.log(1.5) + {"A": 0.0, "B": 1.03, "C": 1.89}[tier]
             reply = round(float(np.clip(np.exp(rng.normal(mu, 1.2)), 0.05, 240.0)), 2)
         co = companies.loc[p.company_idx] if p.company_idx >= 0 else None
-        z = cfg.intercept + cfg.band_eff[p.employee_band] + cfg.free_eff * p.is_free_email + cfg.text_eff[l.text_category]
-        tb = top_bucket(l.time_on_page_s)
-        if tb:
-            z += cfg.top_eff[tb]
-        if l.hesitation_ms is not None and l.hesitation_ms == l.hesitation_ms and l.hesitation_ms > 90000:
-            z += cfg.hes_eff
-        if l.field_edit_count is not None and l.field_edit_count == l.field_edit_count and 1 <= l.field_edit_count <= 4:
-            z += cfg.edits_eff
-        z += cfg.form_eff[l.form_variant] + cfg.channel_eff[p.channel] + cfg.lead_ads_eff * p.is_lead_ads
-        z += cfg.seniority_eff[p.seniority]
-        z += cfg.pricing_eff * (l.viewed_pricing is True)
-        sess = l.sessions_before_convert
-        z += cfg.sessions3_eff * (sess is not None and sess == sess and sess >= 3)
-        z += cfg.brand_eff * (isinstance(l.utm_term, str) and "northstar" in l.utm_term)
-        biz = l.submitted_weekday not in ("Saturday", "Sunday") and 9 <= l.local_submit_hour <= 17
-        z += cfg.bizhours_eff * biz
-        z += cfg.ip_mismatch_eff * (isinstance(l.ip_country, str) and l.ip_country != p.country)
-        if co is not None:
-            z += cfg.spend_eff[co.monthly_ad_spend_band] + cfg.crm_eff * (co.crm_platform in ("HubSpot", "Salesforce"))
-            z += cfg.hiring_eff * bool(co.is_hiring)
-        if reply is not None:
-            z += cfg.reply_fast_eff * (reply < 1) + cfg.reply_slow_eff * (reply > 48)
-        z += rng.normal(0, cfg.noise_sd)
+        z = close_log_odds(cfg, l, p, co, reply) + rng.normal(0, cfg.noise_sd)
         # deal value (drawn for every lead; only realised on Won)
         spend = co.monthly_ad_spend_band if co is not None else None
         mu_v = cfg.deal_base[p.employee_band] * (cfg.deal_sector[co.sector] if co is not None else 1.0) * \
@@ -805,6 +857,7 @@ def hidden_log_odds(cfg: Config, leads: pd.DataFrame, people: pd.DataFrame, comp
 # ---------------------------------------------------------------------------------------------
 
 def draw_outcome(cfg: Config, leads: pd.DataFrame, people: pd.DataFrame) -> pd.DataFrame:
+    """Draw win/lose from ``p_close_true``, the stall flag, time to close and the stage path for every lead."""
     rng = rng_for(cfg, "outcome")
     res = []
     for _, l in leads.iterrows():
@@ -831,10 +884,12 @@ def draw_outcome(cfg: Config, leads: pd.DataFrame, people: pd.DataFrame) -> pd.D
 # ---------------------------------------------------------------------------------------------
 
 def add_duplicates(cfg: Config, leads: pd.DataFrame, people: pd.DataFrame, n_dup: int) -> pd.DataFrame:
+    """Append ``n_dup`` repeat submissions: same person and answers, 1-45 days later, in a fresh session."""
     rng = rng_for(cfg, "duplicates")
     brng = rng_for(cfg, "duplicates_behaviour")
-    as_of = datetime.fromisoformat(cfg.as_of).replace(tzinfo=timezone.utc)
-    eligible = leads.index[(~people.is_bot.values) & (leads.created < as_of - timedelta(days=2)).values]
+    as_of = cfg.as_of_dt
+    is_bot = people.is_bot.reindex(leads.person).to_numpy(dtype=bool)
+    eligible = leads.index[~is_bot & (leads.created < as_of - timedelta(days=2)).to_numpy()]
     src_idx = rng.choice(eligible, size=n_dup, replace=False)
     rows = []
     for j in sorted(src_idx):
@@ -858,7 +913,7 @@ def add_duplicates(cfg: Config, leads: pd.DataFrame, people: pd.DataFrame, n_dup
         attrib = session_attribution(rng, channel, lead_ads)
         d.update(attrib)
         d.update(session_behaviour(brng, cfg, channel, lead_ads, False, p.country, p.city, o.form_variant,
-                                   o.phone is not None, attrib, created))
+                                   isinstance(o.phone, str), attrib, created))
         d["dup_channel"] = channel
         email = p.email
         if rng.random() < 0.35:
@@ -884,7 +939,8 @@ MESSY = {"Qualified": ["QUALIFIED", "qualified"], "Demo booked": ["Demo Booked",
          "Lost": ["Closed Lost", "lost"], "Won": ["Closed Won", "WON", "won"]}
 
 
-def stage_comment(rng, stage, p, team):
+def stage_comment(rng: np.random.Generator, stage: str, p: pd.Series, team: int) -> str | None:
+    """Sales-rep comment for a CRM stage row (None = no comment)."""
     if stage == "Contacted":
         return pick(rng, [None, f"Called, spoke to {p.first}", "Intro call booked", "Left voicemail",
                           "Replied to email, wants a call", "Sent follow-up email"])
@@ -905,7 +961,8 @@ def stage_comment(rng, stage, p, team):
     raise ValueError(stage)
 
 
-def lost_reason(rng, p, team):
+def lost_reason(rng: np.random.Generator, p: pd.Series, team: int) -> str:
+    """Lost-reason comment: spam for bots, personal reasons for individuals/students, size or generic otherwise."""
     if p.is_bot:
         return pick(rng, ["Spam submission", "Fake details, number doesn't work"])
     if not p.has_company:
@@ -924,13 +981,14 @@ def lost_reason(rng, p, team):
 
 
 def fmt_ts(t: datetime) -> str:
+    """ISO-8601 UTC timestamp with a Z suffix, as in v1."""
     return t.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def make_crm(cfg: Config, leads: pd.DataFrame, people: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
     """Returns crm rows and the final outcome label per lead."""
     rng = rng_for(cfg, "crm")
-    as_of = datetime.fromisoformat(cfg.as_of).replace(tzinfo=timezone.utc)
+    as_of = cfg.as_of_dt
     rows, outcome = [], {}
     for i, l in leads.iterrows():
         p = people.loc[l.person]
@@ -938,8 +996,8 @@ def make_crm(cfg: Config, leads: pd.DataFrame, people: pd.DataFrame) -> tuple[pd
         created = l.created
         t_new = created + timedelta(seconds=int(l.new_offset_s))
         events = [(t_new, "New", None, None)]
-        if l.duplicate_of_idx == l.duplicate_of_idx:          # duplicate lead
-            if l.dup_lost_after_h is not None and l.dup_lost_after_h == l.dup_lost_after_h:
+        if _present(l.duplicate_of_idx):          # duplicate lead
+            if _present(l.dup_lost_after_h):
                 events.append((created + timedelta(hours=float(l.dup_lost_after_h)), "Lost",
                                "Duplicate - merged into existing contact", None))
             outcome[i] = "duplicate"
@@ -997,6 +1055,7 @@ HOME_P = [0.23, 0.41, 0.56, 0.60, 0.73, 0.71]
 
 
 def make_vendor_people(cfg: Config, people: pd.DataFrame) -> pd.DataFrame:
+    """people.csv: a fake person-data vendor covering 75% of business and 40% of free emails, no bots."""
     rng = rng_for(cfg, "vendor")
     rows = []
     for _, p in people.iterrows():
@@ -1019,11 +1078,8 @@ def make_vendor_people(cfg: Config, people: pd.DataFrame) -> pd.DataFrame:
 # Assembly
 # ---------------------------------------------------------------------------------------------
 
-V2_OPTIONS = {"text_paraphrase": False, "enrichment_dropout": 0.0, "consent_missing_share": 0.0, "interactions": False,
-              "ghosting_follows_tier": False, "context_only_signal": False, "fast_human_share": 0.0}
-
-
-def generate(cfg: Config) -> dict:
+def generate(cfg: Config) -> dict[str, pd.DataFrame | dict]:
+    """Run every stage and return the six v1 tables keyed by file stem (status_quo_rules is a dict)."""
     pending = [k for k, off in V2_OPTIONS.items() if getattr(cfg, k) != off]
     if pending:
         raise NotImplementedError(f"Phase 5.2-5.8 options not implemented yet: {pending}")
@@ -1099,22 +1155,20 @@ def generate(cfg: Config) -> dict:
             "ground_truth_labels": labels, "status_quo_rules": STATUS_QUO_RULES}
 
 
-def write(out: dict, out_dir: str, cfg: Config) -> None:
+def write(out: dict[str, pd.DataFrame | dict], out_dir: str, cfg: Config) -> None:
+    """Write the tables from ``generate`` plus ground_truth.md (measured on the written files) into ``out_dir``."""
     os.makedirs(out_dir, exist_ok=True)
     for name in ["historical_leads", "crm_history", "companies", "people", "ground_truth_labels"]:
         out[name].to_csv(os.path.join(out_dir, f"{name}.csv"), index=False)
     with open(os.path.join(out_dir, "status_quo_rules.json"), "w") as f:
         json.dump(out["status_quo_rules"], f, indent=2, ensure_ascii=False)
-    import sys
-    here = os.path.dirname(os.path.abspath(__file__))
-    if here not in sys.path:
-        sys.path.insert(0, here)
-    from ground_truth_report import render_ground_truth  # sibling module in scripts/
+    from ground_truth_report import render_ground_truth  # sibling module in scripts/ (path set at import)
     with open(os.path.join(out_dir, "ground_truth.md"), "w") as f:
         f.write(render_ground_truth(out_dir, cfg))
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> None:
+    """CLI entry point."""
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--seed", type=int, default=20260924)
     ap.add_argument("--as-of", default="2026-09-24")
@@ -1126,6 +1180,4 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    import sys
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     main()
