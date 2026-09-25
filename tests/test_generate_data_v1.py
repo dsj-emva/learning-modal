@@ -185,3 +185,8 @@ def test_ground_truth_md_written_from_output(run_a, g):
     assert "seed 20260924" in md and f"n = {N}" in md
     assert f"| {int(G.duplicate_of.notna().sum())} leads |" in md
     assert f"{int((G.outcome == 'never_contacted').sum())} leads (plus duplicates" in md
+
+
+def test_v2_options_refused_until_implemented():
+    with pytest.raises(NotImplementedError):
+        gen.generate(gen.Config(n=100, interactions=True))

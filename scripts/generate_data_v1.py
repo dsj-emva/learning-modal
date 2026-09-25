@@ -109,8 +109,8 @@ class Config:
     messy_stage_share: float = 0.15
     click_id_missing_share: float = 0.30
 
-    # hooks for Phase 5.2-5.8 (v1 behaviour = all off). Declared here so the CLI and tests can see
-    # them; each stage function documents where the option will plug in.
+    # Phase 5.2-5.8 options (v1 behaviour = all off). Declared so later phases have a fixed place to
+    # add them; generate() refuses any non-default value until the option is implemented.
     text_paraphrase: bool = False          # 5.2
     enrichment_dropout: float = 0.0        # 5.3
     consent_missing_share: float = 0.0     # 5.4
@@ -587,9 +587,7 @@ def session_behaviour(rng, cfg: Config, channel, lead_ads, bot, country, city, v
         # hesitation is part of the time on page: time = reading/typing time + pauses, floored at 16s
         b["hesitation_ms"] = int(rng.uniform(90000, 400000)) if rng.random() < 0.082 else int(np.exp(rng.normal(9.09, 0.78)))
         top = float(np.exp(rng.normal(4.54, 0.80))) + b["hesitation_ms"] / 1000
-        top = max(top, 16.0)
-        if cfg.fast_human_share and rng.random() < cfg.fast_human_share:   # hook for Phase 5.8
-            top = float(rng.uniform(5, 15))
+        top = max(top, 16.0)                 # Phase 5.8 hook: a share of genuine humans under 15s
         b["time_on_page_s"] = round(top, 1)
         n_edits = int(min(rng.poisson(1.8), 7))
         fields = ["name", "email", "country", "what_to_solve"]
@@ -1021,7 +1019,14 @@ def make_vendor_people(cfg: Config, people: pd.DataFrame) -> pd.DataFrame:
 # Assembly
 # ---------------------------------------------------------------------------------------------
 
+V2_OPTIONS = {"text_paraphrase": False, "enrichment_dropout": 0.0, "consent_missing_share": 0.0, "interactions": False,
+              "ghosting_follows_tier": False, "context_only_signal": False, "fast_human_share": 0.0}
+
+
 def generate(cfg: Config) -> dict:
+    pending = [k for k, off in V2_OPTIONS.items() if getattr(cfg, k) != off]
+    if pending:
+        raise NotImplementedError(f"Phase 5.2-5.8 options not implemented yet: {pending}")
     n_dup = int(round(cfg.n * cfg.dup_share))
     n_orig = cfg.n - n_dup
     companies = make_companies(cfg)
