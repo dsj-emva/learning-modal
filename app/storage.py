@@ -19,6 +19,7 @@ import json
 import os
 import re
 import secrets
+import subprocess
 import tempfile
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -299,12 +300,45 @@ def update_run(root: str | Path, run_id: str, **changes: object) -> Run:
     raise StorageError(f"no run '{run_id}'")
 
 
+INTERRUPTED: str = "interrupted (server restarted or the training job was stopped); see the log"
+
+
+def process_command(pid: int) -> str | None:
+    """The command line of process ``pid``, or None when there is no such process. Linux: ``/proc/<pid>/cmdline``
+    (the slim image has no ``ps``); elsewhere (macOS): ``ps -o command= -p``."""
+    proc = Path(f"/proc/{pid}/cmdline")
+    if Path("/proc/self/cmdline").exists():
+        try:
+            return proc.read_bytes().replace(b"\0", b" ").decode("utf-8", "replace").strip() or None
+        except (FileNotFoundError, ProcessLookupError, PermissionError):
+            return None
+    out = subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True)
+    if out.returncode != 0:
+        return None
+    return out.stdout.strip() or None
+
+
+def job_alive(run: Run) -> bool:
+    """True when ``run``'s job process still exists and is that run's job: its command line contains
+    ``app.job`` and the run id (PIDs are reused, and restart low in a new container)."""
+    if not run.pid:
+        return False
+    cmd = process_command(run.pid)
+    return cmd is not None and "app.job" in cmd and run.run_id in cmd
+
+
 def list_runs(root: str | Path, where: Callable[[Run], bool] | None = None) -> list[Run]:
-    """Registered runs, newest first, optionally filtered by ``where``."""
+    """Registered runs, newest first, optionally filtered by ``where``.
+
+    A run registered as ``running`` whose job process is gone (``job_alive``) is marked ``failed`` with
+    ``INTERRUPTED`` first, so a restart or redeploy never leaves runs spinning forever.
+    """
     path = Path(root) / REGISTRY_FILE
     if not path.exists():
         return []
     runs = [Run(**r) for r in json.loads(path.read_text(encoding="utf-8"))["runs"]][::-1]
+    runs = [update_run(root, r.run_id, status="failed", pid=None, finished_at=utc_now(), error=INTERRUPTED)
+            if r.status == "running" and not job_alive(r) else r for r in runs]
     runs.sort(key=lambda r: r.created_at, reverse=True)  # stable: same-second runs stay newest-registered first
     return [r for r in runs if where is None or where(r)]
 

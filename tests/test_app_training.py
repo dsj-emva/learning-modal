@@ -79,13 +79,6 @@ def test_failed_training_is_recorded(tmp_path: Path) -> None:
     assert done.status == "failed" and "exit" in done.error and not done.has_report
 
 
-def test_reconcile_marks_vanished_job_failed(tmp_path: Path) -> None:
-    root = storage.init_root(tmp_path)
-    run = storage.register_run(root, storage.new_run(root, storage.sample_dataset(), TrainingConfig().as_dict()))
-    run = storage.update_run(root, run.run_id, status="running", pid=2 ** 22 + 12345)  # no such process
-    assert training.reconcile(root, run).status == "failed"
-
-
 def test_results_frames_agree_with_the_run(app_trained) -> None:
     """app.results on the trained run: the mature test set is the run's own test set (horizon defaults), so the
     headline equals the summary python -m emva printed."""

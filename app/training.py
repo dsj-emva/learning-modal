@@ -119,17 +119,20 @@ def start_training(root: str | Path, run: Run, python: str = sys.executable, cwd
     """Launch the job for the registered ``run`` (``python -m app.job``) and return its process at once.
 
     The job's own output and both commands' output are appended to ``run.log_path``. The caller should keep the
-    ``Popen`` and ``poll()`` it (reaps the process); the registry is updated by the job itself.
+    ``Popen`` and ``poll()`` it (reaps the process). The run is marked ``running`` with the job's pid at once; the
+    job records the outcome itself.
     """
     log = open(run.log_path, "ab")
     try:
-        return subprocess.Popen(
+        proc = subprocess.Popen(
             [python, "-m", "app.job", "--root", str(Path(root).resolve()), "--run-id", run.run_id,
              "--report-resamples", str(report_resamples)],
             cwd=str(cwd), stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
             env=child_env(), start_new_session=True)
     finally:
         log.close()  # the child holds its own copy of the descriptor
+    update_run(root, run.run_id, status="running", pid=proc.pid)  # so a job that dies before it starts is seen
+    return proc
 
 
 def parse_summary(log_text: str) -> dict[str, float]:
@@ -163,27 +166,6 @@ def finish_run(root: str | Path, run_id: str, returncode: int) -> Run:
                       metrics=parse_summary(log), has_report=report.exists() and report.stat().st_size > 0, pid=None)
 
 
-def process_alive(pid: int | None) -> bool:
-    """True when a process with ``pid`` exists (signal 0 probe)."""
-    if not pid:
-        return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
-
-
-def reconcile(root: str | Path, run: Run) -> Run:
-    """Mark a run ``failed`` when it claims to be running but its job process is gone (server restart, kill)."""
-    if run.status == "running" and not process_alive(run.pid):
-        return update_run(root, run.run_id, status="failed", finished_at=utc_now(), pid=None,
-                          error="the training job stopped unexpectedly; see the log")
-    return run
-
-
 def rules_available(dataset_path: str | Path) -> bool:
     """True when the dataset has ``status_quo_rules.json`` (the standard report needs it)."""
     return (Path(dataset_path) / RULES_FILE).exists()
@@ -195,5 +177,5 @@ def label_counts_frame(summary: dict[str, object]) -> pd.DataFrame:
 
 
 __all__ = ["CHILD_ENV_KEYS", "RUN_OUTPUTS", "TrainingConfig", "child_env", "finish_run", "label_counts_frame", "parse_summary",
-           "pre_training_summary", "process_alive", "reconcile", "report_command", "rules_available",
+           "pre_training_summary", "report_command", "rules_available",
            "start_training", "training_command"]

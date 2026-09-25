@@ -192,7 +192,6 @@ def _live(root: Path, run_id: str) -> None:
     proc = st.session_state.get(PROCS_KEY, {}).get(run_id)
     if proc is not None and proc.poll() is not None:
         st.session_state[PROCS_KEY].pop(run_id)
-    run = training.reconcile(root, run) if proc is None else run
     ui.html(f'<div style="display:flex;gap:12px;align-items:center;margin:16px 0 8px">{C.status_pill(run.status)}'
             f'<span style="font-family:var(--mono);font-size:13px;color:var(--muted)">run {run.run_id}</span></div>')
     st.code(_tail(run.log_path) or "Starting…", language="text", height=280, wrap_lines=True)

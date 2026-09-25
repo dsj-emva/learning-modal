@@ -96,3 +96,42 @@ def test_atomic_write_leaves_old_file_on_failure(tmp_path: Path) -> None:
         storage.atomic_write_json(path, {"v": object()})  # not serialisable: fails before the rename
     assert json.loads(path.read_text()) == {"v": 1}
     assert [p.name for p in tmp_path.iterdir()] == ["r.json"]
+
+
+def _running(tmp_path: Path, pid: int) -> storage.Run:
+    """A registered run marked running with ``pid``."""
+    run = storage.register_run(tmp_path, storage.new_run(tmp_path, storage.sample_dataset(), {"label_mode": "horizon"}))
+    return storage.update_run(tmp_path, run.run_id, status="running", pid=pid)
+
+
+def test_list_runs_fails_a_run_whose_job_is_gone(tmp_path: Path) -> None:
+    import subprocess
+    import sys
+
+    dead = subprocess.Popen([sys.executable, "-c", "pass"])
+    dead.wait()
+    run = _running(tmp_path, dead.pid)
+    got = storage.list_runs(tmp_path)[0]
+    assert got.run_id == run.run_id and got.status == "failed" and got.error == storage.INTERRUPTED
+    assert got.pid is None
+
+
+def test_list_runs_fails_a_run_whose_pid_is_another_process(tmp_path: Path) -> None:
+    import os
+
+    run = _running(tmp_path, os.getpid())  # alive, but pytest, not this run's app.job
+    assert storage.list_runs(tmp_path)[0].status == "failed"
+
+
+def test_list_runs_keeps_a_live_job_running(tmp_path: Path) -> None:
+    import subprocess
+    import sys
+
+    run = storage.register_run(tmp_path, storage.new_run(tmp_path, storage.sample_dataset(), {}))
+    fake = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)", "app.job", "--run-id", run.run_id])
+    try:
+        storage.update_run(tmp_path, run.run_id, status="running", pid=fake.pid)
+        assert storage.list_runs(tmp_path)[0].status == "running"
+    finally:
+        fake.kill()
+        fake.wait()
