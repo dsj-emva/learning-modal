@@ -1,0 +1,184 @@
+# CLAUDE.md: EMVA lead scoring
+
+Read this first. Then `REBUILD_PLAN.md` (the roadmap), `docs/CONTEXT.md` (vocabulary, headline
+numbers), `docs/ARCHITECTURE.md` (data flow, module ownership) and `docs/adr/` (every ruling so far).
+
+## What this is and why
+
+**Product.** EMVA scores inbound B2B leads and sends `P(close) × expected deal value × margin` back to
+Google Ads and Meta as a conversion value, so the platforms bid for leads that become revenue rather
+than form fills (`baseline/business_brief.md`). The score is an L2 logistic regression over bucketed
+form, enrichment and on-site features, plus a ridge deal-value model; an optional Claude Haiku
+"context agent" reads each lead against a business brief.
+
+**Status: proof of concept on synthetic data.** v1 data (`data/v1/`) came from a generator with seed
+20260924, as-of 2026-09-24; the original generator was lost and rewritten (`scripts/generate_data_v1.py`,
+distributional fidelity only, ADR 0003). Generator v2 (`data/v2/`, merged 01c56f4) adds paraphrased text, missing enrichment, consent gaps, interactions and a hidden persona (ADR 0008). No real customer data
+exists in this repo. The frozen POC lives in `baseline/`; the package being fixed is `emva/`.
+
+**Why the plan exists.** The 2026-09-25 review found: labels were right-censored (slow or neglected
+leads, stalled 90+ days or never contacted, were labelled lost); missing telemetry fell into the reference
+bucket; `email=free` and `no_company=yes` were perfectly collinear (both −0.391); the deal model copied
+its residual sd 0.45 from the ground-truth document; and the generator was itself an additive logistic
+model, so the regex text categories and the bot rule matched it perfectly. The plan adjusts in place
+behind a frozen baseline instead of rewriting, so every change is measured against the same reference
+(ADR 0001).
+
+## Ground rules (from `REBUILD_PLAN.md`; not negotiable)
+
+1. **Never edit `baseline/`.** Every task reports its metrics next to the baseline's on the same frozen test set.
+2. **Ground truth is evaluation-only.** `ground_truth_labels.csv`, `ground_truth.md` (and on v2
+   `ground_truth_companies.csv`) may be read only under `emva/eval/` and by the generator side
+   (`scripts/generate_data_v*.py` and its measurement scripts). Nothing else under `emva/` may import,
+   read or hard-code anything from them.
+   **The grep rule:** `grep -rn "0.45\|ground_truth" emva/` must return only `emva/eval/` lines
+   (`tests/test_label_study.py::test_ground_rule_2_grep`). On `main` the one known exception is
+   `emva/value.py:19` (removed by Phase 2, plan 2.4).
+3. **Standard report.** Every task ends with `make report` (`python -m emva.eval.report`) pasted into
+   `reports/<task>.md`: baseline vs candidate vs status quo, AUC with bootstrap CI, Brier, top-20% wins and
+   revenue (by p and by p×value), decile calibration, AUC by month, value scale.
+4. **Frozen test sets.** Legacy: labelled leads created on or after 2026-05-01. Mature (after Phase 1):
+   the 458 leads of `emva.eval.report.FROZEN_HORIZON`. Both are reported. Never redefine either to
+   make a number look better (ADR 0006).
+5. **One task, one PR, one report.** Acceptance criteria are pass/fail. A task that fails its criterion
+   still ships its report; it does not ship its code. Do not tune to hit an acceptance number (Phase 1
+   deliberately did not tune H to rescue `band=1000+`).
+6. **Claims policy.** Nothing from v1 is quoted externally. After Phase 5, numbers are quoted with CIs
+   and the phrase "on simulated data". Real-data claims need a customer pilot (outside this plan).
+
+## Orchestration conventions (used in every phase so far)
+
+- One branch per task: `phaseN-<slug>` (`phase0-freeze-instrument`, `phase1-labels`,
+  `phase5-generator-v1`, `phase2-features`, `phase5-generator-v2`). Report file `reports/phaseN.md`
+  (sub-items: `reports/phase5-1.md`).
+- Parallel agents work in separate git worktrees (`.claude/worktrees/`, gitignored). Agents push their
+  branch; they never push to `main` and never open PRs. The orchestrator merges.
+- Before merge: two-axis review, **standards** (does it follow this file and the repo conventions?) and
+  **spec** (does it do what the plan item and rulings say?), then one fix round. Rulings made at review
+  are recorded in the phase report under "Orchestrator decisions" and as an ADR.
+- Every commit message ends with a `Co-Authored-By:` trailer for the agent. Commits are small and
+  focused; intermediate commits should be green (Phase 2 noted where they are not).
+- **Every merged phase must update the status table in `docs/CONTEXT.md` and this file, and add an ADR
+  in `docs/adr/` for any orchestrator ruling.**
+
+## Setup and verification
+
+Python 3.11. The repo path contains spaces (`.../Mobile Documents/com~apple~CloudDocs/...`): quote every path.
+
+```sh
+python3.11 -m venv .venv && .venv/bin/pip install -r requirements.txt   # pinned: numpy 2.4.6, pandas 3.0.6, scikit-learn 1.9.1, scipy 1.17.1, anthropic 1.8.0, requests, pytest
+make baseline      # frozen baseline + `python -m emva --label-mode legacy` must give AUC 0.814, Brier 0.1006, top-20% wins 0.571, revenue 0.795, canonical weights
+make test          # pytest (193 passed at the Phase 1 merge, ~60 s) then compileall
+make report        # standard report on data/v1, both test definitions
+make experiment NAME=horizon   # runs/NAME/ outputs + report; names in scripts/run_experiments.py
+```
+
+In a worktree there is no `.venv`: pass the main checkout's interpreter, quoted, e.g.
+`make PY="<main checkout>/.venv/bin/python" baseline`. `DATA=data/v2` points make targets at v2.
+
+**Pipeline CLI** (`python -m emva --data data/v1 --out DIR [--context FILE] [--margin 1.0]`, writes
+`weights.csv` and `scores.csv`):
+
+| flag | meaning |
+|---|---|
+| `--label-mode {legacy,horizon}` | `horizon` (default): won within H days, mature leads only. `legacy`: baseline labels, byte-identical outputs |
+| `--horizon-days N` | H, default 120 (horizon mode only; with legacy it is a usage error) |
+| `--include-ghosted` | horizon: count leads still New at H as 0 instead of excluding them |
+| `--stalled-as-lost` | horizon: count stalled open deals as 0 instead of censoring them |
+| `--feature-set {legacy,v2}` | **arriving with Phase 2** (`phase2-features`): default `v2`; `legacy` + `--label-mode legacy` stays byte-identical to `baseline/` |
+
+The same label flags work on `python -m emva.eval.report`, where they change only the candidate.
+Other entry points: `python -m emva.eval.label_study`, `python -m emva.eval.ground_truth_reference`
+(reads ground truth), `python -m emva.context.agent --data data/v1 --out FILE [--limit N]`.
+
+**Generator.**
+```sh
+python scripts/generate_data_v1.py --seed 20260924 --as-of 2026-09-24 --out DIR --n 10000   # ~17 s
+python scripts/compare_to_v1.py --gen DIR [--seeds 1,2,3] [--md out.md]                    # fidelity vs data/v1
+# on phase5-generator-v2 (in progress):
+python scripts/generate_data_v2.py [--no-paraphrase]        # writes data/v2/
+python scripts/paraphrase_templates.py --check|--populate|--probe
+python scripts/v2_checks.py --data data/v2 --ref data/v1
+```
+
+**LLM access (ADR 0010).** `.env` at the repo root (gitignored, never committed, never printed) holds
+`ANTHROPIC_API_KEY` and `ANTHROPIC_WORKSPACE_ID`. The key is not workspace-scoped, so every client must
+send the `anthropic-workspace-id` header. Model for all LLM calls: `claude-haiku-4-5-20251001`.
+Responses are cached on disk and the caches are committed; never fabricate LLM output.
+
+## Report conventions (standard since Phase 0, ADR 0002)
+
+- Revenue = **recorded** deal value of won test leads (blank = 0), never the model's imputed value.
+  The baseline script's own `top20_revenue` (0.795, imputes blanks) is printed in the notes only.
+- Top-20% capture ranks with numpy's default argsort, like the baseline; when scores tie at the cut the
+  report adds a footnote with the **tie-averaged** value. Tests assert tie-averaged values (status quo
+  wins 0.397, revenue 0.454) so they pass on any CPU.
+- `weights.csv` is compared **canonically** (same rows, values equal to 3 dp, order ignored); byte
+  identity is required only between the emva run and the baseline run on the same machine.
+- CIs: percentile bootstrap, **1000 resamples, seed 0**; paired AUC differences on shared resamples;
+  coefficient CIs from 1,000 refits.
+
+## Repo map (detail in `docs/ARCHITECTURE.md`)
+
+```
+baseline/            frozen POC: emva_score.py, context_agent.py, weights.csv, business_brief.md. Never edit.
+data/v1/             synthetic data + ground truth (eval/generator only). data/v2/ arrives with Phase 5.
+emva/constants.py    every constant (AS_OF, TEST_FROM, HORIZON_DAYS, CATS reference levels, patterns)
+emva/io.py           load CSVs, normalise CRM stages, join enrichment, won_at/first_contact_at; bot + duplicate cleaning
+emva/labels.py       LabelMode/LabelConfig, legacy label, label_source, won_within_h, horizon_label, maturity, split
+emva/features.py     bucketed features (text regex, seniority, channel, behaviour buckets)
+emva/design.py       dummy matrix, reference levels dropped
+emva/model.py        L2 logistic regression, predict, scorecard (weights.csv)
+emva/value.py        ridge deal-value model, expected value, realised revenue
+emva/pipeline.py     run(): load -> clean -> label -> features -> design -> fit -> value -> summary
+emva/cli.py          label flags shared by python -m emva and the report;  emva/__main__.py: the CLI
+emva/context/        agent.py (Haiku call + cache), contract.py (JSON shape), features.py (context_logit)
+emva/eval/           bootstrap, metrics, regression, status_quo, report, label_study, ground_truth_reference
+scripts/             check_baseline (make baseline), run_experiments, generate_data_v1, ground_truth_report, compare_to_v1
+tests/               pytest, one file per module + integration; conftest runs v1 in legacy and horizon mode
+reports/             one write-up per task; docs/ context layer (this set of files)
+```
+
+## Engineering standards
+
+- Type hints on every function; a docstring on every module and public function saying what it
+  needs and returns. Constants live in `emva/constants.py` (or next to their one user, named for
+  where they come from).
+- No dead code, no commented-out code, no speculative options (the generator's v2 `Config` fields
+  raised `NotImplementedError` until implemented).
+- Never swallow exceptions silently: log and re-raise, or log each retry (see `emva/context/agent.py`).
+  Refuse ambiguous input loudly (`io.load` rejects two Won rows; `label_source` rejects unknown stages).
+- Tests alongside the code in the same commit; hand-built fixtures at the boundaries (e.g. 89 / 89.99 /
+  90 idle days, won exactly at H vs H + 1 s).
+- Pandas 3 gotchas already hit: missing values in object/str columns may be `None`, `NaN` or `pd.NA`
+  (test with a helper like the generator's `_present`, not `is None`); boolean columns with gaps are
+  object dtype, so compare `== True` (NaN-safe, `# noqa: E712`) rather than truthiness; `sort_values`
+  and `argsort` use an unstable sort, so tied rows order differently on arm64 vs x86 (why weights are
+  compared canonically and top-k has a tie-averaged figure).
+- The path has spaces: quote it in shell, Makefile (`"$(PY)"`) and subprocess calls.
+
+## Status (2026-09-25)
+
+| phase | state | branch | report |
+|---|---|---|---|
+| 0 freeze and instrument | merged (15f90fc) | `phase0-freeze-instrument` | `reports/phase0.md` |
+| 5.1 generator v1 rewrite | merged (ed3f54b) | `phase5-generator-v1` | `reports/phase5-1.md` |
+| 1 labels | merged (92168cf) | `phase1-labels` | `reports/phase1.md` |
+| 2 features and leakage | in progress, fix round after ruling (ADR 0009) | `phase2-features` | `reports/phase2.md` |
+| 5.2-5.8 generator v2 | merged (01c56f4) | `phase5-generator-v2` | `reports/phase5.md` |
+| 3 value layer, 4 evaluation hardening | pending (need Phase 2) | | |
+| 6 context agent v2 | pending (needs 2 and 5) | | |
+| 7 production readiness doc | pending (needs all) | | |
+
+## Do not
+
+- Read, import or hard-code ground truth outside `emva/eval/` and the generator side.
+- Edit `baseline/`, or change the frozen test sets.
+- Tune H, flags, thresholds or features to hit an acceptance number; report the fail instead.
+- Quote v1 numbers externally (claims policy). Label any number "on simulated data".
+- Commit `.env`, API keys, `runs/`, or regenerated data outside `data/v1/` and `data/v2/`.
+- Run bare `git stash` / `git stash pop` in a shared checkout or worktree (the stash stack is shared
+  across worktrees); use a WIP commit instead.
+- Switch branches in the main checkout while another agent is working there; use a worktree.
+- Push to `main`, open PRs, or merge your own branch (the orchestrator does).
+- Fake LLM responses or use a model other than `claude-haiku-4-5-20251001` without an ADR.
