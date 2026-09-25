@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from emva.features import FeatureSet
 from emva.labels import HORIZON, LEGACY
 from emva.pipeline import PipelineResult, run
 
@@ -19,11 +20,17 @@ def data_v1() -> Path:
 
 @pytest.fixture(scope="session")
 def v1_result() -> PipelineResult:
-    """Legacy labels: must equal the frozen baseline."""
-    return run(DATA_V1, labels=LEGACY)
+    """Legacy labels and legacy features: must equal the frozen baseline."""
+    return run(DATA_V1, labels=LEGACY, features=FeatureSet.LEGACY)
 
 
 @pytest.fixture(scope="session")
 def v1_horizon() -> PipelineResult:
-    """Default horizon labels (plan Phase 1)."""
+    """The defaults: horizon labels (plan Phase 1) and v2 features (plan Phase 2)."""
     return run(DATA_V1, labels=HORIZON)
+
+
+@pytest.fixture(scope="session")
+def v1_v2_legacy_labels() -> PipelineResult:
+    """v2 features with legacy labels (isolates the Phase 2 feature change)."""
+    return run(DATA_V1, labels=LEGACY, features=FeatureSet.V2)

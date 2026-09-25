@@ -1,7 +1,9 @@
 """Every constant the pipeline uses, in one place.
 
 Phase 0 values are copied verbatim from ``baseline/emva_score.py``; Phase 1 added the label
-horizon and label modes. Changing any of them changes model behaviour, so each change belongs to a numbered plan task with its own report.
+horizon and label modes; Phase 2 added the v2 feature set (``CATS_V2_CANDIDATES``, the missing level,
+company-name matching, the boilerplate threshold and the collinearity limit). Changing any of them
+changes model behaviour, so each change belongs to a numbered plan task with its own report.
 """
 from __future__ import annotations
 
@@ -52,11 +54,13 @@ SENIOR_TITLE_PATTERN: str = r"ceo|founder|chief|vp|director|head|owner|partner|p
 MID_TITLE_PATTERN: str = r"manager|lead"
 
 # Form answers extracted from the ``answers`` JSON into ``a_<key>`` columns.
-ANSWER_KEYS: tuple[str, ...] = ("country", "what_to_solve", "job_title", "company_size", "budget", "timeline")
+ANSWER_KEYS: tuple[str, ...] = ("country", "what_to_solve", "job_title", "company_size", "budget", "timeline",
+                                 "company")
 # companies.csv columns joined onto leads as ``co_<column>``.
 ENRICHMENT_COLUMNS: tuple[str, ...] = ("sector", "employee_band", "monthly_ad_spend_band", "crm_platform", "is_hiring")
 
-# feature -> reference level (weights are relative to this level). Order defines design columns.
+# Legacy feature set (``--feature-set legacy``): feature -> reference level (weights are relative to
+# this level). Order defines design columns. Missing inputs fall into reference levels (baseline behaviour).
 CATS: dict[str, str] = {
     "channel": "google", "form_variant": "A", "band": "1-10", "email": "business", "text": "neutral",
     "seniority": "junior/ic", "spend": "under £5k", "crm": "other", "hiring": "not_hiring",
@@ -65,11 +69,68 @@ CATS: dict[str, str] = {
     "c_budget": "not_asked", "c_timeline": "not_asked", "edits_1_4": "no", "no_company": "no",
 }
 
+# Level of ``band`` when neither enrichment nor the typed company size is available (v2, plan 2.2), and of
+# ``sector`` in the deal-value model. Other absent inputs are carried by the two indicators
+# ``session_missing`` and ``enrichment_missing`` (orchestrator ruling on Phase 2, reports/phase2.md).
+MISSING: str = "missing"
+
+# v2 feature set before the plan 2.6 selection (``emva.features.V2_DROPPED`` removes some of them).
+# Order defines the design columns. The column set is fixed by this spec: nothing is dropped per dataset.
+CATS_V2_CANDIDATES: dict[str, str] = {
+    "channel": "google", "form_variant": "A", "session_missing": "no", "enrichment_missing": "no", "band": "1-10",
+    "email": "business",
+    "text": "neutral", "seniority": "junior/ic", "spend": "under £5k", "crm": "other", "hiring": "not_hiring",
+    "time_on_page": "15-60s", "hesitation_90s": "no", "sessions_3plus": "no", "viewed_pricing": "no",
+    "search_term": "generic", "business_hours": "outside", "ip_country": "match", "ip_type": "residential",
+    "c_budget": "not_asked", "c_timeline": "not_asked", "edits_1_4": "no",
+}
+
+# Complete level list of every v2 candidate feature, reference level first. The v2 design emits exactly one
+# column per non-reference level listed here, whatever occurs in the data (absent level = all-zero column),
+# and refuses a value not listed (ADR 0009). Budget and timeline levels are the form's answer options.
+V2_LEVELS: dict[str, tuple[str, ...]] = {
+    "channel": ("google", "meta", "meta_leadads", "linkedin", "chatgpt", "organic_direct"),
+    "form_variant": ("A", "B", "C", "D"),
+    "session_missing": ("no", "yes"),
+    "enrichment_missing": ("no", "yes"),
+    "band": ("1-10", "11-50", "51-200", "201-1000", "1000+", MISSING),
+    "email": ("business", "free"),
+    "text": ("neutral", "copy_paste", "vague", "specific"),
+    "seniority": ("junior/ic", "student", "senior", "mid", "not_asked/blank"),
+    "spend": ("under £5k", "none", "£5k-£25k", "£25k-£100k", "£100k+"),
+    "crm": ("other", "hubspot_sf"),
+    "hiring": ("not_hiring", "hiring"),
+    "time_on_page": ("15-60s", "60-300s", "300-600s", ">600s"),
+    "hesitation_90s": ("no", "yes"),
+    "sessions_3plus": ("no", "yes"),
+    "viewed_pricing": ("no", "yes"),
+    "search_term": ("generic", "brand", "not_google"),
+    "business_hours": ("outside", "wkday_9-18"),
+    "ip_country": ("match", "mismatch"),
+    "ip_type": ("residential", "dc"),
+    "c_budget": ("not_asked", "Under £5k", "£5k-£20k", "£20k-£50k", "£50k+"),
+    "c_timeline": ("not_asked", "This month", "This quarter", "Next 6 months", "Just researching"),
+    "edits_1_4": ("no", "yes"),
+}
+
+# Company-name enrichment (plan 2.3): trailing tokens stripped after normalisation. The plan's list plus
+# "sas" (a legal form companies.csv uses) and the long forms incorporated / corporation / corp / company
+# (typed on data/v2; review of Phase 2).
+LEGAL_SUFFIXES: frozenset[str] = frozenset({"ltd", "limited", "inc", "llc", "gmbh", "bv", "sa", "plc", "co", "sas",
+                                            "incorporated", "corporation", "corp", "company"})
+
+# Boilerplate detector (plan 2.5): token-set Jaccard similarity to any snippet in ``emva/boilerplate.py``
+# at or above this makes the free text "copy_paste".
+BOILERPLATE_SIMILARITY_THRESHOLD: float = 0.6
+
+# Collinearity check (plan 2.7): the largest |correlation| allowed between two design columns.
+MAX_ABS_DESIGN_CORR: float = 0.95
+
 # Formula model.
 LR_C: float = 0.5
 LR_MAX_ITER: int = 5000
 
-# Deal-value model (the residual-variance constant lives in emva/value.py, see plan 2.4).
+# Deal-value model. Its lognormal mean correction uses the residual sd estimated on training (plan 2.4).
 DEAL_VALUE_FEATURES: tuple[str, ...] = ("band", "sector", "channel", "spend")
 DEAL_VALUE_RIDGE_ALPHA: float = 3.0
 

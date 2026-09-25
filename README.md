@@ -24,7 +24,7 @@ python3.11 -m venv .venv
 ## Run
 
 ```sh
-make baseline               # frozen baseline and emva/ (--label-mode legacy) must reproduce AUC 0.814, wins 0.571, revenue 0.795
+make baseline               # frozen baseline and emva/ (--label-mode legacy --feature-set legacy) must reproduce AUC 0.814, wins 0.571, revenue 0.795
 make report                 # standard table: baseline vs candidate vs status quo, legacy and horizon test sets
 make test                   # pytest + compile check
 make experiment NAME=horizon    # pipeline outputs + report into runs/horizon/ (see scripts/run_experiments.py)
@@ -41,10 +41,25 @@ The default label is fixed-horizon: `won_within_h` = Won within `--horizon-days`
 `created_at`; leads younger than that and not Won are unlabelled, and only mature leads
 (`created_at + H <= 2026-09-24`) are used to train and evaluate. Leads still New at H are
 excluded (`--include-ghosted` counts them as 0) and stalled open deals are censored
-(`--stalled-as-lost` counts them as 0). `--label-mode legacy` restores the baseline's labels
-and reproduces `baseline/` byte for byte. In horizon mode `scores.csv` also carries
+(`--stalled-as-lost` counts them as 0). `--label-mode legacy --feature-set legacy` restores the
+baseline's labels and features and reproduces `baseline/` byte for byte. In horizon mode `scores.csv` also carries
 `won_within_h`, `label_source` (won / crm_lost / stalled / ghosted / open) and `matured_at`.
 Definitions: `emva/labels.py`.
+
+### Features
+
+The default `--feature-set v2` (plan Phase 2, `emva/features.py`): `session_missing` and
+`enrichment_missing` indicators for absent session telemetry and absent enrichment (the affected
+features stay at their reference level), `band=missing`, company-name matching when the email
+domain misses companies.csv, similarity-based boilerplate detection, c_budget / c_timeline /
+ip_type / edits_1_4 dropped (2.6), and the deal-value residual sd estimated from training. The
+design's columns are fixed by declared level lists (`emva.constants.V2_LEVELS`, 39 columns; an
+undeclared value raises), so one row scores with the full schema. `--feature-set legacy` is the
+baseline's. Evidence and checks: `python -m emva.eval.phase2_study`,
+`python -m emva.eval.feature_selection`, `python -m emva.eval.collinearity` (exits 1 on
+|corr| > 0.95). `make report` prints the same check as a PASS/FAIL section and exits 1 on a failure
+only with `--strict` (on data/v1 the v2 design fails it: `session_missing` equals
+`channel=meta_leadads` there; ADR 0011).
 
 ## Synthetic data v2
 

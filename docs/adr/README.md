@@ -36,5 +36,6 @@ To change a decision, write a new ADR that supersedes the old one and set the ol
 | [0006](0006-frozen-mature-test-set-rolling-origin-headline.md) | The 458-lead mature test set is frozen; Phase 4 rolling-origin becomes the headline (R3) | Accepted | `reports/phase1.md` |
 | [0007](0007-legacy-scores-csv-byte-identity.md) | `label_source` omitted from legacy `scores.csv` to keep byte identity (R4) | Accepted | `reports/phase1.md` |
 | [0008](0008-persona-always-readable-from-text.md) | Persona always readable from text; only on non-vague, non-copy-paste texts | Accepted, implementation in progress | `phase5-generator-v2` |
-| [0009](0009-fixed-design-schema-missingness-indicators.md) | Fixed design schema with `session_missing` / `enrichment_missing` indicators; strict collinearity check | Accepted, implementation in progress | `phase2-features` |
+| [0009](0009-fixed-design-schema-missingness-indicators.md) | Fixed design schema: `session_missing` / `enrichment_missing` indicators, declared level lists, strict collinearity check (report `--strict`) | Accepted, implementation in progress | `phase2-features` |
 | [0010](0010-llm-api-access.md) | API access: `.env`, workspace header, Haiku 4.5, committed caches, no fake LLM output | Accepted | Phase 5 v2, `.gitignore` |
+| [0011](0011-phase2-acceptance-on-v2-data.md) | Phase 2 tie/collinearity criteria judged on data/v2; boilerplate recall gap to Phase 6; v2 residual sd as 2.4 evidence (R5-R7) | Accepted | `phase2-features` |

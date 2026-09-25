@@ -1,0 +1,48 @@
+"""Everything that differs between ``--feature-set legacy`` and ``v2``, in one object (like ``labels.LabelConfig``).
+
+``feature_spec(FeatureSet.LEGACY)`` is the baseline: its features, its data-driven ``design`` and its
+fixed deal-value residual sd, so ``--label-mode legacy --feature-set legacy`` reproduces
+``baseline/`` byte for byte. ``feature_spec(FeatureSet.V2)`` is plan Phase 2: v2 features, the fixed
+39-column design from ``constants.V2_LEVELS`` (ADR 0009) and a residual sd estimated from training.
+"""
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+
+import pandas as pd
+
+from emva.constants import CATS
+from emva.design import design, fixed_design
+from emva.eval.regression import BASELINE_DEAL_LOG_RESIDUAL_SD  # legacy feature set only: baseline byte identity
+from emva.features import CATS_V2, FeatureSet, add_features, add_features_v2
+
+
+@dataclass(frozen=True)
+class FeatureSpec:
+    """One feature set: its reference levels, featuriser, design function and deal-value residual sd.
+
+    ``featurise`` adds the feature columns to a cleaned, labelled frame in place and returns it;
+    ``design`` turns that frame into the model matrix; ``fixed_log_residual_sd`` is passed to
+    ``value.fit_deal_value`` (None = estimate it from training residuals).
+    """
+
+    feature_set: FeatureSet
+    cats: Mapping[str, str]
+    featurise: Callable[[pd.DataFrame], pd.DataFrame]
+    design: Callable[[pd.DataFrame], pd.DataFrame]
+    fixed_log_residual_sd: float | None
+
+
+def _v2_design(X: pd.DataFrame) -> pd.DataFrame:
+    """The v2 model design: ``fixed_design`` over ``CATS_V2``."""
+    return fixed_design(X, CATS_V2)
+
+
+LEGACY_SPEC = FeatureSpec(FeatureSet.LEGACY, CATS, add_features, design, BASELINE_DEAL_LOG_RESIDUAL_SD)
+V2_SPEC = FeatureSpec(FeatureSet.V2, CATS_V2, add_features_v2, _v2_design, None)
+
+
+def feature_spec(feature_set: FeatureSet | str) -> FeatureSpec:
+    """The ``FeatureSpec`` for ``feature_set`` (a ``FeatureSet`` or its string value; ValueError otherwise)."""
+    return LEGACY_SPEC if FeatureSet(feature_set) is FeatureSet.LEGACY else V2_SPEC

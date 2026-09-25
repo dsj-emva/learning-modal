@@ -17,8 +17,12 @@ and the close cannot come earlier than one hour after contact), which only matte
 closing within hours. The observed won-within-120 rates by band are printed next to the
 derived ones as a check.
 
-This is the only module that reads ground-truth files. Nothing imports it; it is run as a
-script so the pipeline and the rest of ``emva/eval`` stay free of ground truth.
+Models use the legacy feature set (``label_study.FEATURES``) so the numbers match
+``reports/phase1.md``.
+
+This module and ``emva/eval/phase2_study.py`` (Phase 2 validation) are the only modules that read
+ground-truth files. Nothing imports either; they are run as scripts so the pipeline and the rest
+of ``emva/eval`` stay free of ground truth.
 """
 from __future__ import annotations
 
@@ -34,7 +38,7 @@ import pandas as pd
 from emva.constants import TEST_FROM
 from emva.eval.bootstrap import N_RESAMPLES, SEED, BootstrapCI
 from emva.eval.label_study import BANDS as SIZE_BANDS
-from emva.eval.label_study import fmt_ci, size_weight_cis
+from emva.eval.label_study import FEATURES, fmt_ci, size_weight_cis
 from emva.eval.report import md_table
 from emva.io import load
 from emva.labels import HORIZON, LEGACY, label
@@ -78,7 +82,7 @@ def read_truth(data: str | Path) -> pd.DataFrame:
 def true_rates(data: str | Path) -> pd.DataFrame:
     """Mean ``p_close_true`` by ``band`` over three training-period populations, as a table."""
     truth = read_truth(data).p_close_true
-    X = build(load(data), HORIZON)  # features do not depend on the labels; the legacy label is computed alongside
+    X = build(load(data), HORIZON, FEATURES)  # features do not depend on the labels; the legacy label is computed alongside
     legacy_y = label(X)
     pre = X.created_at < TEST_FROM
     pops = {
@@ -117,7 +121,7 @@ def r1_tables(data: str | Path, n_refits: int, seed: int) -> str:
     """The restated size-weight criterion: true 120-day effects vs learned weights, per band."""
     ttc = read_time_to_close(data)
     truth = read_truth(data)
-    r = run(data, labels=HORIZON)
+    r = run(data, labels=HORIZON, features=FEATURES)
     X, D, tr = r.X, r.design, r.train
     t = truth.reindex(X.index)
     f120 = pd.Series([ttc.p_within(HORIZON.horizon_days, band == "1000+") for band in t.employee_band], index=X.index)

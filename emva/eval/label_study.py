@@ -11,7 +11,8 @@
    weights, plus how many training wins arrive after H, by company size.
 
 Uses only the pipeline's own inputs; ground-truth reference numbers come from
-``python -m emva.eval.ground_truth_reference``.
+``python -m emva.eval.ground_truth_reference``. Every model here uses the legacy feature set
+(``FEATURES``), so the study isolates the label change and reproduces ``reports/phase1.md``.
 """
 from __future__ import annotations
 
@@ -24,10 +25,14 @@ import pandas as pd
 from emva.constants import TEST_FROM
 from emva.eval.bootstrap import N_RESAMPLES, SEED, BootstrapCI, auc_ci, coef_bootstrap
 from emva.eval.report import md_table, frozen_test_labels
+from emva.features import FeatureSet
 from emva.io import load
 from emva.labels import HORIZON, LEGACY, LabelConfig
 from emva.model import make_lr
 from emva.pipeline import run
+
+# Phase 1 study: features held at the baseline's so only the labels change.
+FEATURES: FeatureSet = FeatureSet.LEGACY
 
 BANDS: tuple[str, ...] = ("11-50", "51-200", "201-1000", "1000+")
 FLAG_CONFIGS: tuple[LabelConfig, ...] = (
@@ -52,7 +57,7 @@ def size_weight_cis(data: str | Path, configs: tuple[LabelConfig, ...], n_refits
     """For each config: training-set size and a bootstrap CI for every ``band=<size>`` weight in ``BANDS``."""
     out = {}
     for cfg in configs:
-        r = run(data, labels=cfg)
+        r = run(data, labels=cfg, features=FEATURES)
         D, tr = r.design, r.train
         cis = coef_bootstrap(D[tr].values, r.X.y[tr].values, _lr_coef, n_resamples=n_refits, seed=seed)
         by_name = dict(zip(D.columns, cis, strict=True))
@@ -83,7 +88,7 @@ def flag_combinations(data: str | Path, n_resamples: int, seed: int) -> str:
     _, _, y_a, y_b = frozen_test_labels(L)
     rows, rate_rows = [], []
     for cfg in FLAG_CONFIGS:
-        r = run(data, labels=cfg)
+        r = run(data, labels=cfg, features=FEATURES)
         X, tr = r.X, r.train
         w = pd.Series(r.weights.log_odds)
         auc_a = auc_ci(y_a.values, X.p_formula.loc[y_a.index].values, n_resamples, seed=seed)
@@ -113,7 +118,7 @@ def horizon_sensitivity(data: str | Path) -> str:
     late_rows = []
     for h in SENSITIVITY_HORIZONS:
         cfg = LabelConfig(horizon_days=h)
-        r = run(data, labels=cfg)
+        r = run(data, labels=cfg, features=FEATURES)
         X, tr = r.X, r.train
         w = pd.Series(r.weights.log_odds)
         rows.append({

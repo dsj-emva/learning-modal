@@ -1,9 +1,11 @@
 """End-to-end pipeline: load -> clean -> label -> features -> design -> fit -> value -> summary.
 
-With ``labels=LEGACY`` ``run`` reproduces ``baseline/emva_score.py::main`` step
-for step, byte for byte. The default (``horizon``, plan 1.2 to 1.5) trains and evaluates on
-the fixed-horizon label over mature leads only. ``emva/__main__.py`` does the printing and
-file writing.
+With ``labels=LEGACY`` and ``features=FeatureSet.LEGACY`` ``run`` reproduces
+``baseline/emva_score.py::main`` step for step, byte for byte. The defaults are the fixed-horizon
+label over mature leads (plan 1.2 to 1.5) and the v2 feature set (plan Phase 2): explicit missing
+levels and indicators, company-name enrichment, similarity-based boilerplate detection, and a
+deal-value correction estimated from training residuals. ``emva/__main__.py``
+does the printing and file writing.
 """
 from __future__ import annotations
 
@@ -15,13 +17,20 @@ from sklearn.linear_model import LogisticRegression
 
 from emva.constants import TEST_FROM
 from emva.context.features import context_logit
-from emva.design import design
 from emva.eval.metrics import summary
-from emva.features import add_features
+from emva.feature_spec import feature_spec
+from emva.features import FeatureSet
 from emva.io import clean, load
 from emva.labels import HORIZON, LabelConfig, assign_labels, split_masks
 from emva.model import fit_lr, predict, scorecard
-from emva.value import deal_value_design, expected_value, fit_deal_value, predict_deal_value, realised_revenue
+from emva.value import (
+    DealValueModel,
+    deal_value_design,
+    expected_value,
+    fit_deal_value,
+    predict_deal_value,
+    realised_revenue,
+)
 
 # Columns written to scores.csv, in this order, when present (legacy mode: exactly the baseline's).
 SCORE_COLUMNS: tuple[str, ...] = ("p_formula", "deal_value_hat", "value_formula", "p_combined", "value_combined", "y")
@@ -34,8 +43,8 @@ class PipelineResult:
     ``X`` holds one row per cleaned lead with features, label columns and all score columns;
     ``train``/``test`` are boolean masks over ``X``; ``summary`` is the printed metrics table
     (empty when there are no labelled test leads, with a line in ``messages`` saying so);
-    ``messages`` are the context-mode lines printed before it; ``labels`` is the label
-    definition used.
+    ``messages`` are the context-mode lines printed before it; ``labels`` and ``features`` are
+    the label definition and feature set used; ``deal_value`` is the fitted value model.
     """
 
     X: pd.DataFrame
@@ -45,6 +54,8 @@ class PipelineResult:
     weights: pd.DataFrame
     summary: pd.DataFrame
     labels: LabelConfig
+    features: FeatureSet
+    deal_value: DealValueModel
     messages: list[str] = field(default_factory=list)
 
     def scores(self) -> pd.DataFrame:
@@ -53,32 +64,36 @@ class PipelineResult:
         return self.X[[c for c in cols if c in self.X]]
 
 
-def build(L: pd.DataFrame, labels: LabelConfig = HORIZON) -> pd.DataFrame:
-    """Clean, label and featurise loaded leads (``baseline/emva_score.py::build`` in legacy mode)."""
+def build(L: pd.DataFrame, labels: LabelConfig = HORIZON, features: FeatureSet = FeatureSet.V2) -> pd.DataFrame:
+    """Clean, label and featurise loaded leads (``baseline/emva_score.py::build`` with both legacy options)."""
     X = clean(L)
     assign_labels(X, labels)
-    return add_features(X)
+    return feature_spec(features).featurise(X)
 
 
 def run(data: str | Path, margin: float = 1.0, context: str | Path | None = None,
-        test_from: str = TEST_FROM, labels: LabelConfig = HORIZON) -> PipelineResult:
+        test_from: str = TEST_FROM, labels: LabelConfig = HORIZON,
+        features: FeatureSet = FeatureSet.V2) -> PipelineResult:
     """Train the formula and deal-value models on ``data`` and score every cleaned lead.
 
     ``labels`` picks the label definition; in horizon mode only mature leads enter the
-    train and test sets. With ``context`` (an agent output CSV), also fit formula-only,
-    context-only and formula+context models on the rows that have a context score and
-    summarise all three.
+    train and test sets. ``features`` picks the feature set; the legacy set also keeps the
+    baseline's fixed deal-value residual sd, v2 estimates it from training residuals. With
+    ``context`` (an agent output CSV), also fit formula-only, context-only and formula+context
+    models on the rows that have a context score and summarise all three.
     """
-    X = build(load(data), labels)
+    spec = feature_spec(features)
+    features = spec.feature_set
+    X = build(load(data), labels, features)
     tr, te = split_masks(X, test_from, labels.eligible(X))
-    D = design(X)
+    D = spec.design(X)
     lr = fit_lr(D, X.y, tr)
     X["p_formula"] = predict(lr, D)
 
     # expected deal value (fit on train wins)
     M = deal_value_design(X)
-    rg = fit_deal_value(M, X.deal_value, tr)
-    X["deal_value_hat"] = predict_deal_value(rg, M)
+    dv = fit_deal_value(M, X.deal_value, tr, log_residual_sd=spec.fixed_log_residual_sd)
+    X["deal_value_hat"] = predict_deal_value(dv, M)
     X["value_formula"] = expected_value(X.p_formula, X.deal_value_hat, margin)
 
     weights = scorecard(lr, D.columns)
@@ -114,12 +129,13 @@ def run(data: str | Path, margin: float = 1.0, context: str | Path | None = None
         messages.append(f"context weight in combined model: {both.coef_[0][-1]:.3f} (0 = context adds nothing)")
         X["value_combined"] = expected_value(X.p_combined, X.deal_value_hat, margin)
 
-    return PipelineResult(X=X, train=tr, test=te, design=D, weights=weights,
-                          summary=pd.DataFrame(rows), labels=labels, messages=messages)
+    return PipelineResult(X=X, train=tr, test=te, design=D, weights=weights, summary=pd.DataFrame(rows),
+                          labels=labels, features=features, deal_value=dv, messages=messages)
 
 
 def write_outputs(result: PipelineResult, out: str | Path) -> None:
-    """Write ``weights.csv`` and ``scores.csv`` into ``out`` (same format as the baseline)."""
+    """Write ``weights.csv`` and ``scores.csv`` into ``out`` (created if missing; same format as the baseline)."""
+    Path(out).mkdir(parents=True, exist_ok=True)
     result.weights.to_csv(f"{out}/weights.csv")
     result.scores().to_csv(f"{out}/scores.csv")
 

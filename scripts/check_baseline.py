@@ -3,8 +3,9 @@
 1. Run ``baseline/emva_score.py --data data/v1`` into a temp dir; assert AUC 0.814, Brier 0.1006,
    top-20% wins 0.571, top-20% revenue 0.795, and weights.csv canonically equal to
    ``baseline/weights.csv`` (see ``emva.eval.regression`` for why not byte-equal).
-2. Run ``python -m emva --data data/v1 --label-mode legacy`` into another temp dir (the default
-   horizon labels are a deliberate behaviour change, plan Phase 1); assert the same metrics, the
+2. Run ``python -m emva --data data/v1 --label-mode legacy --feature-set legacy`` into another temp
+   dir (the default horizon labels and v2 features are deliberate behaviour changes, plan Phases 1
+   and 2); assert the same metrics, the
    same canonical weights, and byte-identical weights.csv and scores.csv to step 1's run.
 
 Exits 1 with every failure listed on any mismatch.
@@ -53,8 +54,9 @@ def check(data: Path) -> list[str]:
               + ("byte-identical" if filecmp.cmp(f"{b_out}/weights.csv", FROZEN_WEIGHTS, shallow=False)
                  else f"values equal, tie order differs for rows {moved}"))
 
-        e_stdout = _run([sys.executable, "-m", "emva", "--data", str(data), "--out", e_out, "--label-mode", "legacy"], REPO)
-        print("\npython -m emva --label-mode legacy:\n" + e_stdout)
+        e_stdout = _run([sys.executable, "-m", "emva", "--data", str(data), "--out", e_out, "--label-mode", "legacy",
+                         "--feature-set", "legacy"], REPO)
+        print("\npython -m emva --label-mode legacy --feature-set legacy:\n" + e_stdout)
         failures += [f"emva {m}" for m in summary_mismatches(parse_summary(e_stdout))]
         failures += [f"emva weights.csv {m}" for m in weights_mismatches(read_weights(f"{e_out}/weights.csv"),
                                                                       read_weights(FROZEN_WEIGHTS))]

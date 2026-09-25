@@ -11,6 +11,7 @@ from emva.constants import TEST_FROM
 from emva.eval.metrics import tie_averaged_top_share
 from emva.eval.regression import EXPECTED_SUMMARY, FROZEN_WEIGHTS, read_weights, weights_mismatches
 from emva.eval.status_quo import load_rules, status_quo_value
+from emva.features import FeatureSet
 from emva.io import load
 from emva.labels import LEGACY, LabelConfig
 from emva.pipeline import run, write_outputs
@@ -50,7 +51,7 @@ def test_context_mode_matches_baseline_script(tmp_path, data_v1):
     b_out.mkdir(), e_out.mkdir()
     proc = subprocess.run([sys.executable, "emva_score.py", "--data", str(data_v1), "--out", str(b_out),
                            "--context", str(ctx)], cwd=REPO / "baseline", capture_output=True, text=True, check=True)
-    result = run(data_v1, context=ctx, labels=LEGACY)
+    result = run(data_v1, context=ctx, labels=LEGACY, features=FeatureSet.LEGACY)
     write_outputs(result, e_out)
     printed = "\n".join(result.messages + [result.summary.to_string(index=False)]) + "\n"
     assert printed == proc.stdout
@@ -64,11 +65,19 @@ def test_cli_legacy_mode_reproduces_baseline_byte_for_byte(tmp_path, data_v1):
     base = subprocess.run([sys.executable, "emva_score.py", "--data", str(data_v1), "--out", str(b_out)],
                           cwd=REPO / "baseline", capture_output=True, text=True, check=True)
     proc = subprocess.run([sys.executable, "-m", "emva", "--data", str(data_v1), "--out", str(e_out),
-                           "--label-mode", "legacy"], cwd=REPO, capture_output=True, text=True, check=True)
+                           "--label-mode", "legacy", "--feature-set", "legacy"], cwd=REPO, capture_output=True, text=True,
+                          check=True)
     assert proc.stdout == base.stdout
     assert "formula 0.814 0.1006       0.571          0.795" in proc.stdout
     for name in ("scores.csv", "weights.csv"):
         assert filecmp.cmp(b_out / name, e_out / name, shallow=False), name
+
+
+def test_cli_creates_a_missing_out_directory(tmp_path, data_v1):
+    out = tmp_path / "new" / "dir"
+    subprocess.run([sys.executable, "-m", "emva", "--data", str(data_v1), "--out", str(out)],
+                   cwd=REPO, capture_output=True, text=True, check=True)
+    assert (out / "weights.csv").exists() and (out / "scores.csv").exists()
 
 
 def test_cli_default_is_horizon_and_writes_label_columns(tmp_path, data_v1):
@@ -150,9 +159,32 @@ def test_report_contains_both_label_definitions(report_text, v1_horizon):
     assert "| legacy | 5588 (847) | 2453 (352) |" in labels
     assert "Candidate trained with: `horizon H=120`." in labels
     ghost = _section(report_text, "Bottom-decile ghosted share")
-    # the plan's "baseline 27%" is the still-New share on all legacy-labelled leads
+    # the plan's "baseline 27%" is the still-New share on all legacy-labelled leads (candidate: v2 features since Phase 2)
     row = next(line for line in ghost.splitlines() if line.startswith("| all leads labelled by legacy rules"))
-    assert row.startswith("| all leads labelled by legacy rules (train + test) | 8041 | 15.0% | 24.5% | 23.9% | 16.5% | 27.5% |")
+    assert row.startswith("| all leads labelled by legacy rules (train + test) | 8041 | 15.0% | 24.5% | 24.4% | 16.5% | 27.5% |")
+
+
+def test_report_runs_the_collinearity_check(report_text):
+    text = _section(report_text, "Design collinearity (plan 2.7): FAIL")
+    assert "Candidate design (`v2` features, 39 columns) on its 4049 training rows" in text
+    # on v1 every session-less lead is a lead-ads lead: reported, not hidden (ADR 0011)
+    assert "- FAIL (1 pairs with |corr| > 0.95): max |corr| = 1.000 between channel=meta_leadads and " \
+           "session_missing=yes" in text
+
+
+@pytest.mark.parametrize("feature_set,strict,code,pair", [
+    ("v2", False, 0, "channel=meta_leadads and session_missing=yes"),   # a data property: warn, do not fail
+    ("v2", True, 1, "channel=meta_leadads and session_missing=yes"),
+    ("legacy", True, 1, "email=free and no_company=yes"),
+])
+def test_report_cli_exits_nonzero_only_with_strict(data_v1, feature_set, strict, code, pair):
+    proc = subprocess.run([sys.executable, "-m", "emva.eval.report", "--data", str(data_v1), "--n-resamples", "5",
+                           "--feature-set", feature_set, *(["--strict"] if strict else [])],
+                          cwd=REPO, capture_output=True, text=True)
+    assert proc.returncode == code, proc.stderr
+    assert "## Design collinearity (plan 2.7): FAIL" in proc.stdout
+    assert f"- FAIL (1 pairs with |corr| > 0.95): max |corr| = 1.000 between {pair}" in proc.stdout
+    assert f"{'FAIL' if strict else 'WARNING'}: candidate design collinearity check" in proc.stderr
 
 
 def test_horizon_pipeline_uses_mature_leads_only(v1_horizon):

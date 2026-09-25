@@ -17,6 +17,13 @@ import pandas as pd
 EXPECTED_SUMMARY: dict[str, float] = {"auc": 0.814, "brier": 0.1006, "top20_wins": 0.571, "top20_revenue": 0.795}
 FROZEN_WEIGHTS: Path = Path(__file__).resolve().parents[2] / "baseline" / "weights.csv"
 
+# The residual sd the baseline hard-codes in its lognormal deal-value correction. It is the
+# generator's planted noise sd (from the generator documentation), not an estimate, so ground rule 2
+# keeps it out of the model code: the v2 feature set estimates the sd from training residuals
+# (plan 2.4). It lives here, in the baseline-regression module, only so that ``--feature-set legacy``
+# can reproduce the frozen baseline byte for byte.
+BASELINE_DEAL_LOG_RESIDUAL_SD: float = 0.45
+
 
 def parse_summary(stdout: str) -> dict[str, float]:
     """Parse the last two lines of the pipeline's printed summary (header + ``formula`` row)."""
