@@ -44,6 +44,15 @@ def test_subsample_curve_shape_and_seed_determinism():
     assert long.equals(ss.subsample_curve(y, train, test, models, sizes=(50, 100, None, 1000), n_seeds=3))
     lr, again = long[long.model == "LR"].auc.values, long[long.model == "LR again"].auc.values
     assert np.array_equal(lr, again)   # same rows for every model within a seed
+    seen: dict[str, list[tuple[int, ...]]] = {"A": [], "B": []}
+
+    def recording(name: str) -> ss.FitScore:
+        def fit_score(tr: np.ndarray, te: np.ndarray) -> np.ndarray:
+            seen[name].append(tuple(tr))
+            return D.x.to_numpy()[te]
+        return fit_score
+    ss.subsample_curve(y, train, test, {"A": recording("A"), "B": recording("B")}, sizes=(50, None), n_seeds=3)
+    assert seen["A"] == seen["B"] and len(seen["A"]) == 4     # every model gets the same rows per seed
     t = ss.curve_table(long)
     assert t.N.tolist() == ["50", "100", "300 (full)"] and list(t.columns) == ["N", "LR", "LR again"]
     assert "±" in t.LR[0] and "±" not in t.LR[2]

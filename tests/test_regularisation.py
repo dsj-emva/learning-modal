@@ -28,6 +28,6 @@ def test_sweep_has_one_row_per_c_and_every_column():
     assert t.C.tolist() == [0.01, 0.5, 10.0]
     assert list(t.columns) == ["C", "frozen", "Brier frozen", "rolling-origin mean"]
     assert t.frozen.between(0.5, 1).all() and t["rolling-origin mean"].notna().all()
-    lo, hi, flat = rg.flatness(t, "frozen", 0.5, 10.0)
-    assert lo <= hi and flat == (hi - lo < rg.FLAT_TOLERANCE)
+    f = rg.flatness(t, "frozen", 0.5, 10.0)
+    assert f.lo <= f.hi and f.flat == (f.hi - f.lo < rg.FLAT_TOLERANCE)
     assert rg.make_lr_c(3.0).C == 3.0

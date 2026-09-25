@@ -211,6 +211,16 @@ class Headline:
     max: float
     n_splits: int
 
+    @property
+    def point(self) -> float:
+        """The mean AUC (named like ``BootstrapCI.point`` so both format the same way)."""
+        return self.mean
+
+    @property
+    def spread(self) -> float:
+        """``max - min`` of the per-split AUCs."""
+        return self.max - self.min
+
 
 def headline(results: Sequence[SplitResult], n_resamples: int = N_RESAMPLES, seed: int = SEED,
              level: float = CI_LEVEL) -> Headline | None:

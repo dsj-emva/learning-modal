@@ -14,6 +14,7 @@ range is below ``FLAT_TOLERANCE``.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
@@ -70,7 +71,16 @@ def sweep(cases: dict[str, tuple[pd.DataFrame, pd.Series, pd.Series, pd.Series]]
     return pd.DataFrame(rows)
 
 
-def flatness(table: pd.DataFrame, column: str, lo: float = FLAT_RANGE[0], hi: float = FLAT_RANGE[1]) -> tuple[float, float, bool]:
-    """``(min, max, flat)`` of ``column`` over ``lo <= C <= hi``; flat when max - min < ``FLAT_TOLERANCE``."""
+@dataclass(frozen=True)
+class Flatness:
+    """AUC range of one column over ``FLAT_RANGE``: ``lo``, ``hi``, and ``flat`` (``hi - lo < FLAT_TOLERANCE``)."""
+
+    lo: float
+    hi: float
+    flat: bool
+
+
+def flatness(table: pd.DataFrame, column: str, lo: float = FLAT_RANGE[0], hi: float = FLAT_RANGE[1]) -> Flatness:
+    """``Flatness`` of ``column`` over ``lo <= C <= hi``."""
     v = table.loc[table.C.between(lo, hi), column]
-    return float(v.min()), float(v.max()), bool(v.max() - v.min() < FLAT_TOLERANCE)
+    return Flatness(float(v.min()), float(v.max()), bool(v.max() - v.min() < FLAT_TOLERANCE))
