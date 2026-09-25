@@ -6,7 +6,7 @@ label over mature leads (plan 1.2 to 1.5) and the v2 feature set (plan Phase 2):
 levels and indicators, company-name enrichment, similarity-based boilerplate detection, and a
 deal-value correction estimated from training residuals. In horizon mode ``run`` also adds the two-stage
 upload columns (plan 3.3): ``value_at_submit`` (the expected value through a fitted ``ValueTransform``) and
-``value_at_close``, each with its timestamp. ``emva/__main__.py`` does the printing and file writing.
+``value_at_close``, each with its timestamp, and ``value_at_close_status``. ``emva/__main__.py`` does the printing and file writing.
 """
 from __future__ import annotations
 
@@ -30,7 +30,8 @@ from emva.value_transform import FittedValueTransform, ValueTransform
 # Columns written to scores.csv, in this order, when present (legacy mode: exactly the baseline's).
 SCORE_COLUMNS: tuple[str, ...] = ("p_formula", "deal_value_hat", "value_formula", "p_combined", "value_combined", "y")
 # Two-stage upload columns (plan 3.3), written after the label columns in horizon mode only (ADR 0007).
-VALUE_SCORE_COLUMNS: tuple[str, ...] = ("value_at_submit", "value_at_submit_ts", "value_at_close", "value_at_close_ts")
+VALUE_SCORE_COLUMNS: tuple[str, ...] = ("value_at_submit", "value_at_submit_ts", "value_at_close", "value_at_close_ts",
+                                        "value_at_close_status")
 
 
 @dataclass
@@ -102,7 +103,8 @@ def run(data: str | Path, margin: float = 1.0, context: str | Path | None = None
         fitted = value_transform.fit(X.value_formula[tr])
         X["value_at_submit"] = fitted.apply(X.value_formula)
         X["value_at_submit_ts"] = X.created_at
-        X[["value_at_close", "value_at_close_ts"]] = value_at_close(X, labels.horizon_days)
+        close = value_at_close(X, labels.horizon_days)
+        X[list(close.columns)] = close
 
     weights = scorecard(lr, D.columns)
 

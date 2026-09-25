@@ -31,6 +31,11 @@ def test_fixed_deal_value_design_refuses_an_unseen_level(feature, value):
         fixed_deal_value_design(_one_lead(**{feature: value}))
 
 
+def test_fixed_design_with_no_reference_keeps_every_level():
+    from emva.design import fixed_columns
+    assert fixed_columns({"band": None}) == [f"band={lvl}" for lvl in DEAL_VALUE_LEVELS["band"]]
+
+
 def test_v2_feature_set_uses_the_fixed_value_design_and_legacy_the_data_driven_one(v1_horizon):
     one = v1_horizon.X.head(1)
     assert list(feature_spec(FeatureSet.V2).value_design(one).columns) == fixed_deal_value_columns()
@@ -56,9 +61,12 @@ def test_value_at_close_rules():
     for lead, value in [("won_mature", 12000.0), ("won_young", 3000.0), ("won_late", 7000.0)]:
         assert out.loc[lead, "value_at_close"] == value
         assert out.loc[lead, "value_at_close_ts"] == X.loc[lead, "won_at"]
-    # won with a blank deal value -> 0 (ADR 0002 revenue convention), still at won_at
-    assert out.loc["won_blank", "value_at_close"] == 0
+    # won with a blank deal value -> amount unknown (R10): blank value, still at won_at
+    assert np.isnan(out.loc["won_blank", "value_at_close"])
     assert out.loc["won_blank", "value_at_close_ts"] == X.loc["won_blank", "won_at"]
+    assert out.value_at_close_status.to_dict() == {
+        "won_mature": "known", "lost_mature": "known", "won_young": "known", "open_young": "pending",
+        "won_late": "known", "won_blank": "unknown_amount"}
     # mature non-win -> 0 at matured_at
     assert out.loc["lost_mature", "value_at_close"] == 0
     assert out.loc["lost_mature", "value_at_close_ts"] == X.loc["lost_mature", "created_at"] + pd.Timedelta(days=120)
@@ -74,6 +82,7 @@ def test_value_at_close_at_the_maturity_boundary_and_for_a_win_after_as_of():
     out = value_at_close(X, horizon_days=120, as_of=AS_OF)
     assert out.loc["exactly", "value_at_close"] == 0 and out.loc["exactly", "value_at_close_ts"] == AS_OF
     assert np.isnan(out.loc["one_second_young", "value_at_close"])
+    assert out.loc["one_second_young", "value_at_close_status"] == "pending"
     # a Won row dated after as_of is not known at as_of; the lead is mature, so 0 at matured_at
     assert out.loc["future_win", "value_at_close"] == 0
 
@@ -85,9 +94,13 @@ def test_scores_carry_two_stage_columns_in_horizon_mode(v1_horizon):
         assert c in s.columns
     assert (s.value_at_submit_ts == v1_horizon.X.created_at).all()
     assert s.value_at_submit.notna().all() and (s.value_at_submit >= 25).all()
-    assert (s.value_at_close.notna() == s.value_at_close_ts.notna()).all()
+    assert set(s.value_at_close_status) == {"known", "unknown_amount", "pending"}
+    known = s.value_at_close_status == "known"
+    assert s.value_at_close[known].notna().all() and s.value_at_close[~known].isna().all()
+    assert (s.value_at_close_ts.notna() == (s.value_at_close_status != "pending")).all()
     won = s.label_source == "won"
-    assert (s.value_at_close[won] > 0).mean() > 0.9 and (s.value_at_close[~won].fillna(0) == 0).all()
+    assert (s.value_at_close[won & known] > 0).all() and (s.value_at_close[~won & known] == 0).all()
+    assert (s.value_at_close_status[s.label_source != "won"] != "unknown_amount").all()
     # the transform is fitted on the training leads' values
     assert v1_horizon.value_transform.cap == pytest.approx(
         np.percentile(v1_horizon.X.value_formula[v1_horizon.train], 97))

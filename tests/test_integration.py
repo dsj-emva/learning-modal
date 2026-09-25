@@ -84,8 +84,9 @@ def test_cli_default_is_horizon_and_writes_label_columns(tmp_path, data_v1):
     subprocess.run([sys.executable, "-m", "emva", "--data", str(data_v1), "--out", str(tmp_path)],
                    cwd=REPO, capture_output=True, text=True, check=True)
     scores = pd.read_csv(tmp_path / "scores.csv", index_col="lead_id")
-    assert list(scores.columns[-8:]) == ["y", "won_within_h", "label_source", "matured_at", "value_at_submit",
-                                         "value_at_submit_ts", "value_at_close", "value_at_close_ts"]
+    assert list(scores.columns[-9:]) == ["y", "won_within_h", "label_source", "matured_at", "value_at_submit",
+                                         "value_at_submit_ts", "value_at_close", "value_at_close_ts",
+                                         "value_at_close_status"]
     assert set(scores.label_source) == {"won", "crm_lost", "stalled", "ghosted", "open"}
     assert (tmp_path / "weights.csv").exists()
 

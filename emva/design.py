@@ -26,25 +26,27 @@ def design(X: pd.DataFrame, extra: pd.Series | pd.DataFrame | None = None,
     return D
 
 
-def fixed_columns(cats: Mapping[str, str], levels: Mapping[str, tuple[str, ...]] = V2_LEVELS) -> list[str]:
+def fixed_columns(cats: Mapping[str, str | None], levels: Mapping[str, tuple[str, ...]] = V2_LEVELS) -> list[str]:
     """The design columns ``fixed_design`` emits: ``<feature>=<level>`` for every non-reference level, in spec order.
 
-    Raises ``ValueError`` if a feature has no level list or its reference level is not in it.
+    A reference of None keeps every level (e.g. the ridge deal-value design). Raises ``ValueError`` if a feature
+    has no level list or its (non-None) reference level is not in it.
     """
     cols = []
     for c, ref in cats.items():
-        if c not in levels or ref not in levels[c]:
+        if c not in levels or (ref is not None and ref not in levels[c]):
             raise ValueError(f"feature {c!r}: no level list containing its reference level {ref!r}")
         cols += [f"{c}={lvl}" for lvl in levels[c] if lvl != ref]
     return cols
 
 
-def fixed_design(X: pd.DataFrame, cats: Mapping[str, str],
+def fixed_design(X: pd.DataFrame, cats: Mapping[str, str | None],
                  levels: Mapping[str, tuple[str, ...]] = V2_LEVELS) -> pd.DataFrame:
     """Fixed-schema design: exactly ``fixed_columns(cats, levels)``, whatever levels occur in ``X``.
 
     A level absent from ``X`` gives an all-zero column, so one row gets the full column set. A value
-    not in the feature's level list raises ``ValueError`` naming the feature and the values.
+    not in the feature's level list raises ``ValueError`` naming the feature and the values. A reference
+    of None keeps every level of that feature.
     """
     cols = fixed_columns(cats, levels)
     data: dict[str, pd.Series] = {}
