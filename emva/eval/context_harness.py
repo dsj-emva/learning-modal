@@ -69,7 +69,7 @@ class EvalData:
     ``X``: cleaned, labelled, featurised leads (horizon labels, v2 features); ``D``: the v2 design;
     ``labelled``: mature rows with a label (the union of the train and test masks); ``train``: its
     pre-2026-05-01 part; ``persona``: the generator's ``context_persona`` ("none" when absent);
-    ``text_category``: the generator's true text category.
+    ``text_category``: the generator's true text category; ``p_true``: the generator's ``p_close_true``.
     """
 
     X: pd.DataFrame
@@ -78,6 +78,7 @@ class EvalData:
     train: pd.Series
     persona: pd.Series
     text_category: pd.Series
+    p_true: pd.Series
 
 
 def load_eval_data(data: str | Path) -> EvalData:
@@ -87,7 +88,7 @@ def load_eval_data(data: str | Path) -> EvalData:
     tr, te = split_masks(X, eligible=HORIZON.eligible(X))
     gt = pd.read_csv(Path(data) / "ground_truth_labels.csv").set_index("lead_id").reindex(X.index)
     return EvalData(X=X, D=D, labelled=tr | te, train=tr, persona=gt.context_persona.fillna("none"),
-                    text_category=gt.text_category)
+                    text_category=gt.text_category, p_true=gt.p_close_true)
 
 
 def sample_leads(labelled: pd.Series, persona: pd.Series, n: int = SAMPLE_SIZE, n_persona: int = SAMPLE_PERSONA,
@@ -160,6 +161,17 @@ def gap_recovered(y: np.ndarray, p_formula: np.ndarray, p_context: np.ndarray, p
     rng = np.random.default_rng(seed)
     samples = np.array([frac(i) for i in _resample_indices(y, n_resamples, rng)])
     return _percentile_ci(frac(np.arange(len(y))), samples, level)
+
+
+def true_probability_gap(y: np.ndarray, p_true: np.ndarray, persona: np.ndarray,
+                         effect: float = PERSONA_EFFECT) -> dict[str, float]:
+    """Ceiling on the persona's AUC value: AUC of the generator's true close probability with and without
+    the planted persona term (``logit(p_true) - effect * persona``). No model, no estimation noise."""
+    p = np.clip(np.asarray(p_true, dtype=float), 1e-6, 1 - 1e-6)
+    lo = np.log(p / (1 - p))
+    with_p = roc_auc_score(y, lo)
+    without = roc_auc_score(y, lo - effect * np.asarray(persona, dtype=float))
+    return {"auc_true": with_p, "auc_true_without_persona": without, "true_gap": with_p - without}
 
 
 @dataclass
@@ -310,7 +322,9 @@ def markdown(curves: dict[str, pd.DataFrame], refs: dict[str, dict[str, float]],
     for name, cur in curves.items():
         r = refs[name]
         out += [f"**{name}**: AUC(formula) {r['auc_formula']:.4f}, AUC(formula + true persona) {r['auc_oracle']:.4f}, "
-                f"gap {r['gap']:.4f} (cross-fitted, {N_FOLDS} folds, {N_NOISE_DRAWS} noise draws per sd).", "",
+                f"gap {r['gap']:.4f} (cross-fitted, {N_FOLDS} folds, {N_NOISE_DRAWS} noise draws per sd). "
+                f"Ceiling from the generator's true probability: AUC {r['auc_true']:.4f} with the persona term, "
+                f"{r['auc_true_without_persona']:.4f} without, gap {r['true_gap']:.4f}.", "",
                 _md(cur), ""]
     c, o = ev.ctx_vs_formula, ev.oracle_vs_formula
     out += ["### 6.6 Real run: formula vs formula + context (same rows, cross-fitted)", "",
@@ -368,8 +382,9 @@ def main(argv: list[str] | None = None) -> None:
     sample_rows = ed.X.index.isin(J.lead_id[J.status == "ok"]) & lab
     curves, refs = {}, {}
     for name, m in (("all labelled leads", lab), ("the judged sample", pd.Series(sample_rows, index=ed.X.index))):
-        curves[name], refs[name] = oracle_power_curve(ed.D[m].to_numpy(), ed.X.y[m].to_numpy(dtype=float),
-                                                      (ed.persona[m] != "none").to_numpy())
+        y_m, persona_m = ed.X.y[m].to_numpy(dtype=float), (ed.persona[m] != "none").to_numpy()
+        curves[name], refs[name] = oracle_power_curve(ed.D[m].to_numpy(), y_m, persona_m)
+        refs[name] |= true_probability_gap(y_m, ed.p_true[m].to_numpy(), persona_m)
     plot_power_curve(curves, {"real Haiku run (sample)": ev.recovered}, a.plot)
     text = markdown(curves, refs, ev)
     if a.md:

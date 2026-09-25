@@ -3,7 +3,14 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from emva.eval.context_harness import crossfit, folds, gap_recovered, oracle_power_curve, sample_leads
+from emva.eval.context_harness import (
+    crossfit,
+    folds,
+    gap_recovered,
+    oracle_power_curve,
+    sample_leads,
+    true_probability_gap,
+)
 
 
 def test_sample_is_seeded_stratified_and_labelled_only():
@@ -55,3 +62,11 @@ def test_gap_recovered_is_one_when_context_equals_oracle_and_zero_when_it_equals
     assert gap_recovered(y, p_f, p_o, p_o, n_resamples=50).point == pytest.approx(1.0)
     same = gap_recovered(y, p_f, p_f, p_o, n_resamples=50)
     assert same.point == 0 and same.lo == 0 and same.hi == 0
+
+
+def test_true_probability_gap_measures_the_planted_term():
+    D, y, persona = synthetic()
+    p = 1 / (1 + np.exp(-(-1 + D @ np.array([1.0, -0.5, 0.3]) - 3.0 * persona)))
+    g = true_probability_gap(y, p, persona, effect=-3.0)
+    assert g["true_gap"] > 0.02 and g["auc_true"] == pytest.approx(g["auc_true_without_persona"] + g["true_gap"])
+    assert true_probability_gap(y, p, np.zeros(len(y)))["true_gap"] == 0
