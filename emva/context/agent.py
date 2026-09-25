@@ -25,7 +25,8 @@ from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
 import requests
 
-from emva.context.contract import ContextResponse, error_response
+from emva.constants import ENRICHMENT_COLUMNS
+from emva.context.contract import OUTPUT_COLUMNS, ContextResponse, error_response
 
 log = logging.getLogger(__name__)
 
@@ -60,8 +61,9 @@ def lead_card(r: pd.Series) -> str:
 def call(system: str, card: str, key: str, cache: dict[str, ContextResponse]) -> ContextResponse:
     """Score one lead card, using ``cache`` keyed on sha256(system + card).
 
-    Retries up to ``MAX_ATTEMPTS`` times with exponential backoff on any transport or parse
-    failure (each failure is logged), then returns ``error_response()`` without caching it.
+    Tries up to ``MAX_ATTEMPTS`` times, with exponential backoff between attempts, on any
+    transport or parse failure (each failure is logged), then returns ``error_response()``
+    without caching it.
     """
     h = hashlib.sha256((system + card).encode()).hexdigest()
     if h in cache:
@@ -79,12 +81,13 @@ def call(system: str, card: str, key: str, cache: dict[str, ContextResponse]) ->
             return out
         except Exception as exc:  # retried; Phase 6 separates parse from transport errors
             log.warning("context call failed (attempt %d/%d): %r", attempt + 1, MAX_ATTEMPTS, exc)
-            time.sleep(2 ** attempt)
+            if attempt + 1 < MAX_ATTEMPTS:
+                time.sleep(2 ** attempt)
     return error_response()
 
 
 def main() -> None:
-    """CLI entry point: score leads and write ``lead_id,context_score,fit,red_flags``."""
+    """CLI entry point: score leads and write a CSV with ``OUTPUT_COLUMNS``."""
     logging.basicConfig(level=logging.WARNING)
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default="data/v1")
@@ -100,7 +103,7 @@ def main() -> None:
     L = pd.read_csv(f"{a.data}/historical_leads.csv")
     CO = pd.read_csv(f"{a.data}/companies.csv")
     CO["dom"] = CO.domain.str.lower(); L["dom"] = L.company_domain.str.lower()
-    L = L.merge(CO[["dom", "sector", "employee_band", "monthly_ad_spend_band", "crm_platform", "is_hiring"]]
+    L = L.merge(CO[["dom", *ENRICHMENT_COLUMNS]]
                 .add_prefix("co_").rename(columns={"co_dom": "dom"}), on="dom", how="left")
     if a.limit:
         L = L.sample(a.limit, random_state=0)
@@ -116,10 +119,11 @@ def main() -> None:
     with open(cache_file, "w") as f:
         json.dump(cache, f)
 
-    pd.DataFrame({"lead_id": L.lead_id.values,
-                  "context_score": [r.get("context_score") for r in res],
-                  "fit": [r.get("fit") for r in res],
-                  "red_flags": ["; ".join(r.get("red_flags") or []) for r in res]}).to_csv(a.out, index=False)
+    values = (L.lead_id.values,
+              [r.get("context_score") for r in res],
+              [r.get("fit") for r in res],
+              ["; ".join(r.get("red_flags") or []) for r in res])
+    pd.DataFrame(dict(zip(OUTPUT_COLUMNS, values, strict=True))).to_csv(a.out, index=False)
     print(f"wrote {len(res)} scores to {a.out}")
 
 

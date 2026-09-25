@@ -35,12 +35,14 @@ def test_call_logs_failures_and_returns_error_record(monkeypatch, caplog):
     def fail(*a, **k):
         raise ConnectionError("down")
     monkeypatch.setattr(agent.requests, "post", fail)
-    monkeypatch.setattr(agent.time, "sleep", lambda s: None)
+    sleeps: list[float] = []
+    monkeypatch.setattr(agent.time, "sleep", sleeps.append)
     cache: dict = {}
     with caplog.at_level(logging.WARNING, logger=agent.__name__):
         out = agent.call("sys", "card", "key", cache)
     assert out == error_response() and cache == {}
     assert len([r for r in caplog.records if "context call failed" in r.message]) == agent.MAX_ATTEMPTS
+    assert sleeps == [2 ** i for i in range(agent.MAX_ATTEMPTS - 1)]  # no sleep after the last attempt
 
 
 def test_contract_names_current_output():
