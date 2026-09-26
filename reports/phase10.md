@@ -1298,6 +1298,9 @@ extras on the EMVA form (D17, D26); the other items under "Open items".
 
 ## Verification
 
+- Live draft check (last): **817 passed, 1 skipped** (`make PY=.venv/bin/python test`, then compileall; +6 tests:
+  the primary-file contract, the committed drafts and cache), `make baseline` PASS (byte-identical weights and
+  scores, on simulated data).
 - Tests: **811 passed, 1 skipped** after the fix round (`make test`, then compileall) (804 passed + 1 skipped at the
   end of part (b); 780 passed + 1 skipped after part (a); 751 passed + 1 skipped at the start of the phase). Commits
   66af85c, ec3b8cf and 20621dc are not green on their own
