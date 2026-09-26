@@ -690,6 +690,28 @@ def test_new_source_rows_score_like_the_training_run(converted_dir: Path, frames
     np.testing.assert_allclose(scores.value_at_submit, r.X.value_at_submit.loc[new.id], rtol=1e-12)
 
 
+def test_form_text_in_a_column_blank_on_every_training_lead_scores(converted_dir: Path, frames: dict[str, pd.DataFrame],
+                                                                  mapping: DatasetMapping, tmp_path: Path) -> None:
+    """Phase 9 bug: the fixture maps no landing_url / ip_country, so they are blank on every training lead and the
+    bundle's lead schema reads them as float64; a form lead that fills them in used to fail to parse its text as a
+    number. It now scores, and leads from the source rows still score exactly like the batch run."""
+    from emva.persist import load_bundle, save_bundle
+    from emva.scoring import lead_from_form, score_leads
+
+    r = run(converted_dir)
+    save_bundle(r, tmp_path / "model.joblib", converted_dir, 1.0)
+    bundle = load_bundle(tmp_path / "model.joblib")
+    assert pd.api.types.is_float_dtype(bundle.lead_schema.dtypes["landing_url"])
+    assert pd.api.types.is_float_dtype(bundle.lead_schema.dtypes["ip_country"])
+    form = lead_from_form({"email": "ann@firm.example", "form_variant": "A", "utm_source": "google",
+                           "utm_medium": "cpc", "ip_country": "UK", "landing_url": "https://firm.example/p"})
+    assert np.isfinite(score_leads(bundle, form, converted_dir).p_formula).all()
+    new = frames["leads.csv"].iloc[[0, 1, 2, 3, 40]].drop(columns=["stage", "closed", "amount", "notes"])
+    leads = convert_leads({"leads.csv": new, "orgs.csv": frames["orgs.csv"]}, mapping)
+    np.testing.assert_allclose(score_leads(bundle, leads, converted_dir).p_formula, r.X.p_formula.loc[new.id],
+                               rtol=1e-12)
+
+
 def test_convert_leads_without_ids_dates_or_outcome_columns(frames: dict[str, pd.DataFrame],
                                                             mapping: DatasetMapping) -> None:
     new = frames["leads.csv"].head(3)[["mail", "source", "size", "org"]]

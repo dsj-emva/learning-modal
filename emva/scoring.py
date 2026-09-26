@@ -8,7 +8,8 @@ the future (CRM history, labels): ``io.enrich`` (answers, domain and name enrich
 gets bit-for-bit the score the batch run gave it (``tests/test_scoring.py``).
 
 Input is a frame with ``historical_leads.csv`` columns (``lead_from_form`` builds one from form fields, so the
-app never assembles the schema). Absent columns are blank; values are coerced to the training file's dtypes.
+app never assembles the schema). Absent columns are blank; values are coerced to the training file's dtypes,
+except that a text field stays text in a column that was blank on every training lead (read as float64).
 
 Rulings:
 
@@ -252,8 +253,12 @@ def _as_training_schema(bundle: ModelBundle, leads: pd.DataFrame) -> pd.DataFram
     if "email" not in L or L.email.isna().any():
         raise ValueError("every lead needs an email")
     blank = pd.Series(None, index=L.index, dtype=object)
-    X = pd.DataFrame({c: _coerce(L[c] if c in L else blank, dtype) for c, dtype in schema.dtypes.items()},
-                     index=L.index)
+    # a text column blank on every training lead (e.g. a converted dataset that maps no landing_url) reads as float64:
+    # keep a form's text in it as text rather than failing to parse it as a number
+    text = {f.name for f in submit_time_fields() if f.source == "column" and f.dtype is FieldType.STR}
+    X = pd.DataFrame({c: _coerce(L[c] if c in L else blank,
+                                 object if c in text and pd.api.types.is_numeric_dtype(dtype) else dtype)
+                      for c, dtype in schema.dtypes.items()}, index=L.index)
     X["answers"] = X.answers.fillna("{}")
     for c in extras:
         X[c] = L[c].astype(object) if c in L else blank
