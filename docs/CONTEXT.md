@@ -100,6 +100,24 @@ wins and this file is wrong: fix it in the same PR. State: `main` 92168cf, 2026-
 - **Scorecard points**: `log_odds × 20 / ln 2`, rounded, in `weights.csv`; **+20 points = odds of closing
   double** (`POINTS_TO_DOUBLE_ODDS`).
 
+### Converted datasets (Phase 9)
+
+- **Mapping**: a TOML file per data source (`mappings/*.toml`, `emva/ingest/mapping.py`) that says how 1-3 foreign
+  CSVs become the five training files: sources and joins, `[lead]` expressions (column references and the ops
+  `date_from_parts`, `minus_days`, `product`, `sum`), the `[outcome]`, `[[fields]]` (a target or a value map),
+  `as_of` / `test_from`. A **draft** (`outcome_confirmed = false`, e.g. from Haiku, ADR 0021) is refused by the
+  converter; a person reviews it and **confirms** it.
+- **Column profile** (`emva/ingest/profile.py`): name, type, share missing, distinct count, min / max and redacted
+  examples (`<email>`, `<phone>`, `<ip>`, `<name>`) of one source column; the only thing an LLM sees of the data.
+- **Converted dataset**: a dataset directory with `dataset.json` (`emva_dataset_format`, `as_of`, `test_from`,
+  counts, `coverage`) and `mapping.toml`. `emva.dataset_meta.dataset_dates` reads its dates; without the file the
+  constants apply (ADR 0020). Such datasets have no frozen baseline row (ADR 0022).
+- **Coverage**: per v2 design column (39), `data` (varies across the cleaned leads), `constant` (inputs mapped, no
+  variation) or `unfilled` (no input mapped). Placeholders for unmapped required fields (email
+  `<lead_id>@unmapped.invalid`, form_variant "A", lead_id `<name>-000001`) count as unfilled.
+- **Source-format scoring**: new leads in the source's own format scored through the confirmed mapping
+  (`emva.ingest.convert.convert_leads`, `python -m emva.ingest score`, Keel's Score page "Source format").
+
 ### Context layer and generator
 
 - **Context agent** (Phase 6, ADR 0014): `emva/context/agent.py`, one Haiku call per **lead card** (free
@@ -148,10 +166,14 @@ Claims policy: nothing from v1 is quoted externally. Internally, always with the
 | Planted context-only gap (true persona), v2 | +0.006 [+0.001, +0.009] AUC on the legacy test set; +0.002 [−0.001, +0.004] rolling | `reports/phase4.md` |
 | Customer-sized holdout (400 of 2,000 leads) | 95% CI width about 0.11 (± 0.055) | `reports/phase4.md` |
 
+Converted Kaggle datasets (Phase 9, **on public data**, pipeline defaults, nothing tuned; `reports/phase9.md`):
+Olist marketing funnel 3 of 39 design columns with data, mature-test AUC 0.553 [0.530, 0.574]; CRM sales
+opportunities and hotel bookings (bookings, not enquiries) 0 of 39, AUC 0.500 exactly (every lead scores the same).
+
 The mature test set spans 26 days, so its CI is about ±0.05, twice the legacy width; compare models on
 it with the paired bootstrap.
 
-## Status (2026-09-25)
+## Status (2026-09-26)
 
 | phase | state | branch | report |
 |---|---|---|---|
@@ -165,6 +187,7 @@ it with the paired bootstrap.
 | 6 context agent v2 | merged (9e3dfae) | `phase6-context-agent` | `reports/phase6.md` |
 | 7 production readiness document | merged (fa9bc4d) | `phase7-production-doc` | `reports/production.md`, ADR 0017 (Proposed) |
 | 8 hosted app (Keel) | on branch `app-ui`, not merged | `app-ui` | `reports/app.md`, ADR 0018/0019 (Proposed) |
+| 9 generic dataset converter, per-dataset dates, Keel Map & convert | on branch `claude/epic-edison-onl83z`, not merged | `claude/epic-edison-onl83z` | `reports/phase9.md`, ADRs 0020-0022 (Proposed) |
 
 Open question carried from Phase 1 (not yet ruled): should young `crm_lost` leads be 0 rather than NaN?
 It changes only `scores.csv` today.

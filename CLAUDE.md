@@ -112,6 +112,17 @@ python scripts/paraphrase_templates.py --check|--populate|--probe
 python scripts/v2_checks.py --data data/v2 --ref data/v1
 ```
 
+**Dataset converter (Phase 9).** A confirmed TOML mapping (`mappings/*.toml`) turns 1-3 foreign CSVs into the five
+training files plus `dataset.json`; drafts are refused (ADR 0021).
+```sh
+python -m emva.ingest draft --raw DIR --out FILE.toml [--name NAME] [--cache FILE] [--as-of DATE] [--test-from DATE]  # Haiku draft, needs .env
+python -m emva.ingest convert --mapping FILE.toml --raw DIR --out DATASET_DIR    # then python -m emva --data DATASET_DIR ...
+python -m emva.ingest score --mapping FILE.toml --raw FILE_OR_DIR --run RUN_DIR [--data DATASET_DIR] [--out FILE]
+```
+A dataset directory with `dataset.json` uses its own `as_of` / `test_from` in the pipeline and the report
+(`emva.dataset_meta.dataset_dates`; malformed = refused, ADR 0020) and gets no frozen baseline row (ADR 0022);
+without it the constants apply, so data/v1 and data/v2 are unchanged.
+
 **LLM access (ADR 0010).** `.env` at the repo root (gitignored, never committed, never printed) holds
 `ANTHROPIC_API_KEY` and `ANTHROPIC_WORKSPACE_ID`. The key is not workspace-scoped, so every client must
 send the `anthropic-workspace-id` header. Model for all LLM calls: `claude-haiku-4-5-20251001`.
@@ -134,7 +145,9 @@ Responses are cached on disk and the caches are committed; never fabricate LLM o
 ```
 baseline/            frozen POC: emva_score.py, context_agent.py, weights.csv, business_brief.md. Never edit.
 data/v1/             synthetic data + ground truth (eval/generator only). data/v2/ arrives with Phase 5.
+data/external/       gitignored: raw public downloads (raw/) and datasets converted from them (Phase 9)
 emva/constants.py    every constant (AS_OF, TEST_FROM, HORIZON_DAYS, CATS reference levels, patterns)
+emva/dataset_meta.py per-dataset as_of / test_from from <data>/dataset.json, else the constants (ADR 0020)
 emva/io.py           load CSVs, normalise CRM stages, join enrichment, won_at/first_contact_at; bot + duplicate cleaning
 emva/labels.py       LabelMode/LabelConfig, legacy label, label_source, won_within_h, horizon_label, maturity, split
 emva/features.py     FeatureSet; legacy and v2 bucketed features (indicators, name enrichment, boilerplate text)
@@ -148,12 +161,16 @@ emva/troas.py        tROAS eligibility calculator, python -m emva.troas (plan 3.
 emva/pipeline.py     run(): load -> clean -> label -> features -> design -> fit -> value -> summary
 emva/cli.py          label flags shared by python -m emva and the report;  emva/__main__.py: the CLI
 emva/context/        card.py (lead card), contract.py (enum judgments), agent.py (SDK runtime), cache.py, features.py (ctx_ dummies)
+emva/ingest/         Phase 9 converter: mapping.py (TOML schema), profile.py (redacted column profiles), draft.py (Haiku
+                     draft, ADR 0021), convert.py (deterministic conversion, coverage, convert_leads); python -m emva.ingest
 emva/eval/           bootstrap, metrics, regression, status_quo, report, label_study, ground_truth_reference,
                      collinearity, feature_selection, phase2_study, value_report (value transforms, click-ID coverage),
                      context_harness; Phase 4: hardening (entry point), rolling, subsampling, ceiling (reads
                      ground truth), calibration_decay, regularisation, interactions
 app/                 Keel, the hosted internal tool (Phase 8; docs/ARCHITECTURE.md section 8, reports/app.md):
-                     storage, validation, training + job, results, scoring, auth (pure) and main/ui/views/theme (Streamlit)
+                     storage, validation, training + job, results, scoring, ingest (Map & convert, Phase 9), auth (pure)
+                     and main/ui/views/theme (Streamlit)
+mappings/            committed dataset mappings (olist_funnel, crm_opportunities, hotel_bookings; hand-written)
 scripts/             check_baseline (make baseline), run_experiments, generate_data_v1, ground_truth_report, compare_to_v1
 tests/               pytest, one file per module + integration; conftest runs v1 in legacy and horizon mode
 reports/             one write-up per task; docs/ context layer (this set of files); docs/platform_contract.md (upload design)
@@ -182,7 +199,7 @@ single leads through `emva.scoring` and computes its charts with `emva.eval`; it
   compared canonically and top-k has a tie-averaged figure).
 - The path has spaces: quote it in shell, Makefile (`"$(PY)"`) and subprocess calls.
 
-## Status (2026-09-25)
+## Status (2026-09-26)
 
 | phase | state | branch | report |
 |---|---|---|---|
@@ -196,6 +213,7 @@ single leads through `emva.scoring` and computes its charts with `emva.eval`; it
 | 6 context agent v2 | merged (9e3dfae) | `phase6-context-agent` | `reports/phase6.md` |
 | 7 production readiness doc | merged (fa9bc4d) | `phase7-production-doc` | `reports/production.md`, ADR 0017 (Proposed) |
 | 8 hosted app (Keel) | on branch `app-ui`, not merged | `app-ui` | `reports/app.md`, ADR 0018/0019 (Proposed) |
+| 9 dataset converter + per-dataset dates + Keel Map & convert | on branch `claude/epic-edison-onl83z`, not merged | `claude/epic-edison-onl83z` | `reports/phase9.md`, ADRs 0020-0022 (Proposed) |
 
 ## Do not
 

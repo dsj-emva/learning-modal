@@ -5,6 +5,9 @@ score a single lead. Entry point `streamlit run app/main.py` (`make app` locally
 in the image). Module ownership is in `docs/ARCHITECTURE.md` section 8. All numbers in the screenshots come
 from the bundled v1 sample: **on simulated data**, not for external use.
 
+Phase 9 amends this page set: the results page drops the baseline row on converted datasets (ADR 0022), and
+Upload & train gains Map & convert, Score a lead a source-format mode (see `reports/phase9.md`).
+
 ## Sign in
 
 ![Sign in](app/login.png)
