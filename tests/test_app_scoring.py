@@ -95,9 +95,9 @@ def test_describe_transform(trained) -> None:
 @pytest.fixture(scope="module")
 def converted(app_converted):
     """``(bundle, dataset dir, mapping)`` of the run trained on the converted Olist-shaped fixture."""
-    _, run = app_converted
+    root, run = app_converted
     return load_bundle(Path(run.out_dir) / "model.joblib"), Path(run.dataset_path), \
-        scoring.run_mapping(run.dataset_path)
+        scoring.run_mapping(root, run.dataset)
 
 
 def _mql_csv() -> bytes:
@@ -109,7 +109,10 @@ def _mql_csv() -> bytes:
 def test_run_mapping(converted, app_trained) -> None:
     _, _, mapping = converted
     assert mapping.name == "olist_funnel" and mapping.outcome_confirmed
-    assert scoring.run_mapping(app_trained[1].dataset_path) is None  # the v1 format has no mapping
+    root, run = app_trained
+    assert scoring.run_mapping(root, run.dataset) is None  # the v1 format has no mapping
+    with pytest.raises(ValueError, match="no dataset named"):
+        scoring.run_mapping(root, "gone")
 
 
 def test_source_fields_are_the_submit_time_columns(converted) -> None:

@@ -173,7 +173,7 @@ def render() -> None:
     run = ui.pick_run(runs, key="score_run", label="Model (completed runs)")
     bundle = ui.bundle(run.run_id, str(Path(run.out_dir) / BUNDLE_FILE))
     try:
-        mapping = scoring.run_mapping(run.dataset_path)
+        mapping = scoring.run_mapping(root, run.dataset)
     except ValueError as e:
         mapping = None
         ui.html(C.callout(str(e), "warn", lead="The dataset's mapping.toml cannot be read; source format is off."))

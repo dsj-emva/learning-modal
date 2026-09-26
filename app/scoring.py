@@ -5,9 +5,10 @@ labels), collects a dict of values and calls ``score_form``, which builds the le
 scores it with ``score_leads`` / ``points_breakdown`` against the run's bundle, so the app never re-implements a
 feature. Session fields default to typical values because a blank one sets ``session_missing=yes`` (v2 features).
 
-Source format (Phase 9): when the run's dataset was converted with a mapping (``mapping.toml``, ``run_mapping``),
-leads can also be given as the source sends them: ``source_fields`` lists the raw columns the mapping reads at
-submit time (``DatasetMapping.source_columns(submit_time_only=True)``), ``frames_from_source_form`` /
+Source format (Phase 9): when the run's dataset was converted with a mapping (``mapping.toml``, read by
+``run_mapping`` through ``app.storage.read_mapping``), leads can also be given as the source sends them:
+``source_fields`` lists the raw columns the mapping reads at submit time
+(``DatasetMapping.source_columns(submit_time_only=True)``), ``frames_from_source_form`` /
 ``frames_from_source_uploads`` build raw frames from a form or uploaded CSVs, and ``score_source`` converts them
 with ``emva.ingest.convert_leads`` (the same field rules as the dataset's conversion) and scores them with the same
 ``score_leads`` / ``points_breakdown`` as the form.
@@ -21,7 +22,7 @@ from pathlib import Path
 import pandas as pd
 
 from app.results import feature_label
-from app.storage import MAPPING_FILE
+from app.storage import get_dataset, read_mapping
 from emva.features import SESSION_INPUTS
 from emva.ingest.convert import convert_leads, frames_from_bytes
 from emva.ingest.mapping import IGNORE, DatasetMapping, load_mapping
@@ -172,15 +173,16 @@ def _lead_score(bundle: ModelBundle, lead: pd.DataFrame, s: pd.Series, data: str
 
 # --- source format ---------------------------------------------------------------------------------------------------
 
-def run_mapping(dataset_path: str | Path) -> DatasetMapping | None:
-    """The confirmed mapping the dataset was converted with (its ``mapping.toml``), or None when it has none.
+def run_mapping(root: str | Path, dataset: str) -> DatasetMapping | None:
+    """The confirmed mapping dataset ``dataset`` (a run's ``Run.dataset``) was converted with, read from the store
+    under ``root`` (``app.storage.read_mapping``), or None when the dataset keeps no ``mapping.toml``.
 
-    Raises ``ValueError`` when the file is not a valid confirmed mapping (``load_mapping``).
+    Raises ``ValueError`` when the dataset is unknown (``app.storage.StorageError``) or the file is not a valid
+    confirmed mapping (``load_mapping``).
     """
-    path = Path(dataset_path) / MAPPING_FILE
-    if not path.is_file():
+    if not get_dataset(root, dataset).has_mapping:
         return None
-    return load_mapping(path.read_text(encoding="utf-8"), require_confirmed=True)
+    return load_mapping(read_mapping(root, dataset), require_confirmed=True)
 
 
 @dataclass(frozen=True)
