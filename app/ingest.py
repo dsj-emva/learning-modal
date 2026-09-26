@@ -20,6 +20,7 @@ import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from urllib.parse import urlparse
 
 import anthropic
 import pandas as pd
@@ -30,7 +31,7 @@ from emva.context.agent import MODEL_ID, make_client
 from emva.context.cache import ReplyCache
 from emva.context.contract import ContractError
 from emva.ingest.convert import DERIVED_COUNTS, convert, frames_from_bytes
-from emva.ingest.draft import draft_mapping, is_cached, source_name
+from emva.ingest.draft import default_dates, draft_mapping, is_cached, source_name
 from emva.ingest.mapping import (
     COLUMN_OP,
     CONFIDENCES,
@@ -378,9 +379,11 @@ class MappingChoice:
 
 
 def mapping_choices(root: str | Path, builtin_dir: Path = BUILTIN_MAPPINGS_DIR) -> list[MappingChoice]:
-    """Saved mappings (``app.storage.list_mappings``, newest dataset first), then the built-in ones by name."""
-    saved = [MappingChoice(f"saved:{m.name}", f"{m.name} · saved with dataset {m.name}"
-                           + (f" · {m.source_url}" if m.source_url else ""), m.path, False)
+    """Saved mappings (``app.storage.list_mappings``, newest dataset first; labelled with the dataset name and the
+    host of the mapping's ``source_url``), then the built-in ones by name."""
+    saved = [MappingChoice(f"saved:{m.name}", f"{m.name} · saved with a dataset"
+                           + (f" · {urlparse(m.source_url).hostname or m.source_url}" if m.source_url else ""),
+                           m.path, False)
              for m in list_mappings(root)]
     builtin = [MappingChoice(f"builtin:{p.stem}", f"{p.stem} · built-in", str(p), True)
                for p in sorted(builtin_dir.glob("*.toml"))]
@@ -433,9 +436,11 @@ def draft(profiles: list[ColumnProfile], root: str | Path, name: str,
           client_factory: Callable[[], anthropic.Anthropic] | None = None) -> DraftOutcome:
     """Draft a mapping called ``name`` from ``profiles`` (``emva.ingest.draft_mapping``; only profiles are sent).
 
-    A cached draft needs no client. Otherwise ``client_factory`` (default ``emva.context.agent.make_client``, looked up
-    at call time) builds one; its ``SystemExit`` for missing keys becomes ``no_key``. API errors, repeated transport errors, a reply that breaks the contract, and
-    dates that cannot be derived are logged and returned as ``error``; nothing is swallowed silently.
+    A cached draft needs no client. Otherwise ``client_factory`` (default ``emva.context.agent.make_client``, looked
+    up at call time) builds one; its ``SystemExit`` for missing keys becomes ``no_key``. API errors, repeated
+    transport errors and a reply that breaks the contract are logged and returned as ``error``. The dates are derived
+    separately (``emva.ingest.draft.default_dates``); when they cannot be, the draft keeps ``PLACEHOLDER_DATES`` and
+    ``dates_note`` says why. Nothing is swallowed silently: any other error propagates.
     """
     cache = draft_cache(root)
     cached = is_cached(profiles, cache)
@@ -447,16 +452,17 @@ def draft(profiles: list[ColumnProfile], root: str | Path, name: str,
             log.warning("mapping draft not requested: %s", e)
             return DraftOutcome(None, error=NO_KEY_MESSAGE, no_key=True)
     try:
-        mapping = draft_mapping(profiles, client, cache, name)
+        mapping = draft_mapping(profiles, client, cache, name, *PLACEHOLDER_DATES)
     except (anthropic.APIError, RuntimeError, ContractError) as e:
         log.exception("mapping draft failed")
         return DraftOutcome(None, from_cache=cached, error=f"The draft failed ({type(e).__name__}: {e}). Fill the "
                                                           "table by hand, or load a saved mapping.")
-    except ValueError as e:  # the reply is cached and valid, but default_dates cannot read created_at's dates
+    try:
+        as_of, test_from = default_dates(mapping, profiles)
+    except ValueError as e:  # e.g. the column drafted as created_at is not an ISO date column
         log.warning("mapping draft has no derivable dates: %s", e)
-        mapping = draft_mapping(profiles, None, cache, name, *PLACEHOLDER_DATES)
         return DraftOutcome(mapping, from_cache=cached, dates_note=f"{e}. Enter as_of and test_from below.")
-    return DraftOutcome(mapping, from_cache=cached)
+    return DraftOutcome(replace(mapping, as_of=as_of, test_from=test_from), from_cache=cached)
 
 
 # --- convert ---------------------------------------------------------------------------------------------------------
@@ -464,7 +470,8 @@ def draft(profiles: list[ColumnProfile], root: str | Path, name: str,
 @dataclass(frozen=True)
 class Conversion:
     """A conversion: ``files`` (the training files, ``dataset.json``, ``mapping.toml`` and any uploaded
-    ``status_quo_rules.json``, ready for ``save_dataset``), ``meta`` (``dataset.json`` parsed) and ``report`` (``validate_files`` of ``files``)."""
+    ``status_quo_rules.json``, ready for ``save_dataset``), ``meta`` (``dataset.json`` parsed) and ``report``
+    (``validate_files`` of ``files``)."""
 
     files: dict[str, bytes]
     meta: dict

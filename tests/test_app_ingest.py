@@ -155,7 +155,8 @@ def test_mapping_choices_list_saved_then_builtin(tmp_path: Path) -> None:
     conv = ingest.convert_raw(ingest.raw_frames(olist_raw()), _olist(), "2026-09-26")
     storage.save_dataset(tmp_path, "olist-a", conv.files)
     choices = ingest.mapping_choices(tmp_path)
-    assert choices[0].key == "saved:olist-a" and not choices[0].builtin and "kaggle.com" in choices[0].label
+    assert choices[0].key == "saved:olist-a" and not choices[0].builtin
+    assert choices[0].label == "olist-a · saved with a dataset · www.kaggle.com"
     assert ingest.load_choice(choices[0]) == _olist()  # the saved mapping is the confirmed one, unchanged
     assert ingest.missing_files(_olist(), {OLIST_MQL: pd.DataFrame()}) == [OLIST_DEALS]
 
@@ -283,3 +284,14 @@ def test_draft_whose_dates_cannot_be_derived_asks_for_them(tmp_path: Path, frame
     out = ingest.draft(ingest.profile(frames), tmp_path, "x", client_factory=lambda: client)
     assert out.mapping is not None and out.error is None and "not an ISO date column" in out.dates_note
     assert (out.mapping.as_of, out.mapping.test_from) == ingest.PLACEHOLDER_DATES
+
+
+def test_draft_lets_other_value_errors_through(tmp_path: Path, frames: dict[str, pd.DataFrame],
+                                              monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only the dates are allowed to fail softly; any other ValueError is not mistaken for a date problem."""
+    def broken(*args: object, **kwargs: object) -> None:
+        raise ValueError("not a date problem")
+
+    monkeypatch.setattr(ingest, "draft_mapping", broken)
+    with pytest.raises(ValueError, match="not a date problem"):
+        ingest.draft(ingest.profile(frames), tmp_path, "x", client_factory=lambda: FakeClient())
