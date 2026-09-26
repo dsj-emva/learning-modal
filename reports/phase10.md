@@ -1243,7 +1243,26 @@ list are good; the dates must be rewritten by the reviewer.
 
 ### Keel
 
-PENDING: the Keel run (live "Draft mapping with AI" press, cache hit, screenshot) is in progress.
+Keel run locally (`streamlit run app/main.py`, `APP_PASSWORD` generated in the shell and never printed, `DATA_DIR` a
+fresh scratch directory, so its draft cache started empty), driven with Playwright (Chromium from
+`/opt/pw-browsers`). The two raw Olist files were uploaded as primary and joined file.
+
+- First press of "Draft mapping with AI": a real request, about 10 s; the page said "AI draft by
+  claude-haiku-4-5-20251001". `DATA_DIR/ingest/draft_cache.json` then held exactly one entry.
+- Second press: about 2.6 s, caption "A cached draft exists for these columns: no model call", origin "AI draft by
+  claude-haiku-4-5-20251001 (from the draft cache: no request made)"; the cache file byte-identical (sha256).
+- Screenshot `phase10/08-live-draft.png`: taken after a later cached press in a fresh app session on the same
+  `DATA_DIR` (Streamlit scrolls inside its own container, so the first capture missed the review table); the cache
+  was unchanged by that press too.
+
+![Keel: the live Olist draft, served from the cache on the second press](phase10/08-live-draft.png)
+
+Keel's profile text is not byte-identical to the CLI's (profile hash `4db35578...` vs `84e17110...`: the upload
+path profiles the uploaded frames), so Keel made its own request and got a somewhat different reply. It has the
+same sources, `lead_id`, `created_at`, outcome and 8 extras (the same won-only closed-deal columns, D25 applies), but
+it leaves `won_at` unmapped and marks `declared_monthly_revenue` `ignore` at low confidence, so its derived `as_of`
+is 2018-06-01 instead of 2018-11-15. Temperature 0 on a slightly different input is no guarantee of the same draft,
+which is one more reason every draft is reviewed. Keel's cache lives under `DATA_DIR` and is not committed.
 
 ## Review
 
