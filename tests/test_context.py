@@ -352,6 +352,23 @@ def test_load_env_var_reads_the_repo_dotenv(tmp_path, monkeypatch):
     assert load_env_var("EMVA_TEST_VAR", repo / "emva") == "from-env"
 
 
+def test_anthropic_key_falls_back_to_the_emva_alias(tmp_path, monkeypatch):
+    from emva.env import load_env_var
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("EMVA_ANTHROPIC_API_KEY", raising=False)
+    repo = make_repo(tmp_path / "repo")
+    assert load_env_var("ANTHROPIC_API_KEY", repo / "emva") is None
+    (repo / ".env").write_text("EMVA_ANTHROPIC_API_KEY=from-dotenv-alias\n")
+    assert load_env_var("ANTHROPIC_API_KEY", repo / "emva") == "from-dotenv-alias"
+    monkeypatch.setenv("EMVA_ANTHROPIC_API_KEY", "from-env-alias")
+    assert load_env_var("ANTHROPIC_API_KEY", repo / "emva") == "from-env-alias"
+    (repo / ".env").write_text("ANTHROPIC_API_KEY=from-dotenv\n")      # the real name wins, even from .env
+    assert load_env_var("ANTHROPIC_API_KEY", repo / "emva") == "from-dotenv"
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")                           # empty counts as unset
+    assert load_env_var("ANTHROPIC_API_KEY", repo / "emva") == "from-dotenv"
+    assert load_env_var("EMVA_TEST_VAR", repo / "emva") is None           # names without an alias do not fall back
+
+
 def test_dotenv_search_stops_at_the_repo_root(tmp_path):
     from emva.env import find_dotenv
     (tmp_path / ".env").write_text("ANTHROPIC_API_KEY=outside\n")      # above the repo: never read
