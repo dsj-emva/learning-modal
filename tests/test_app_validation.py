@@ -155,3 +155,68 @@ def test_rules_optional_but_checked(good: dict[str, bytes]) -> None:
 def test_garbage_csv_never_raises(good: dict[str, bytes]) -> None:
     r = validate_files({**good, "historical_leads.csv": b"\xff\xfe\x00garbage", "companies.csv": b""})
     assert not r.ok and {i.file for i in r.errors} >= {"historical_leads.csv", "companies.csv"}
+
+
+# --- a converted dataset's metadata files (Phase 9) ------------------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def converted() -> dict[str, bytes]:
+    """The hand-built Olist-shaped fixture converted with the committed mappings/olist_funnel.toml
+    (``emva.ingest.convert``), with that mapping.toml and the converter's dataset.json."""
+    from emva.ingest.convert import convert, frames_from_bytes
+    from emva.ingest.mapping import load_mapping
+
+    from conftest import REPO, olist_raw
+
+    text = (REPO / "mappings" / "olist_funnel.toml").read_text(encoding="utf-8")
+    return {**convert(frames_from_bytes(olist_raw()), load_mapping(text)), "mapping.toml": text.encode()}
+
+
+def _warnings(r: ValidationReport, file: str) -> list[str]:
+    return [i.message for i in r.warnings if i.file == file]
+
+
+def test_converted_files_with_metadata_are_valid(converted: dict[str, bytes]) -> None:
+    r = validate_files(converted)
+    assert r.ok, r.errors
+    assert any("leaves out the status-quo row" in m for m in _warnings(r, "status_quo_rules.json"))
+    assert not any("snapshot" in m for m in _warnings(r, "historical_leads.csv"))
+
+
+def test_bad_dataset_json_is_an_error(converted: dict[str, bytes]) -> None:
+    for content, text in ((b"not json", "not valid JSON"), (b'{"as_of": "2018-11-15"}', "'as_of' and 'test_from'"),
+                          (b'{"as_of": "2018-01-01", "test_from": "2018-03-01"}', "after as_of"),
+                          (b'{"as_of": "2018-11-15", "test_from": "2018-3-1"}', "test_from must be")):
+        _find(validate_files({**converted, "dataset.json": content}), "dataset.json", None, text)
+
+
+def test_unconfirmed_or_broken_mapping_is_an_error(converted: dict[str, bytes]) -> None:
+    text = converted["mapping.toml"].decode()
+    draft = text.replace("outcome_confirmed = true", "outcome_confirmed = false").encode()
+    _find(validate_files({**converted, "mapping.toml": draft}), "mapping.toml", None, "outcome_confirmed is false")
+    _find(validate_files({**converted, "mapping.toml": b"name = "}), "mapping.toml", None, "not valid TOML")
+
+
+def test_one_metadata_file_without_the_other_is_a_note(converted: dict[str, bytes]) -> None:
+    alone = {k: v for k, v in converted.items() if k != "dataset.json"}
+    r = validate_files(alone)
+    assert r.ok and any("without dataset.json" in m for m in _warnings(r, "mapping.toml"))
+    r = validate_files({k: v for k, v in converted.items() if k != "mapping.toml"})
+    assert r.ok and any("without mapping.toml" in m for m in _warnings(r, "dataset.json"))
+
+
+def test_snapshot_warning_uses_the_datasets_own_as_of(converted: dict[str, bytes]) -> None:
+    meta = json.loads(converted["dataset.json"])
+    early = {**converted, "dataset.json": json.dumps({**meta, "as_of": "2018-04-15",
+                                                      "test_from": "2018-03-01"}).encode()}
+    r = validate_files(early)
+    msgs = _warnings(r, "historical_leads.csv")
+    assert any("after 2018-04-15, the dataset's snapshot date (dataset.json)" in m for m in msgs), msgs
+    # without dataset.json the pipeline's AS_OF (2026) applies, so none of these 2017-18 leads is "after" it
+    plain = validate_files({k: v for k, v in converted.items() if k not in ("dataset.json", "mapping.toml")})
+    assert not any("snapshot date" in m for m in _warnings(plain, "historical_leads.csv"))
+
+
+def test_ground_truth_is_still_refused_next_to_metadata(converted: dict[str, bytes]) -> None:
+    r = validate_files({**converted, "ground_truth_labels.csv": b""})
+    _find(r, "ground_truth_labels.csv", None, "ground-truth")

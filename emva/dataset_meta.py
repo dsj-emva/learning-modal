@@ -45,30 +45,41 @@ def check_test_from(value: object) -> str:
     return value
 
 
+def parse_dataset_meta(text: str, where: str = DATASET_META_FILE) -> dict:
+    """The converter's metadata from the text of a ``dataset.json`` (``where`` names it in errors) as a dict.
+
+    Raises ``ValueError`` naming ``where`` when the text is not a JSON object, lacks ``as_of`` or ``test_from``,
+    carries another ``FORMAT_KEY`` version, has a malformed date (``parse_as_of``, ``check_test_from``) or a
+    ``test_from`` after ``as_of``.
+    """
+    try:
+        meta = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"{where} is not valid JSON: {e}") from e
+    if not isinstance(meta, dict) or not {"as_of", "test_from"} <= meta.keys():
+        raise ValueError(f"{where} must be a JSON object with 'as_of' and 'test_from' (ADR 0020); the name "
+                         "dataset.json is reserved for the converter's metadata")
+    if meta.get(FORMAT_KEY, FORMAT_VERSION) != FORMAT_VERSION:
+        raise ValueError(f"{where}: {FORMAT_KEY} {meta[FORMAT_KEY]!r}, expected {FORMAT_VERSION}")
+    try:
+        as_of, test_from = parse_as_of(meta["as_of"]), check_test_from(meta["test_from"])
+    except ValueError as e:
+        raise ValueError(f"{where}: {e}") from e
+    if pd.Timestamp(test_from, tz="UTC") > as_of:
+        raise ValueError(f"{where}: test_from {test_from} is after as_of {as_of.isoformat()}")
+    return meta
+
+
 def read_dataset_meta(data: str | Path) -> dict | None:
     """The converter's ``dataset.json`` of the dataset directory ``data`` as a dict (dates, counts, ``coverage``;
     see ``emva.ingest.convert``), or None when the directory has no such file.
 
-    Raises ``ValueError`` naming the file when it is not a JSON object, lacks ``as_of`` or ``test_from``, carries
-    another ``FORMAT_KEY`` version, has a malformed date (``parse_as_of``, ``check_test_from``) or a ``test_from``
-    after ``as_of``.
+    Raises ``ValueError`` naming the file for anything ``parse_dataset_meta`` refuses.
     """
     path = Path(data) / DATASET_META_FILE
     if not path.is_file():
         return None
-    meta = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(meta, dict) or not {"as_of", "test_from"} <= meta.keys():
-        raise ValueError(f"{path} must be a JSON object with 'as_of' and 'test_from' (ADR 0020); the name "
-                         "dataset.json is reserved for the converter's metadata")
-    if meta.get(FORMAT_KEY, FORMAT_VERSION) != FORMAT_VERSION:
-        raise ValueError(f"{path}: {FORMAT_KEY} {meta[FORMAT_KEY]!r}, expected {FORMAT_VERSION}")
-    try:
-        as_of, test_from = parse_as_of(meta["as_of"]), check_test_from(meta["test_from"])
-    except ValueError as e:
-        raise ValueError(f"{path}: {e}") from e
-    if pd.Timestamp(test_from, tz="UTC") > as_of:
-        raise ValueError(f"{path}: test_from {test_from} is after as_of {as_of.isoformat()}")
-    return meta
+    return parse_dataset_meta(path.read_text(encoding="utf-8"), str(path))
 
 
 def dataset_dates(data: str | Path) -> tuple[pd.Timestamp, str]:
@@ -86,4 +97,4 @@ def has_dataset_meta(data: str | Path) -> bool:
 
 
 __all__ = ["DATASET_META_FILE", "FORMAT_KEY", "FORMAT_VERSION", "check_test_from", "dataset_dates",
-           "has_dataset_meta", "parse_as_of", "read_dataset_meta"]
+           "has_dataset_meta", "parse_as_of", "parse_dataset_meta", "read_dataset_meta"]

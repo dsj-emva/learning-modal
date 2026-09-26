@@ -84,3 +84,24 @@ def app_trained(tmp_path_factory):
     proc = training.start_training(root, run, python=sys.executable, report_resamples=APP_REPORT_RESAMPLES)
     assert proc.wait(timeout=180) == 0, Path(run.log_path).read_text()
     return root, storage.get_run(root, run.run_id)
+
+
+# --- app (Phase 9): a converted dataset trained end to end -----------------------------------------------------------
+INGEST_FIXTURES = REPO / "tests" / "fixtures" / "ingest"
+OLIST_MQL, OLIST_DEALS = "olist_marketing_qualified_leads_dataset.csv", "olist_closed_deals_dataset.csv"
+OLIST_COPIES = 8
+
+
+def olist_raw(copies: int = OLIST_COPIES) -> dict[str, bytes]:
+    """The hand-built Olist-shaped fixture (tests/fixtures/ingest/olist_funnel, 40 MQLs, 12 deals) repeated ``copies``
+    times with ``-<k>`` appended to every ``mql_id`` in both files, so it clears the app's 200-lead minimum and the
+    value model has deals to fit; primary file first."""
+    import pandas as pd
+
+    raw = INGEST_FIXTURES / "olist_funnel"
+    out = {}
+    for name in (OLIST_MQL, OLIST_DEALS):
+        df = pd.read_csv(raw / name, dtype=str)
+        out[name] = pd.concat([df.assign(mql_id=df.mql_id + f"-{k}") for k in range(copies)]).to_csv(
+            index=False).encode()
+    return out
