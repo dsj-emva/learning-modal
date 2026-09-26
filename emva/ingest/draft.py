@@ -266,7 +266,8 @@ def check_reply(obj: object, profiles: list[ColumnProfile]) -> dict[str, Any]:
     """``obj`` if it is a reply the profiles support (it builds a valid draft mapping); ``ContractError`` otherwise.
 
     The server enforces the schema's shape and enums; this adds everything the schema cannot say (files and columns
-    exist, the primary file not also joined and no file joined twice, one column per role, created_at present, targets not repeated).
+    exist, the primary file not also joined and no file joined twice, one column per role, created_at present,
+    targets not repeated).
     """
     if not isinstance(obj, dict):
         raise ContractError(f"reply is {type(obj).__name__}, not a JSON object")

@@ -846,7 +846,7 @@ def test_dump_escapes_what_toml_forbids_raw_and_refuses_lone_surrogates(mapping:
         dump_mapping(replace(mapping, review={"created_at": Review("broken \ud800")}))
 
 
-# --- the committed live drafts (Phase 10 live draft check) -------------------------------------------------------------
+# --- the committed live drafts (Phase 10 live draft check) ----------------------------------------------------------
 
 @pytest.mark.parametrize("name", ["olist", "crm_opportunities", "hotel_bookings"])
 def test_committed_live_draft_stays_an_unconfirmed_draft(name: str) -> None:
