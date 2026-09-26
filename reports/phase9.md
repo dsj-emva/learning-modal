@@ -12,8 +12,8 @@ exports, not simulated. They say how well the fixed schema covers these sources,
 real B2B enquiries. The hotel dataset holds **bookings, not enquiries**. The v1/v2 numbers quoted under
 Verification are on simulated data, as before.
 
-ADRs: 0020 (per-dataset dates), 0021 (the LLM drafts mappings only), 0022 (results without a baseline). All three
-are Proposed.
+ADRs: 0020 (per-dataset dates), 0021 (the LLM drafts mappings only), 0022 (results without a baseline) and 0023
+(the conversion rulings R22-R40, including the review fix round). All four are Proposed.
 
 ## What was built
 
@@ -38,7 +38,7 @@ are Proposed.
 python -m emva.ingest draft --raw data/external/raw/olist --out mappings/olist_funnel.toml --name olist_funnel \
     [--cache FILE] [--as-of DATE] [--test-from DATE]
 # 2. a person reviews the TOML, fixes it, and sets outcome_confirmed = true
-# 3. convert (refuses a draft); prints the coverage summary
+# 3. convert (refuses a draft); prints the coverage summary and every derived / adjusted count
 python -m emva.ingest convert --mapping mappings/olist_funnel.toml --raw data/external/raw/olist --out data/external/olist_funnel
 # 4. train and report as for any dataset (dates come from dataset.json)
 python -m emva --data data/external/olist_funnel --out runs/olist_funnel
@@ -60,14 +60,16 @@ On **Upload & train**, section 01 "Map & convert a foreign export":
    `DATA_DIR/ingest/draft_cache.json`), "Use saved mapping" (the `mapping.toml` of an earlier dataset, or a built-in
    one from `mappings/`, with no model call), or "Fill by hand" (every column set to ignore).
 4. **1d Review the mapping.** Set the name, `as_of`, `test_from`, source URL, licence and join columns. Then map
-   the lead columns (created_at is required; won_at is optional, a win without one is dated at close_at), choose the outcome kind and column, and fill the outcome
-   value table. The fields table shows each row's reason and confidence, with low-confidence rows marked for checking.
+   the lead columns (created_at is required; won_at is optional, and a win without one is dated at close_at),
+   choose the outcome kind and column, and fill the outcome value table. The fields table shows each row's reason and confidence, with low-confidence rows marked for checking.
    Value maps are read-only here. The whole mapping can be edited as TOML, which is where value maps and derived
    expressions are changed.
-5. **1e Confirm and convert.** Tick "Outcome mapping confirmed" and press Convert. The page then shows the coverage
-   cards (signals with data / constant / unfilled, leads, dates) and a per-signal coverage table.
+5. **1e Confirm and convert.** Optionally add a `status_quo_rules.json` (fix round, R38). Tick "Outcome mapping
+   confirmed" and press Convert. The page then shows the coverage cards (signals with data / constant / unfilled,
+   leads, dates), a "Derived during conversion" list of the non-zero derived or adjusted counts (R37) and a
+   per-signal coverage table.
 6. **03 Check results**, **Preview** and **04 Save as a dataset.** These are the same validation and store as an
-   EMVA-format upload. `mapping.toml` and `dataset.json` are saved with the dataset.
+   EMVA-format upload. `mapping.toml`, `dataset.json` and any uploaded rules are saved with the dataset.
 7. **05 Train a model.** Train as before. The job runs the CLI and then the standard report, which has no baseline
    on a converted dataset.
 
@@ -185,7 +187,8 @@ all three datasets (constant on the training rows, see each report's collinearit
   `search_term=not_google` (6,414). Fitted weights: `channel=meta` −13 points, `search_term=not_google` −7,
   `channel=organic_direct` +6. Everything else is 0.
 - CRM ordering: 8,000 ties were separated (contacted_at = created_at), and one win dated before its lead was
-  reordered.
+  reordered (lead `b91cf8812365f50ff4bda4bcd6206b05`). Since the fix round (R37) that lead is named in
+  `dataset.json` (`crm_times_reordered_ids`) and Keel's validation shows it as a warning.
 
 <details>
 <summary>Standard report: olist_funnel (on public data)</summary>
@@ -981,8 +984,9 @@ the defaults; test AUC 0.553.*
 `landing_page_id`), P(close) 7.5% against a training win rate of 6.8%. The warning notes that no session data
 exists, so `session_missing` is set.*
 
-(The sidebar's fixed caption "Figures from the bundled sample are on simulated data" does not apply to these
-screens. Their numbers are on public data.)
+(When these screenshots were taken, the sidebar's fixed caption "Figures from the bundled sample are on simulated
+data" did not apply to these screens: their numbers are on public data. The fix round changed the caption to cover
+both cases, and the results page of a converted dataset now says its numbers are not simulated.)
 
 ## Draft path: pending a real API run
 
@@ -1001,7 +1005,11 @@ no horizon label.
 
 ## Verification
 
-- Tests: **736 passed, 1 skipped** on 19d9b37 (610 passed + 1 skipped at the start of the phase).
+- Tests: **751 passed, 1 skipped** after the review fix round (736 passed + 1 skipped on 19d9b37 before it; 610
+  passed + 1 skipped at the start of the phase).
+- Fix round: `python -m emva.ingest convert` of the three real sources into scratch directories succeeds; the
+  training files are byte-identical to the Phase 9 conversion, and `dataset.json` differs only by
+  `crm_times_reordered_ids` and the CRM licence.
 - `make baseline`: unchanged. AUC 0.814, Brier 0.1006, top-20% wins 0.571, revenue 0.795, canonical weights
   (byte-identical baseline and emva weights, and scores on this machine). These figures are on simulated data.
 - `make report` on data/v1 and on data/v2 (`DATA=data/v2`): output byte-identical before and after the phase
@@ -1041,4 +1049,59 @@ R22 onward continue `reports/app.md` (R17-R21).
 - **R33**: the scope was split into (a) library, CLI and dates and (b) Keel, as the brief allowed. Both shipped on
   one branch (with `phase9-app-base` merged into it at 850353e).
 
-The ADRs for these rulings are 0020 (R23), 0021 (the draft path) and 0022 (R22), all Proposed.
+Fix round after the two-axis review (below):
+
+- **R34** (ADR 0022 decision 5): the standard report omits the baseline row only on a dataset with `dataset.json`.
+  On data/v1, data/v2 and v1-format uploads a failing baseline script raises again (the Phase 9 code had dropped
+  the row on any failure). The Keel results page keeps logging and noting a failure.
+- **R35**: the converter never reads an evaluation-only file. The name check lives in
+  `emva.eval.evaluation_only.is_evaluation_only`, so the grep rule still returns only `emva/eval/` lines. The
+  draft CLI refuses ground truth (data/v1 holds `ground_truth_labels.csv`) and more than 3 CSVs before reading
+  anything; `Source.file` must be a plain `.csv` name (no `../`, no directory, not ground truth);
+  `frames_from_bytes` and the score CLI refuse ground-truth names.
+- **R36**: `won_at` is optional, as the spec says. A Won lead without one is dated at its `close_at`; a Won lead
+  with neither is refused with example lead ids. The draft contract and prompt, and Keel's required roles, follow.
+- **R37**: conversion adjustments stay but are shown. `python -m emva.ingest convert` prints every derived count;
+  Keel's coverage card lists the non-zero ones under "Derived during conversion"; `dataset.json` carries the first
+  10 reordered lead ids (`crm_times_reordered_ids`) and validation warns with them (Olist: 1 lead).
+- **R38**: Map & convert takes an optional `status_quo_rules.json`, validated like an EMVA-format upload and saved
+  with the dataset, so a converted dataset can have a status-quo row.
+- **R39**: name redaction looks at the last token of the column name (`manager`, `seller`, `account_owner`,
+  `assigned_to` are people; `lead_id`, `lead_type`, `company_name` are not) and at the values (2-3 capitalised
+  words with distinct last words). It is fail safe: a two-word company name such as "Acme Corporation" may be
+  redacted. On the three real sources this hides `sales_agent` and `manager` (CRM) and nothing useful: `origin`,
+  `lead_type`, `deal_stage`, `sector`, `product`, `hotel`, `market_segment`, `deposit_type` keep their examples.
+- **R40**: licences from the Kaggle dataset metadata: CRM opportunities Apache 2.0 (was "unverified"), Olist
+  CC BY-NC-SA 4.0, hotel CC BY 4.0. **Olist is non-commercial: its data and numbers must not be used commercially
+  or quoted in marketing.**
+
+The ADRs for these rulings are 0020 (R23), 0021 (the draft path), 0022 (R22, R34) and 0023 (R22-R40 collected), all
+Proposed.
+
+## Review
+
+Two reviews of the branch (standards and spec) found no blockers. The fix round closed every should-fix item and
+nit:
+
+- **Standards**: the ground-truth path through the ingest CLI (R35); a baseline failure swallowed on v1/v2 (R34);
+  a lone-surrogate / DEL round-trip gap in `dump_mapping`; a module-level `assert` and an unreachable
+  `raise AssertionError` (now a `RuntimeError` and a loop that needs none); a lenient `parse_as_of` ("2018" was
+  accepted; now `YYYY-MM-DD` or a full ISO datetime); `app.draft` treating every `ValueError` as a date problem
+  (dates are now derived separately); `read_mapping` used only by tests (now used by `app.scoring.run_mapping`);
+  a corrupt `dataset.json` crashing `init_root` (now logged and skipped); reasons rendered as markdown (now plain
+  text); lines over 120 columns; docs drift (ADR 0022 consequences, the ADR index's branch column, a nonexistent
+  `reconcile` in `docs/ARCHITECTURE.md`, the `main()` docstring).
+- **Spec**: `won_at` required where the spec says optional (R36); silent adjustments (R37); no status-quo row
+  possible on a Keel conversion (R38); names leaking through the profile (`manager` in the CRM's
+  `sales_teams.csv`, R39); the CRM licence unverified (R40); the sidebar's "on simulated data" caption on converted
+  datasets (it now covers public data, and the results page of a converted dataset says so).
+
+Still open (follow-ups, not fixed here):
+
+- **Live API draft run: PENDING.** No API key in this environment; the draft path is covered by fake-client tests
+  only (see "Draft path" above).
+- **Join keys must share a name** in the primary and the joined file; a rename in the mapping would lift this.
+- **`convert_leads` refuses a whole batch on one bad row**, consistent with R25 (refuse, never drop); a per-row
+  report for source-format scoring is a follow-up.
+- **CRM and hotel exercise the plumbing only**: 0 of 39 signals with data (the finding above); the generic feature
+  set is the next task.
