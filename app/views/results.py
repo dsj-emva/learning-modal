@@ -12,6 +12,7 @@ from app import components as C
 from emva.dataset_meta import dataset_dates
 from emva.features import FeatureSet
 from emva.generic import GenericEncoder
+from emva.labels import LabelMode
 from emva.persist import BUNDLE_FILE
 
 TEST_SET_LABELS = {"mature": "Mature leads (horizon labels)", "legacy": "Legacy labels (frozen POC)"}
@@ -110,8 +111,8 @@ def _generic(run: storage.Run, test_set: str) -> None:
                       "generic (v2 plus the extra features). AUC difference on shared bootstrap resamples; an "
                       "interval that excludes 0 is a real difference, not noise."))
     try:
-        g = ui.generic_section(run.run_id, run.out_dir, run.dataset_path, run.args.get("label_mode", "horizon"),
-                               test_set)
+        g = ui.generic_section(run.run_id, run.out_dir, run.dataset_path,
+                               run.args.get("label_mode", LabelMode.HORIZON.value), test_set)
     except ValueError as e:
         ui.html(C.callout(str(e), "bad", lead="The comparison cannot be computed:"))
         return

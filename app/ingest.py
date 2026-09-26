@@ -283,7 +283,6 @@ def review_frame(f: MappingForm) -> pd.DataFrame:
     ``kind`` and ``name`` (the feature's, "" otherwise); ``check`` ("check" when the field's or the feature's confidence
     is low, for highlighting)."""
     feats = _plain_features(f)
-    rows = []
 
     def row(source: str, target: str, field_review: Review | None) -> dict[str, object]:
         fm = feats.get(source)
@@ -398,11 +397,10 @@ def _features_from_table(f: MappingForm, edited: Mapping[str, pd.Series],
         r = edited.get(fm.source.column)
         if r is None:
             out.append(fm)
-        elif _ticked(r):
+            taken.add(fm.name)
+        elif _ticked(r):  # an unticked row drops the feature
             out.append(_feature_from_row(r, fm.source.column, fm, reviews.get(fm.source.column), taken))
-        else:
-            continue
-        taken.add(out[-1].name)
+            taken.add(out[-1].name)
     for source, r in edited.items():
         if source not in plain and _ticked(r):
             out.append(_feature_from_row(r, source, None, reviews.get(source), taken))

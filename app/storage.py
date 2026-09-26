@@ -32,6 +32,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from emva.generic import EXTRA_FEATURES_FILE
+
 log = logging.getLogger(__name__)
 
 REPO_ROOT: Path = Path(__file__).resolve().parents[1]
@@ -41,12 +43,11 @@ SAMPLE_DATASET_PATH: Path = REPO_ROOT / "data" / "v1"
 
 LEADS_FILE, CRM_FILE, COMPANIES_FILE, PEOPLE_FILE, RULES_FILE = (
     "historical_leads.csv", "crm_history.csv", "companies.csv", "people.csv", "status_quo_rules.json")
-# The generic feature set's raw extras (``emva.generic.EXTRA_FEATURES_FILE``, Phase 10), written by the converter when
-# the mapping declares [[features]]. It is training data (the generic feature set learns from it), so it is a training
+# The generic feature set's raw extras (``EXTRA_FEATURES_FILE``, imported from emva.generic, Phase 10), written by the
+# converter when the mapping declares [[features]]. It is training data (the generic feature set learns from it), so it is a training
 # file, counted in ``Dataset.rows``; its columns are declared in the converter's dataset.json, so only a converted
 # dataset carries it (the EMVA-format upload has no slot for it) and ``app.validation`` refuses it without that
 # declaration (Phase 10 (b)).
-EXTRA_FEATURES_FILE: str = "extra_features.csv"
 # Every file a dataset may hold; the pipeline needs the first three, people.csv is never read by the model, the rules
 # only feed the status-quo benchmark and the extras only the generic feature set.
 TRAINING_FILES: tuple[str, ...] = (LEADS_FILE, CRM_FILE, COMPANIES_FILE, PEOPLE_FILE, RULES_FILE, EXTRA_FEATURES_FILE)
