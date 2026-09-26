@@ -71,8 +71,8 @@ MAX_OUTCOME_VALUES: int = 50
 # Dates a draft is built with when its own cannot be derived; the page blanks them for the person to fill.
 PLACEHOLDER_DATES: tuple[str, str] = ("2000-01-02", "2000-01-01")
 NO_KEY_MESSAGE: str = ("The Anthropic API key is not configured on this server (ANTHROPIC_API_KEY or "
-                       "EMVA_ANTHROPIC_API_KEY, and ANTHROPIC_WORKSPACE_ID), so no draft can be requested. Fill the table by hand, or load a "
-                       "saved mapping.")
+                       "EMVA_ANTHROPIC_API_KEY, and ANTHROPIC_WORKSPACE_ID), so no draft can be requested. Fill the "
+                       "table by hand, or load a saved mapping.")
 SAVED_HEADER: str = "Confirmed in Keel (Map & convert) on {date}; the outcome mapping was reviewed by a person."
 
 
