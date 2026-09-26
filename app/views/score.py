@@ -116,6 +116,15 @@ def _source_form(mapping: DatasetMapping, bundle: ModelBundle, run_id: str) -> d
     return values if submitted else None
 
 
+def _warn_unseen(unseen: dict[str, str]) -> None:
+    """One warning per blank extra that no training lead had missing (``scoring.missing_unseen``): it scores as its
+    reference level, not as a learned ``missing``."""
+    for name, reference in unseen.items():
+        ui.html(C.callout(f"No training lead had {name} missing, so the model learned nothing for a blank {name}: "
+                          f"it is scored as the reference level ({reference}).", "warn",
+                          lead=f"Blank {name} scores as {reference}."))
+
+
 def _source_mode(run: storage.Run, bundle: ModelBundle, mapping: DatasetMapping) -> None:
     """Leads in the source format: a one-lead form or a CSV, converted with the dataset's mapping and scored."""
     state = f"source_{run.run_id}"
@@ -152,6 +161,7 @@ def _source_mode(run: storage.Run, bundle: ModelBundle, mapping: DatasetMapping)
             ui.html(C.empty_state("Ready when you are", "Fill in a lead as the source sends it, or upload a CSV of "
                                                         "new leads, and score it."))
             return
+        _warn_unseen(scoring.blank_unseen(bundle, result))
         table = result.table()
         st.dataframe(table, hide_index=True, width="stretch", height=min(38 + 35 * len(table), 250), column_config={
             "lead_id": st.column_config.TextColumn("Lead"),
@@ -198,9 +208,11 @@ def render() -> None:
     extras = scoring.extra_names(bundle)
     if extras:
         ui.html(C.callout(f"This model also reads {len(extras)} extra feature(s) ({', '.join(extras)}), which the EMVA "
-                          "form has no inputs for, so a lead scored here has every extra set to missing."
+                          "form has no inputs for, so a lead scored here has every extra blank: it is scored as "
+                          "missing, or as the reference level wherever the model never saw a missing value."
                           + (" Switch the lead format to Source format to give them." if mapping is not None else ""),
-                          "info", lead="Extra features are scored as missing."))
+                          "info", lead="Extra features are left blank."))
+        _warn_unseen(scoring.missing_unseen(bundle))
     left, right = st.columns([3, 2], gap="large")
     with left:
         lead_id = st.text_input("Start from a lead in the training data (optional)", key=f"prefill_{run.run_id}",

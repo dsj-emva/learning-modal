@@ -8,7 +8,9 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 from app import components as C
+from app import scoring
 from app.validation import Issue
+from emva.persist import load_bundle
 
 MAIN = str(Path(__file__).resolve().parents[1] / "app" / "main.py")
 PAGES = ("views/results.py", "views/upload.py", "views/score.py")
@@ -318,12 +320,16 @@ def test_map_with_extras_confirm_both_convert_save_train_generic_and_see_the_com
 
 
 def test_generic_run_score_page_offers_the_extras(monkeypatch: pytest.MonkeyPatch, app_generic) -> None:
-    """Source format: the extra's training levels are offered; EMVA form: a note that extras score as missing."""
+    """Source format: the extra's training levels are offered; EMVA form: a note that extras are blank, and a warning
+    per extra that no training lead had missing (it scores as the reference level)."""
     root, run = app_generic
     at = _sign_in(_app(monkeypatch, root), "letmein")
     at.switch_page("views/score.py").run()
     assert not at.exception, at.exception
-    assert "Extra features are scored as missing." in _text(at) and "landing_page" in _text(at)
+    assert "Extra features are left blank." in _text(at) and "landing_page" in _text(at)
+    assert "reference level wherever the model never saw a missing value" in _text(at)
+    unseen = scoring.missing_unseen(load_bundle(Path(run.out_dir) / "model.joblib"))
+    assert all(f"Blank {name} scores as {ref}." in _text(at) for name, ref in unseen.items())
     at.segmented_control(key=f"score_mode_{run.run_id}").set_value("source").run()
     assert not at.exception, at.exception
     page = next(s for s in at.selectbox if s.key.endswith(":landing_page_id"))

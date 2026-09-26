@@ -9,6 +9,7 @@ import pandas as pd
 import pytest
 
 from app import results, scoring
+from emva.features import FeatureSet
 from emva.io import read_leads
 from emva.persist import load_bundle
 from emva.scoring import UnknownLevelError, lead_from_form, points_breakdown, score_leads
@@ -247,9 +248,33 @@ def test_source_upload_carries_the_extras_and_matches_the_batch_run(generic) -> 
 
 def test_emva_form_on_a_generic_run_scores_extras_as_missing(generic) -> None:
     bundle, data, _, _ = generic
-    # session fields blank: the converted training data had none (its schema types those columns as float)
-    values = {k: (None if k in scoring.SESSION_FIELDS else v) for k, v in scoring.defaults_for(data).items()}
-    got = scoring.score_form(bundle, values, data)
+    # the form's default session is typed text although the converted training data had none (schema float64): the
+    # Phase 10 fix round's Phase 9 fix keeps it text
+    got = scoring.score_form(bundle, scoring.defaults_for(data), data)
     x = got.points[got.points.feature.str.startswith("x_")]
     ref = bundle.extras.extras[0].reference
     assert 0 < got.p < 1 and (x.level == "missing").all() and (ref == "missing" or len(x) == 1)
+
+
+def test_extras_never_missing_in_training_are_warned_about(generic) -> None:
+    """A blank extra that no training lead had missing has a zero weight on ``missing``: it scores as the reference
+    level, and the page warns per extra (EMVA form: always; source format: when the extra is blank on a lead)."""
+    from dataclasses import replace
+
+    from emva.generic import ExtraFeature, ExtraKind, fit_encoder
+
+    bundle, data, mapping, _ = generic
+    e = bundle.extras.extras[0]
+    assert scoring.missing_unseen(bundle) == ({} if e.train_counts["missing"] else {"landing_page": e.reference})
+    feature = (ExtraFeature("landing_page", ExtraKind.CATEGORICAL),)
+    seen = fit_encoder(feature, pd.DataFrame({"x_landing_page": ["a"] * 200 + [None] * 10}))
+    never = fit_encoder(feature, pd.DataFrame({"x_landing_page": ["a"] * 200 + ["b"] * 190}))
+    assert scoring.missing_unseen(replace(bundle, extras=seen)) == {}
+    assert scoring.missing_unseen(replace(bundle, extras=never)) == {"landing_page": "a"}
+    no_extras = replace(bundle, feature_set=FeatureSet.V2, extras=None)
+    assert scoring.missing_unseen(no_extras) == {}
+    leads = pd.DataFrame({"lead_id": ["n1", "n2"], "x_landing_page": ["b", None]})
+    result = scoring.SourceScores(leads, pd.DataFrame(index=leads.lead_id))
+    assert scoring.blank_unseen(replace(bundle, extras=never), result) == {"landing_page": "a"}
+    assert scoring.blank_unseen(replace(bundle, extras=never), scoring.SourceScores(leads.head(1), result.scores)) == {}
+    assert scoring.blank_unseen(no_extras, result) == {}

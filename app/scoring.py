@@ -18,7 +18,9 @@ source form lists them and a CSV upload carries them; ``convert_leads`` turns th
 generic bundle encodes (a v2 bundle ignores them). For a generic bundle the form offers a categorical extra's training
 levels (``ModelBundle.extras``: kept levels, then ``other`` for any other value) and a number input for a numeric
 one (``number_text`` writes it as the text a CSV cell would hold). The EMVA form has no inputs for extras: a form
-lead scores every extra as ``missing`` (``extra_names`` lets the page say so).
+lead has every extra ``missing`` (``extra_names`` lets the page say so). An extra that no training lead had missing
+has a zero weight on ``missing``, so a blank scores as its reference level (``missing_unseen``; ``blank_unseen`` for
+source-format leads with a blank extra): the page warns per extra.
 """
 from __future__ import annotations
 
@@ -32,7 +34,7 @@ from app.results import feature_label
 from app.storage import get_dataset, read_mapping
 from emva.constants import MISSING
 from emva.features import SESSION_INPUTS
-from emva.generic import OTHER, ExtraKind
+from emva.generic import EXTRA_PREFIX, OTHER, ExtraKind
 from emva.ingest.convert import convert_leads, frames_from_bytes
 from emva.ingest.mapping import COLUMN_OP, IGNORE, DatasetMapping, load_mapping
 from emva.persist import ModelBundle
@@ -216,6 +218,25 @@ class SourceField:
 def extra_names(bundle: ModelBundle) -> list[str]:
     """The declared names of ``bundle``'s extras (empty for a bundle without the generic feature set)."""
     return [] if bundle.extras is None else [e.feature.name for e in bundle.extras.extras]
+
+
+def missing_unseen(bundle: ModelBundle) -> dict[str, str]:
+    """Name -> reference level of each extra of ``bundle`` that no training lead had missing (``train_counts``): its
+    ``missing`` column never took a value in training, so its weight is 0 and a blank scores as the reference level.
+    Empty for a bundle without extras."""
+    if bundle.extras is None:
+        return {}
+    return {e.feature.name: e.reference for e in bundle.extras.extras if e.train_counts.get(MISSING, 0) == 0}
+
+
+def blank_unseen(bundle: ModelBundle, result: SourceScores) -> dict[str, str]:
+    """``missing_unseen`` restricted to the extras that are blank (level ``missing``) on at least one lead of
+    ``result`` (source-format leads)."""
+    unseen = missing_unseen(bundle)
+    if not unseen:
+        return {}
+    levels = bundle.extras.levels(result.leads)
+    return {n: ref for n, ref in unseen.items() if levels[f"{EXTRA_PREFIX}{n}"].eq(MISSING).any()}
 
 
 def _feeds(mapping: DatasetMapping) -> dict[tuple[str, str], tuple[str, tuple[str, ...] | None]]:
