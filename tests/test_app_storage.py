@@ -211,3 +211,16 @@ def test_init_root_migrates_legacy_store_records(tmp_path: Path) -> None:
     (orphan / storage.DATASET_META_FILE).write_bytes(DATES)
     storage.init_root(tmp_path)
     assert (orphan / storage.DATASET_META_FILE).read_bytes() == DATES and not (orphan / storage.STORE_META).exists()
+
+
+def test_init_root_skips_a_corrupt_dataset_json_with_a_warning(tmp_path: Path,
+                                                               caplog: pytest.LogCaptureFixture) -> None:
+    import logging
+
+    broken = tmp_path / "datasets" / "broken"
+    broken.mkdir(parents=True)
+    (broken / storage.DATASET_META_FILE).write_text("{ not json")
+    with caplog.at_level(logging.WARNING, logger="app.storage"):
+        storage.init_root(tmp_path)
+    assert "not valid JSON" in caplog.text and (broken / storage.DATASET_META_FILE).read_text() == "{ not json"
+    assert not (broken / storage.STORE_META).exists()

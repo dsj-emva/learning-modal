@@ -125,11 +125,18 @@ def _is_store_record(obj: object) -> bool:
 
 def _migrate_store_meta(datasets: Path) -> None:
     """Rename pre-Phase 9 store records (``dataset.json`` holding a ``Dataset``) to ``STORE_META``, so that
-    ``dataset.json`` only ever means the converter's metadata. A converter ``dataset.json`` is left alone."""
+    ``dataset.json`` only ever means the converter's metadata. A converter ``dataset.json`` is left alone, and so is
+    a corrupt one (logged as a warning; the dataset's validation refuses it loudly later)."""
     for legacy in datasets.glob(f"*/{DATASET_META_FILE}"):
         if (legacy.parent / STORE_META).exists():
             continue
-        if _is_store_record(json.loads(legacy.read_text(encoding="utf-8"))):
+        try:
+            obj = json.loads(legacy.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            log.warning("not migrating %s: it is not valid JSON (%s); validation refuses it when the dataset is used",
+                        legacy, e)
+            continue
+        if _is_store_record(obj):
             os.replace(legacy, legacy.parent / STORE_META)
             log.info("renamed the store record of dataset %s to %s", legacy.parent.name, STORE_META)
 

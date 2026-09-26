@@ -24,15 +24,19 @@ DATASET_META_FILE: str = "dataset.json"
 FORMAT_KEY: str = "emva_dataset_format"
 FORMAT_VERSION: int = 1
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+# An as_of: a YYYY-MM-DD date, optionally with a time (T or space; minutes, seconds, fraction) and a Z or +hh:mm offset.
+_DATETIME = re.compile(r"^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$")
 
 
 def parse_as_of(value: object) -> pd.Timestamp:
-    """``value`` (an ISO date or datetime string) as a UTC timestamp; a naive value is read as UTC.
+    """``value`` (an ISO date ``YYYY-MM-DD`` or a full ISO datetime such as ``2018-12-01T02:00:00+02:00``) as a UTC
+    timestamp; a naive value is read as UTC.
 
-    Raises ``ValueError`` for anything that is not a non-empty ISO string.
+    Raises ``ValueError`` for anything else: a partial date such as ``2018`` or ``2018-12`` (pandas would read it as
+    the first day), another format, or an impossible date.
     """
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"as_of must be an ISO date or datetime string, got {value!r}")
+    if not isinstance(value, str) or not _DATETIME.match(value):
+        raise ValueError(f"as_of must be an ISO date like 2026-09-24 or an ISO datetime, got {value!r}")
     ts = pd.Timestamp(value)
     return ts.tz_localize("UTC") if ts.tzinfo is None else ts.tz_convert("UTC")
 

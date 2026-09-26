@@ -98,7 +98,8 @@ TARGETS: tuple[str, ...] = (*(c for c in LEAD_COLUMNS if c not in BUILT_COLUMNS)
 
 # Canonical CRM stages (``emva.constants.STAGE`` values), in funnel order.
 STAGES: tuple[str, ...] = ("New", "Contacted", "Qualified", "Demo booked", "Proposal", "Won", "Lost")
-assert set(STAGES) == set(STAGE.values())
+if set(STAGES) != set(STAGE.values()):
+    raise RuntimeError(f"mapping.STAGES {sorted(STAGES)} differ from emva.constants.STAGE {sorted(set(STAGE.values()))}")
 OPEN_OR_NEW: tuple[str, ...] = tuple(s for s in STAGES if s not in ("Won", "Lost"))
 
 # A mapping reads 1 to this many source files (the first is the primary one).
@@ -484,8 +485,12 @@ def check_confirmed(m: DatasetMapping) -> None:
 # --- DatasetMapping -> TOML ------------------------------------------------------------------------------------------
 
 def _s(v: str) -> str:
-    """A TOML basic string (JSON escaping is valid TOML)."""
-    return json.dumps(v, ensure_ascii=False)
+    """A TOML basic string. JSON escaping is valid TOML and escapes the C0 controls; DEL (U+007F), which TOML also
+    forbids raw, is escaped here. Raises ``ValueError`` for a lone surrogate (no TOML or UTF-8 form exists)."""
+    bad = [f"U+{ord(c):04X}" for c in v if 0xD800 <= ord(c) <= 0xDFFF]
+    if bad:
+        raise ValueError(f"cannot write {v!r} as TOML: lone surrogate(s) {bad}")
+    return json.dumps(v, ensure_ascii=False).replace("\x7f", "\\u007f")
 
 
 def _k(key: str) -> str:

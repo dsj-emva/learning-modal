@@ -79,8 +79,12 @@ def test_read_dataset_meta_returns_the_whole_file(tmp_path: Path) -> None:
 def test_parse_as_of_is_utc() -> None:
     assert parse_as_of("2018-12-01") == pd.Timestamp("2018-12-01", tz="UTC")
     assert parse_as_of("2018-12-01T02:00:00+02:00") == pd.Timestamp("2018-12-01T00:00:00", tz="UTC")
+    assert parse_as_of("2018-12-01 09:30:00Z") == pd.Timestamp("2018-12-01T09:30:00", tz="UTC")
     with pytest.raises(ValueError):
         check_test_from("2026-02-30")
+    for lenient in ("2018", "2018-12", "Dec 1 2018", "20181201", " 2018-12-01", "2018-02-30", "", None, 2018):
+        with pytest.raises(ValueError):
+            parse_as_of(lenient)
 
 
 def test_pipeline_uses_the_dataset_dates(data_v1: Path, tmp_path: Path) -> None:

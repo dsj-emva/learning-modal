@@ -792,3 +792,14 @@ def test_cli_score_refuses_a_ground_truth_file(tmp_path: Path) -> None:
     with pytest.raises(SystemExit, match="evaluation-only"):
         main(["score", "--mapping", str(tmp_path / "mapping.toml"), "--raw", str(tmp_path / "ground_truth_labels.csv"),
               "--run", str(tmp_path)])
+
+
+def test_dump_escapes_what_toml_forbids_raw_and_refuses_lone_surrogates(mapping: DatasetMapping) -> None:
+    from emva.ingest.mapping import Review
+
+    odd = replace(mapping, review={"created_at": Review("tab\there, del \x7f, bell \x07, nul \x00, é ✓", "high")})
+    text = dump_mapping(odd)
+    assert "\x7f" not in text and "\\u007f" in text
+    assert load_mapping(text) == odd
+    with pytest.raises(ValueError, match="lone surrogate"):
+        dump_mapping(replace(mapping, review={"created_at": Review("broken \ud800")}))

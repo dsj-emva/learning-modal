@@ -240,13 +240,15 @@ def _request(client: anthropic.Anthropic, profiles: list[ColumnProfile],
     """One draft request, with logged retries of transport errors (backoff 1, 2, 4, 8 s): a cache entry (``ok`` or
     ``parse_error``). Raises ``RuntimeError`` after ``MAX_ATTEMPTS`` transport failures; other API errors propagate."""
     user = render_profiles(profiles)
-    for attempt in range(1, MAX_ATTEMPTS + 1):
+    attempt = 1
+    while True:
         try:
             message = client.messages.create(
                 model=MODEL_ID, max_tokens=MAX_TOKENS, system=SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": user}],
                 output_config={"format": {"type": "json_schema", "schema": RESPONSE_SCHEMA}},
                 extra_body={"temperature": 0})
+            break
         except anthropic.APIError as exc:
             if not is_transport_error(exc):
                 raise
@@ -254,15 +256,13 @@ def _request(client: anthropic.Anthropic, profiles: list[ColumnProfile],
             if attempt == MAX_ATTEMPTS:
                 raise RuntimeError(f"mapping draft failed after {MAX_ATTEMPTS} attempts: {exc!r}") from exc
             sleep(2 ** (attempt - 1))
-            continue
-        texts = [b.text for b in message.content if b.type == "text"]
-        try:
-            return {"status": STATUS_OK, "reply": parse_reply(message, profiles), "raw": None, "error": ""}
-        except ContractError as exc:
-            log.warning("mapping draft broke the contract: %s", exc)
-            return {"status": STATUS_PARSE_ERROR, "reply": None, "raw": texts[0] if texts else None,
-                    "error": str(exc)}
-    raise AssertionError("unreachable")
+            attempt += 1
+    texts = [b.text for b in message.content if b.type == "text"]
+    try:
+        return {"status": STATUS_OK, "reply": parse_reply(message, profiles), "raw": None, "error": ""}
+    except ContractError as exc:
+        log.warning("mapping draft broke the contract: %s", exc)
+        return {"status": STATUS_PARSE_ERROR, "reply": None, "raw": texts[0] if texts else None, "error": str(exc)}
 
 
 def default_dates(mapping: DatasetMapping, profiles: list[ColumnProfile]) -> tuple[str, str]:
