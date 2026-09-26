@@ -7,6 +7,9 @@ levels and indicators, company-name enrichment, similarity-based boilerplate det
 deal-value correction estimated from training residuals. In horizon mode ``run`` also adds the two-stage
 upload columns (plan 3.3): ``value_at_submit`` (the expected value through a fitted ``ValueTransform``) and
 ``value_at_close``, each with its timestamp, and ``value_at_close_status``. ``emva/__main__.py`` does the printing and file writing.
+
+The snapshot date (``as_of``) and the train/test boundary (``test_from``) are the dataset's own when it carries a
+``dataset.json`` (a converted dataset, ADR 0020; ``emva.dataset_meta.dataset_dates``), else ``AS_OF`` / ``TEST_FROM``.
 """
 from __future__ import annotations
 
@@ -16,8 +19,9 @@ from pathlib import Path
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
 
-from emva.constants import TEST_FROM
+from emva.constants import AS_OF, TEST_FROM
 from emva.context.features import context_features
+from emva.dataset_meta import dataset_dates
 from emva.eval.metrics import summary
 from emva.feature_spec import feature_spec
 from emva.features import FeatureSet
@@ -44,7 +48,8 @@ class PipelineResult:
     ``messages`` are the context-mode lines printed before it; ``labels`` and ``features`` are
     the label definition and feature set used; ``model`` is the fitted formula model (its columns are
     ``design.columns``); ``deal_value`` is the fitted value model;
-    ``value_transform`` the transform fitted on the training leads' values (None in legacy mode).
+    ``value_transform`` the transform fitted on the training leads' values (None in legacy mode); ``as_of`` and
+    ``test_from`` the snapshot date and train/test boundary the run used (ADR 0020).
     """
 
     X: pd.DataFrame
@@ -59,6 +64,8 @@ class PipelineResult:
     deal_value: DealValueModel
     value_transform: FittedValueTransform | None = None
     messages: list[str] = field(default_factory=list)
+    as_of: pd.Timestamp = AS_OF
+    test_from: str = TEST_FROM
 
     def scores(self) -> pd.DataFrame:
         """The scores.csv frame (indexed by ``lead_id``): ``SCORE_COLUMNS``, the label config's extra columns and,
@@ -67,16 +74,19 @@ class PipelineResult:
         return self.X[[c for c in cols if c in self.X]]
 
 
-def build(L: pd.DataFrame, labels: LabelConfig = HORIZON, features: FeatureSet = FeatureSet.V2) -> pd.DataFrame:
-    """Clean, label and featurise loaded leads (``baseline/emva_score.py::build`` with both legacy options)."""
+def build(L: pd.DataFrame, labels: LabelConfig = HORIZON, features: FeatureSet = FeatureSet.V2,
+          as_of: pd.Timestamp = AS_OF) -> pd.DataFrame:
+    """Clean, label (at ``as_of``) and featurise loaded leads (``baseline/emva_score.py::build`` with both legacy
+    options)."""
     X = clean(L)
-    assign_labels(X, labels)
+    assign_labels(X, labels, as_of)
     return feature_spec(features).featurise(X)
 
 
 def run(data: str | Path, margin: float = 1.0, context: str | Path | None = None,
-        test_from: str = TEST_FROM, labels: LabelConfig = HORIZON,
-        features: FeatureSet = FeatureSet.V2, value_transform: ValueTransform = ValueTransform()) -> PipelineResult:
+        test_from: str | None = None, labels: LabelConfig = HORIZON,
+        features: FeatureSet = FeatureSet.V2, value_transform: ValueTransform = ValueTransform(),
+        as_of: pd.Timestamp | None = None) -> PipelineResult:
     """Train the formula and deal-value models on ``data`` and score every cleaned lead.
 
     ``labels`` picks the label definition; in horizon mode only mature leads enter the
@@ -86,12 +96,17 @@ def run(data: str | Path, margin: float = 1.0, context: str | Path | None = None
     ``emva.context.features.context_features``), also fit formula-only, context-only and formula+context
     models on the rows that have context and summarise all three. In horizon mode
     ``value_transform`` is fitted on the training leads' ``value_formula`` and gives ``value_at_submit``
-    (legacy mode ignores it: its outputs stay the baseline's).
+    (legacy mode ignores it: its outputs stay the baseline's). ``test_from`` and ``as_of`` default to the dataset's
+    dates (``emva.dataset_meta.dataset_dates``: its ``dataset.json``, else ``TEST_FROM`` / ``AS_OF``); labels,
+    maturity and ``value_at_close`` are read at ``as_of``.
     """
+    meta_as_of, meta_test_from = dataset_dates(data)
+    as_of = meta_as_of if as_of is None else as_of
+    test_from = meta_test_from if test_from is None else test_from
     spec = feature_spec(features)
     features = spec.feature_set
-    X = build(load(data), labels, features)
-    tr, te = split_masks(X, test_from, labels.eligible(X))
+    X = build(load(data), labels, features, as_of)
+    tr, te = split_masks(X, test_from, labels.eligible(X, as_of))
     D = spec.design(X)
     lr = fit_lr(D, X.y, tr)
     X["p_formula"] = predict(lr, D)
@@ -106,7 +121,7 @@ def run(data: str | Path, margin: float = 1.0, context: str | Path | None = None
         fitted = value_transform.fit(X.value_formula[tr])
         X["value_at_submit"] = fitted.apply(X.value_formula)
         X["value_at_submit_ts"] = X.created_at
-        close = value_at_close(X, labels.horizon_days)
+        close = value_at_close(X, labels.horizon_days, as_of)
         X[list(close.columns)] = close
 
     weights = scorecard(lr, D.columns)
@@ -149,7 +164,7 @@ def run(data: str | Path, margin: float = 1.0, context: str | Path | None = None
 
     return PipelineResult(X=X, train=tr, test=te, design=D, weights=weights, summary=pd.DataFrame(rows),
                           labels=labels, features=features, model=lr, deal_value=dv, value_transform=fitted,
-                          messages=messages)
+                          messages=messages, as_of=as_of, test_from=test_from)
 
 
 def write_outputs(result: PipelineResult, out: str | Path) -> None:
