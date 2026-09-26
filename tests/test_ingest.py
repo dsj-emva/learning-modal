@@ -639,3 +639,21 @@ def test_cli_score_prints_scores(converted_dir: Path, frames: dict[str, pd.DataF
           str(tmp_path), "--data", str(converted_dir)])
     out = pd.read_csv(io.StringIO(capsys.readouterr().out), index_col="lead_id")
     assert list(out.index) == list(frames["leads.csv"].id.head(4)) and out.p_formula.between(0, 1).all()
+
+
+def test_cli_draft_uses_the_cache_next_to_the_output(tmp_path: Path, frames: dict[str, pd.DataFrame]) -> None:
+    """With the reply cached (here by a fake client) the CLI needs no API key and writes an unconfirmed draft."""
+    from emva.ingest.__main__ import main
+
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    for name, df in frames.items():
+        df.to_csv(raw / name, index=False)
+    on_disk = frames_from_bytes({p.name: p.read_bytes() for p in sorted(raw.glob("*.csv"))})
+    draft_mapping(profile(on_disk), FakeClient(message(json.dumps(_reply()))),
+                  ReplyCache(tmp_path / ".draft_cache.json"), "ignored")
+    main(["draft", "--raw", str(raw), "--out", str(tmp_path / "fixture_draft.toml")])
+    text = (tmp_path / "fixture_draft.toml").read_text()
+    assert text.startswith("# DRAFT by claude-haiku-4-5-20251001")
+    m = load_mapping(text)
+    assert m.name == "fixture_draft" and not m.outcome_confirmed
