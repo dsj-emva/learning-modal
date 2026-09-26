@@ -108,12 +108,14 @@ def system_prompt(brief_text: str) -> str:
 def make_client() -> anthropic.Anthropic:
     """SDK client with the workspace header and SDK retries off (``judge`` does its own, logged, retries).
 
-    Raises ``SystemExit`` when ``ANTHROPIC_API_KEY`` or ``ANTHROPIC_WORKSPACE_ID`` cannot be found.
+    Raises ``SystemExit`` when ``ANTHROPIC_API_KEY`` (or its alias ``EMVA_ANTHROPIC_API_KEY``, ``emva.env``) or
+    ``ANTHROPIC_WORKSPACE_ID`` cannot be found.
     """
     key = load_env_var("ANTHROPIC_API_KEY")
     workspace = load_env_var("ANTHROPIC_WORKSPACE_ID")
     if not key or not workspace:
-        raise SystemExit("ANTHROPIC_API_KEY and ANTHROPIC_WORKSPACE_ID must be set (environment or .env); "
+        raise SystemExit("ANTHROPIC_API_KEY (or EMVA_ANTHROPIC_API_KEY) and ANTHROPIC_WORKSPACE_ID must be set "
+                         "(environment or .env); "
                          "the key is not workspace-scoped, so the workspace header is required (ADR 0010).")
     return anthropic.Anthropic(api_key=key, default_headers={"anthropic-workspace-id": workspace},
                                max_retries=0, timeout=REQUEST_TIMEOUT_S)
