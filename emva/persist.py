@@ -128,7 +128,8 @@ def save_bundle(result: PipelineResult, path: str | Path, data: str | Path, marg
 def load_bundle(path: str | Path) -> ModelBundle:
     """Read a bundle written by ``save_bundle``.
 
-    Raises ``ValueError`` if the file is not a bundle or its ``format_version`` is not in ``READABLE_FORMATS``;
+    Raises ``ValueError`` if the file is not a bundle, its ``format_version`` is not in ``READABLE_FORMATS``, or it has
+    an extras encoder without the generic feature set or the generic feature set without one (ADR 0024);
     a format-1 bundle (no ``extras`` field) is returned with ``extras = None`` and its ``format_version`` 1. Warns
     (``UserWarning``) when it was written with other numpy / pandas / scikit-learn versions, since scores may then
     differ from the training run's.
@@ -144,6 +145,10 @@ def load_bundle(path: str | Path) -> ModelBundle:
         if "extras" in payload:
             raise ValueError(f"{path} is a format_version 1 bundle with an extras field; format 1 has none")
         payload = {**payload, "extras": None}
+    if (payload["feature_set"] is FeatureSet.GENERIC) != (payload["extras"] is not None):
+        raise ValueError(f"{path} is inconsistent: feature_set {payload['feature_set'].value} with "
+                         f"extras {'set' if payload['extras'] is not None else 'None'} (a bundle has an extras encoder "
+                         "if and only if it was trained with the generic feature set)")
     now = library_versions()
     differ = [f"{lib} {v} (installed {now.get(lib)})" for lib, v in payload["versions"].items() if now.get(lib) != v]
     if differ:

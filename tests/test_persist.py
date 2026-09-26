@@ -11,6 +11,7 @@ import pandas as pd
 import pytest
 
 from emva.features import FeatureSet
+from emva.generic import GenericEncoder
 from emva.io import read_leads
 from emva.persist import FORMAT_VERSION, ModelBundle, library_versions, load_bundle, model_levels, save_bundle
 from emva.scoring import score_leads
@@ -99,6 +100,18 @@ def test_format_1_with_an_extras_field_is_refused(tmp_path, trained_run):
     save_bundle(trained_run(DATA_V1, FeatureSet.V2), path, DATA_V1, margin=1.0)
     _rewrite(path, format_version=1)  # keeps the extras key: not what a format-1 writer produced
     with pytest.raises(ValueError, match="format_version 1 bundle with an extras field"):
+        load_bundle(path)
+
+
+@pytest.mark.parametrize("changes, match", [
+    ({"extras": GenericEncoder(())}, "feature_set v2 with extras set"),
+    ({"feature_set": FeatureSet.GENERIC}, "feature_set generic with extras None")])
+def test_extras_without_the_generic_feature_set_or_vice_versa_is_refused(tmp_path, trained_run, changes, match):
+    """ADR 0024: a bundle has an extras encoder if and only if it was trained with the generic feature set."""
+    path = tmp_path / "m.joblib"
+    save_bundle(trained_run(DATA_V1, FeatureSet.V2), path, DATA_V1, margin=1.0)
+    _rewrite(path, **changes)
+    with pytest.raises(ValueError, match=f"inconsistent: {match}"):
         load_bundle(path)
 
 
