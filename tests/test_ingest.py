@@ -511,7 +511,7 @@ def _reply() -> dict:
                                                "feature_kind": kw.get("kind", "none"),
                                                "value_map": kw.get("vm", []), "reason": "r", "confidence": "high"}
     return {
-        "sources": [{"file": "leads.csv", "join_on": ""}, {"file": "orgs.csv", "join_on": "org"}],
+        "primary_file": "leads.csv", "joins": [{"file": "orgs.csv", "join_on": "org"}],
         "columns": [
             col("leads.csv", "id", "lead.lead_id"), col("leads.csv", "signup", "lead.created_at"),
             col("leads.csv", "closed", "lead.won_at"), col("leads.csv", "amount", "lead.deal_value"),
@@ -537,6 +537,23 @@ def test_a_draft_needs_created_at_but_not_won_at(frames: dict[str, pd.DataFrame]
     no_created = {**reply, "columns": [c for c in reply["columns"] if c["target"] != "lead.created_at"]}
     with pytest.raises(ContractError, match="created_at"):
         check_reply(no_created, profiles)
+
+
+def test_a_draft_names_its_primary_file_and_joins_each_other_file_once(frames: dict[str, pd.DataFrame]) -> None:
+    from emva.ingest.draft import check_reply
+
+    profiles = profile(frames)
+    reply = _reply()
+    with pytest.raises(ContractError, match="primary or joined once"):
+        check_reply({**reply, "joins": [*reply["joins"], {"file": "leads.csv", "join_on": "org"}]}, profiles)
+    with pytest.raises(ContractError, match="primary or joined once"):
+        check_reply({**reply, "joins": reply["joins"] * 2}, profiles)
+    with pytest.raises(ContractError, match="not in the profiles"):
+        check_reply({**reply, "primary_file": "deals.csv"}, profiles)
+    with pytest.raises(ContractError, match="not_a_column"):
+        check_reply({**reply, "joins": [{"file": "orgs.csv", "join_on": "not_a_column"}]}, profiles)
+    single = {**reply, "joins": [], "columns": [c for c in reply["columns"] if c["file"] == "leads.csv"]}
+    assert check_reply(single, profiles) is single
 
 
 def message(text: str, stop_reason: str = "end_turn") -> SimpleNamespace:

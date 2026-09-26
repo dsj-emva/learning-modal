@@ -282,7 +282,7 @@ def hand_built_reply(created_at: str = "first_contact_date",
                            "has_company", "has_gtin", "average_stock", "business_type", "declared_product_catalog_size")
                if c not in features]
     return {
-        "sources": [{"file": OLIST_MQL, "join_on": ""}, {"file": OLIST_DEALS, "join_on": "mql_id"}],
+        "primary_file": OLIST_MQL, "joins": [{"file": OLIST_DEALS, "join_on": "mql_id"}],
         "columns": [_col(OLIST_MQL, "mql_id", "lead.lead_id"), _col(OLIST_MQL, created_at, "lead.created_at"),
                     _col(OLIST_MQL, "landing_page_id", "utm_content", "low"),
                     _col(OLIST_MQL, "origin" if created_at != "origin" else "first_contact_date", "ignore"),

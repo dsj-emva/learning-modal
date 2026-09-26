@@ -59,7 +59,7 @@ from emva.ingest.profile import ColumnProfile
 
 log = logging.getLogger(__name__)
 
-PROMPT_VERSION = "mapping-draft-v2"
+PROMPT_VERSION = "mapping-draft-v4"
 MAX_TOKENS = 8000
 # The cache key's second slot (the context agent's brief hash): drafts have no brief.
 DRAFT_BRIEF_HASH = "no-brief"
@@ -76,12 +76,19 @@ TEST_SHARE_OF_SPAN: float = 0.8
 
 SYSTEM_PROMPT = """You map the columns of a data source (one to three CSV files, described by column profiles; you \
 never see rows) onto the lead schema of a B2B lead-scoring pipeline. Each lead is one row of the primary file; other \
-files are joined to it on a shared column.
+files are joined to it on a shared column. The primary file is the one with a row for every lead that came in, \
+including leads that were never won; a file that only holds won or closed deals is never primary: join it to the \
+leads file. Columns of such a file are only known after the outcome (only won leads have them), so they are never \
+features: its date of winning or closing and its deal amount are lead roles or the outcome, everything else is ignore.
 
 For every profiled column choose exactly one target:
 - lead.lead_id (unique id of the lead), lead.created_at (when the lead came in: required), lead.contacted_at (when \
 it was first worked), lead.won_at (when it was won; optional), lead.close_at (when it was closed: lost, or won when \
-there is no won_at column), lead.deal_value (amount of a won deal);
+there is no won_at column), lead.deal_value (amount of a won deal). lead.created_at is required and is a single \
+date column: when no column records the lead's arrival itself, use the earliest date known when the lead came in, \
+such as the date it was first engaged or contacted (a column has one target: give it lead.created_at, and a \
+person may add it as lead.contacted_at too), with confidence low and the reason saying so. Never \
+use a date only known after the outcome (a close, cancellation or status date) as lead.created_at;
 - a schema column (form and tracking fields; answers.<key> are form answers) when the column means the same thing;
 - value_map when the column's values translate into one or more schema columns (list every source value you see, \
 each with the target and value it sets; categorical schema columns only accept their listed options);
@@ -95,8 +102,8 @@ high, medium or low.
 
 Then name the outcome: kind stage (a column of CRM stages: map every value to New, Contacted, Qualified, Demo booked, \
 Proposal, Won or Lost), won_flag (a column whose values mean won or lost: list both), or presence (won when the \
-column is filled, lost when blank). List the files with the primary first (join_on empty) and the join column for \
-the others. Use only the files and columns in the profiles."""
+column is filled, lost when blank). Name the primary file in primary_file and list every other file in joins with \
+the column it shares with the primary file. Use only the files and columns in the profiles."""
 
 
 def _object(properties: dict[str, Any]) -> dict[str, Any]:
@@ -107,7 +114,8 @@ def _object(properties: dict[str, Any]) -> dict[str, Any]:
 _CONFIDENCE = {"type": "string", "enum": list(CONFIDENCES)}
 _STRINGS = {"type": "array", "items": {"type": "string"}}
 RESPONSE_SCHEMA: dict[str, Any] = _object({
-    "sources": {"type": "array", "items": _object({"file": {"type": "string"}, "join_on": {"type": "string"}})},
+    "primary_file": {"type": "string"},
+    "joins": {"type": "array", "items": _object({"file": {"type": "string"}, "join_on": {"type": "string"}})},
     "columns": {"type": "array", "items": _object({
         "file": {"type": "string"}, "column": {"type": "string"},
         "target": {"type": "string", "enum": list(DRAFT_TARGETS)},
@@ -196,15 +204,14 @@ def _build(reply: dict[str, Any], profiles: list[ColumnProfile], name: str, as_o
     names = {f: source_name(f) for f in columns}
     if len(set(names.values())) != len(names):
         raise ContractError(f"file names give clashing source names: {names}")
-    primary = [s for s in reply["sources"] if not s["join_on"]]
-    if len(primary) != 1:
-        raise ContractError(f"expected exactly one primary source (empty join_on), got {len(primary)}")
-    ordered = primary + [s for s in reply["sources"] if s["join_on"]]
-    sources = []
-    for s in ordered:
-        if s["join_on"]:
-            _ref(s["file"], s["join_on"], names, columns)
-        sources.append(Source(names[_known(s["file"], names)], s["file"], s["join_on"] or None))
+    primary = _known(reply["primary_file"], names)
+    joined = [j["file"] for j in reply["joins"]]
+    if primary in joined or len(set(joined)) != len(joined):
+        raise ContractError(f"each file is primary or joined once: primary {primary!r}, joins {joined}")
+    sources = [Source(names[primary], primary, None)]
+    for j in reply["joins"]:
+        _ref(j["file"], j["join_on"], names, columns)
+        sources.append(Source(names[j["file"]], j["file"], j["join_on"]))
     roles: dict[str, Expr] = {}
     review: dict[str, Review] = {}
     fields = []
@@ -259,7 +266,7 @@ def check_reply(obj: object, profiles: list[ColumnProfile]) -> dict[str, Any]:
     """``obj`` if it is a reply the profiles support (it builds a valid draft mapping); ``ContractError`` otherwise.
 
     The server enforces the schema's shape and enums; this adds everything the schema cannot say (files and columns
-    exist, one primary source, one column per role, created_at present, targets not repeated).
+    exist, the primary file not also joined and no file joined twice, one column per role, created_at present, targets not repeated).
     """
     if not isinstance(obj, dict):
         raise ContractError(f"reply is {type(obj).__name__}, not a JSON object")
