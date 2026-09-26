@@ -9,7 +9,9 @@ creation time, data directory name, library versions).
 
 The file is a joblib pickle of a plain dict with a ``format_version`` key, checked before the bundle is
 built, so a bundle from an incompatible release fails with a clear ``ValueError`` instead of an unpickling
-error deep inside a dataclass. Unpickling runs code: load only bundles this repo wrote.
+error deep inside a dataclass. Format 1 (Phase 8-9, before the extras) still loads, as a bundle with
+``extras = None``: its fields are format 2's without ``extras``, so it scores exactly as its v2 / legacy run did
+(ADR 0024, Phase 10 (b)). Unpickling runs code: load only bundles this repo wrote.
 """
 from __future__ import annotations
 
@@ -34,9 +36,11 @@ from emva.pipeline import PipelineResult
 from emva.value import DealValueModel
 from emva.value_transform import FittedValueTransform
 
-# Bump when a field is added, removed or changes meaning; load_bundle refuses any other version.
+# Bump when a field is added, removed or changes meaning; load_bundle refuses any version not in READABLE_FORMATS.
 # 2 (Phase 10): the ``extras`` field (the generic feature set's encoder).
 FORMAT_VERSION: int = 2
+# Versions load_bundle reads: 1 (Phase 8-9 runs, e.g. Keel's, no ``extras`` field) and the current one.
+READABLE_FORMATS: frozenset[int] = frozenset({1, FORMAT_VERSION})
 # File name ``python -m emva`` writes into ``--out``.
 BUNDLE_FILE: str = "model.joblib"
 
@@ -124,16 +128,21 @@ def save_bundle(result: PipelineResult, path: str | Path, data: str | Path, marg
 def load_bundle(path: str | Path) -> ModelBundle:
     """Read a bundle written by ``save_bundle``.
 
-    Raises ``ValueError`` if the file is not a bundle or its ``format_version`` is not ``FORMAT_VERSION``;
-    warns (``UserWarning``) when it was written with other numpy / pandas / scikit-learn versions, since
+    Raises ``ValueError`` if the file is not a bundle or its ``format_version`` is not in ``READABLE_FORMATS``;
+    a format-1 bundle (no ``extras`` field) is returned with ``extras = None`` and its ``format_version`` 1. Warns (``UserWarning``) when it was written with other numpy / pandas / scikit-learn versions, since
     scores may then differ from the training run's.
     """
     payload = joblib.load(path)
     if not isinstance(payload, dict) or "format_version" not in payload:
         raise ValueError(f"{path} is not an EMVA model bundle")
-    if payload["format_version"] != FORMAT_VERSION:
+    if payload["format_version"] not in READABLE_FORMATS:
         raise ValueError(f"{path} has bundle format_version {payload['format_version']}; this code expects "
-                         f"{FORMAT_VERSION}. Retrain with python -m emva --out DIR to write a current bundle.")
+                         f"{FORMAT_VERSION} (or reads {sorted(READABLE_FORMATS)}). Retrain with python -m emva "
+                         "--out DIR to write a current bundle.")
+    if payload["format_version"] == 1:
+        if "extras" in payload:
+            raise ValueError(f"{path} is a format_version 1 bundle with an extras field; format 1 has none")
+        payload = {**payload, "extras": None}
     now = library_versions()
     differ = [f"{lib} {v} (installed {now.get(lib)})" for lib, v in payload["versions"].items() if now.get(lib) != v]
     if differ:
@@ -142,5 +151,5 @@ def load_bundle(path: str | Path) -> ModelBundle:
     return ModelBundle(**payload)
 
 
-__all__ = ["BUNDLE_FILE", "FORMAT_VERSION", "ModelBundle", "library_versions", "load_bundle", "model_levels",
-           "save_bundle"]
+__all__ = ["BUNDLE_FILE", "FORMAT_VERSION", "READABLE_FORMATS", "ModelBundle", "library_versions", "load_bundle",
+           "model_levels", "save_bundle"]

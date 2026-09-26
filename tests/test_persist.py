@@ -11,7 +11,9 @@ import pandas as pd
 import pytest
 
 from emva.features import FeatureSet
-from emva.persist import FORMAT_VERSION, ModelBundle, load_bundle, save_bundle
+from emva.io import read_leads
+from emva.persist import FORMAT_VERSION, ModelBundle, library_versions, load_bundle, model_levels, save_bundle
+from emva.scoring import score_leads
 
 from conftest import DATA_V1, DATA_V2, REPO
 
@@ -64,6 +66,47 @@ def test_format_version_mismatch_raises(tmp_path, trained_run):
     save_bundle(trained_run(DATA_V1, FeatureSet.V2), path, DATA_V1, margin=1.0)
     _rewrite(path, format_version=FORMAT_VERSION + 1)
     with pytest.raises(ValueError, match=f"format_version {FORMAT_VERSION + 1}.*expects {FORMAT_VERSION}"):
+        load_bundle(path)
+
+
+def _save_format_1(result, path, data, margin: float) -> None:
+    """Write a bundle exactly as the Phase 8-9 ``save_bundle`` did (format_version 1, no ``extras`` key)."""
+    design_columns = tuple(result.design.columns)
+    value_columns = tuple(result.deal_value.ridge.feature_names_in_)
+    joblib.dump({
+        "format_version": 1, "feature_set": result.features, "labels": result.labels, "margin": float(margin),
+        "design_columns": design_columns, "value_columns": value_columns,
+        "levels": model_levels(result.features, design_columns, value_columns),
+        "model": result.model, "deal_value": result.deal_value, "value_transform": result.value_transform,
+        "weights": result.weights, "lead_schema": read_leads(data / "historical_leads.csv").iloc[:0],
+        "created_at": "2026-09-20T12:00:00+00:00", "data_name": data.name, "versions": library_versions()}, path)
+
+
+@pytest.mark.parametrize("feature_set", [FeatureSet.V2, FeatureSet.LEGACY])
+def test_format_1_bundle_loads_without_extras_and_scores_as_before(tmp_path, trained_run, feature_set):
+    """Phase 10 (b) ruling: runs trained before the generic feature set (e.g. on Keel) keep scoring."""
+    result = trained_run(DATA_V1, feature_set)
+    _save_format_1(result, tmp_path / "old.joblib", DATA_V1, margin=1.0)
+    save_bundle(result, tmp_path / "new.joblib", DATA_V1, margin=1.0)
+    old, new = load_bundle(tmp_path / "old.joblib"), load_bundle(tmp_path / "new.joblib")
+    assert old.format_version == 1 and old.extras is None and old.feature_set is feature_set
+    leads = read_leads(DATA_V1 / "historical_leads.csv").iloc[:50].reset_index()
+    pd.testing.assert_frame_equal(score_leads(old, leads, DATA_V1), score_leads(new, leads, DATA_V1))
+
+
+def test_format_1_with_an_extras_field_is_refused(tmp_path, trained_run):
+    path = tmp_path / "m.joblib"
+    save_bundle(trained_run(DATA_V1, FeatureSet.V2), path, DATA_V1, margin=1.0)
+    _rewrite(path, format_version=1)  # keeps the extras key: not what a format-1 writer produced
+    with pytest.raises(ValueError, match="format_version 1 bundle with an extras field"):
+        load_bundle(path)
+
+
+def test_format_0_is_refused(tmp_path, trained_run):
+    path = tmp_path / "m.joblib"
+    save_bundle(trained_run(DATA_V1, FeatureSet.V2), path, DATA_V1, margin=1.0)
+    _rewrite(path, format_version=0)
+    with pytest.raises(ValueError, match="format_version 0"):
         load_bundle(path)
 
 
