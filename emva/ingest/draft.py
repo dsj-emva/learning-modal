@@ -6,7 +6,8 @@ closed enum (a schema column, a lead role such as ``lead.created_at``, ``value_m
 reason and a high / medium / low confidence, and proposes the outcome column and its stage map or won / lost values.
 ``feature`` (Phase 10, ADR 0024) proposes the column as an extra of the generic feature set, with ``feature_kind``
 numeric or categorical (``none`` for every other target); its name is the column name as a slug (``feature_name``;
-prefixed with the source name when two files share it). It never converts rows or fills values, and it drafts no
+prefixed with the source name when two drafted columns share it, and given a numeric suffix ``_2``, ``_3``, ... when
+the name is still taken: ``_feature_names``). It never converts rows or fills values, and it drafts no
 derived expressions (a person adds those while reviewing). The result always has ``outcome_confirmed = False`` and
 ``features_confirmed = False``; ``emva.ingest.convert`` refuses it until a person sets them to true.
 
@@ -157,6 +158,26 @@ def feature_name(column: str) -> str:
     return slug if slug and slug[0].isalnum() else f"x{slug}"
 
 
+def _feature_names(drafted: list[tuple[str, str]], names: dict[str, str]) -> dict[tuple[str, str], str]:
+    """The name of every ``(file, column)`` drafted as a feature, in reply order (module docstring): the column's slug;
+    the source name, ``_`` and the slug when that slug is drafted more than once; then, while a name is still taken
+    (two columns of one file with the same slug, or a prefixed name equal to another column's plain slug), the later
+    column gets the first free numeric suffix ``_2``, ``_3``, ... ``ContractError`` when a column is drafted twice as
+    a feature (``names`` maps file to source name)."""
+    if len(set(drafted)) != len(drafted):
+        raise ContractError(f"a column is drafted as a feature more than once: {sorted(drafted)}")
+    slugs = [feature_name(column) for _, column in drafted]
+    wanted = [slug if slugs.count(slug) == 1 else feature_name(f"{names[file]}_{column}")
+              for (file, column), slug in zip(drafted, slugs)]
+    out: dict[tuple[str, str], str] = {}
+    for key, name in zip(drafted, wanted):
+        final, k = name, 2
+        while final in out.values() or (final != name and final in wanted):
+            final, k = f"{name}_{k}", k + 1
+        out[key] = final
+    return out
+
+
 def _ref(file: str, column: str, names: dict[str, str], columns: dict[str, set[str]]) -> str:
     """``<source>.<column>`` for a column the profiles list; ``ContractError`` otherwise."""
     if file not in names:
@@ -188,8 +209,8 @@ def _build(reply: dict[str, Any], profiles: list[ColumnProfile], name: str, as_o
     review: dict[str, Review] = {}
     fields = []
     features = []
-    drafted = [c for c in reply["columns"] if c["target"] == FEATURE]
-    slugs = [feature_name(c["column"]) for c in drafted]
+    feature_names = _feature_names([(c["file"], c["column"]) for c in reply["columns"] if c["target"] == FEATURE],
+                                   names)
     for c in reply["columns"]:
         ref = _ref(c["file"], c["column"], names, columns)
         note = Review(c["reason"], c["confidence"])
@@ -198,9 +219,8 @@ def _build(reply: dict[str, Any], profiles: list[ColumnProfile], name: str, as_o
             raise ContractError(f"{ref}: feature_kind {c['feature_kind']!r} with target {target!r} (a feature needs "
                                 f"numeric or categorical, any other target {NO_KIND!r})")
         if target == FEATURE:
-            slug = feature_name(c["column"])
-            name_ = slug if slugs.count(slug) == 1 else feature_name(f"{names[c['file']]}_{c['column']}")
-            features.append(FeatureMap(Expr.col(ref), c["feature_kind"], name_, note))
+            features.append(FeatureMap(Expr.col(ref), c["feature_kind"], feature_names[(c["file"], c["column"])],
+                                       note))
         elif target.startswith(ROLE_PREFIX):
             role = target[len(ROLE_PREFIX):]
             if role in roles:

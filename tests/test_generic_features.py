@@ -489,6 +489,31 @@ def test_draft_may_propose_features_but_never_confirms_them(tmp_path) -> None:
                           FakeClient(message(json.dumps(bad))), ReplyCache(tmp_path / f"{target}.json"), "x")
 
 
+def test_draft_feature_names_never_clash(tmp_path) -> None:
+    """Slug clashes in a draft: a slug drafted twice is prefixed with the source name; a name still taken (two columns
+    of one file with one slug, or a prefixed name equal to another column's slug) gets the first free suffix _2, _3."""
+    from emva.ingest.draft import _feature_names
+    from test_ingest import fixture_frames
+
+    frames = fixture_frames()
+    frames["leads.csv"] = frames["leads.csv"].assign(Size=frames["leads.csv"]["size"])
+    frames["orgs.csv"] = frames["orgs.csv"].assign(leads_size="x")
+    reply = _reply()
+    reply["columns"] = [c for c in reply["columns"] if c["column"] != "size"] + [
+        {"file": f, "column": col, "target": "feature", "feature_kind": "categorical", "value_map": [],
+         "reason": "size", "confidence": "low"}
+        for f, col in (("leads.csv", "size"), ("leads.csv", "Size"), ("orgs.csv", "leads_size"))]
+    m = draft_mapping(profile(frames), FakeClient(message(json.dumps(reply))), ReplyCache(tmp_path / "c.json"), "d")
+    assert [(f.source.column, f.name) for f in m.features] == [
+        ("leads.size", "leads_size"), ("leads.Size", "leads_size_2"), ("orgs.leads_size", "leads_size_3")]
+    assert load_mapping(dump_mapping(m)) == m
+    names = {"a.csv": "a", "b.csv": "b"}
+    assert _feature_names([("a.csv", "x"), ("b.csv", "x"), ("a.csv", "a_x")], names) == {
+        ("a.csv", "x"): "a_x", ("b.csv", "x"): "b_x", ("a.csv", "a_x"): "a_x_2"}
+    with pytest.raises(ContractError, match="drafted as a feature more than once"):
+        _feature_names([("a.csv", "x"), ("a.csv", "x")], names)
+
+
 # --- report --------------------------------------------------------------------------------------------------------
 
 def test_report_has_the_generic_vs_v2_section(dataset) -> None:
