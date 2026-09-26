@@ -50,10 +50,12 @@ from emva.constants import (
 
 
 class FeatureSet(str, Enum):
-    """``--feature-set``: ``legacy`` = the baseline's features, ``v2`` = plan Phase 2 (default)."""
+    """``--feature-set``: ``legacy`` = the baseline's features, ``v2`` = plan Phase 2 (default), ``generic`` = v2 plus
+    a converted dataset's declared extra columns (Phase 10, ``emva.generic``, ADR 0024)."""
 
     LEGACY = "legacy"
     V2 = "v2"
+    GENERIC = "generic"
 
 
 # Plan 2.6: v2 candidates dropped because no level's 95% coefficient-bootstrap CI excludes zero on v1

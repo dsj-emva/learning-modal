@@ -32,11 +32,17 @@ dataset store take:
   ``as_of`` is wrong: refused). A non-positive deal value is left blank (``log`` of the value model is undefined) and
   counted.
 - ``companies.csv`` and ``people.csv``: header only (company and person columns are not mapped).
+- ``extra_features.csv`` (Phase 10, ADR 0024; only when the mapping declares ``[[features]]``, which then needs
+  ``features_confirmed = true``): ``lead_id`` plus one column per declared feature, named by its ``name``, holding
+  the raw value of its source expression (text for a column, numbers for ``sum`` / ``product``), no encoding: the
+  generic feature set (``emva.generic``) fits the encoding on the training leads. A numeric feature with a non-number,
+  or a date-valued feature expression, is refused. ``historical_leads.csv`` stays exactly the fixed schema.
 - ``dataset.json``: ``emva_dataset_format``, ``mapping``, ``as_of``, ``test_from``, ``source_url``, ``licence``, row
   counts, the derived-value counts above, ``mapped_targets``, and ``coverage``: one entry per v2 design column (the 39
   of ``emva.design.fixed_design`` over ``emva.features.CATS_V2``) with its feature, the mapped inputs feeding it, the
   number of cleaned leads with a 1, and a status: ``data`` (varies across leads), ``constant`` (inputs mapped, but no
-  variation) or ``unfilled`` (no input mapped).
+  variation) or ``unfilled`` (no input mapped). With ``[[features]]`` it also has ``features``: one
+  ``{name, kind, source}`` per declared feature (``emva.generic.read_extra_features`` reads it).
 """
 from __future__ import annotations
 
@@ -54,6 +60,7 @@ from emva.dataset_meta import DATASET_META_FILE, FORMAT_KEY, FORMAT_VERSION, par
 from emva.design import fixed_design
 from emva.eval.evaluation_only import is_evaluation_only
 from emva.features import CATS_V2, SESSION_INPUTS, add_features_v2
+from emva.generic import EXTRA_FEATURES_FILE, EXTRA_PREFIX, ExtraKind
 from emva.ingest.mapping import (
     ANSWER_PREFIX,
     IGNORE,
@@ -307,6 +314,20 @@ def _check_target(target: str, s: pd.Series) -> pd.Series:
     return s
 
 
+def extra_values(raw: pd.DataFrame, mapping: DatasetMapping) -> pd.DataFrame:
+    """One column per declared ``[[features]]`` row (named by its ``name``, declaration order) over the joined rows
+    ``raw``: numeric features as floats, categorical ones as their source values. Raises ``ValueError`` for a missing
+    column, a non-number in a numeric feature or a date-valued expression."""
+    out: dict[str, pd.Series] = {}
+    for f in mapping.features:
+        v = evaluate(f.source, raw, f"feature {f.name}")
+        if isinstance(v.dtype, pd.DatetimeTZDtype) or pd.api.types.is_datetime64_any_dtype(v.dtype):
+            raise ValueError(f"feature {f.name!r}: its source is a date expression; a feature is a number or a "
+                             "category")
+        out[f.name] = _numbers(v, f"feature {f.name}") if ExtraKind(f.kind) is ExtraKind.NUMERIC else v
+    return pd.DataFrame(out, index=raw.index, columns=[f.name for f in mapping.features])
+
+
 def _listed(mask: pd.Series, ids: pd.Series) -> str:
     """``N lead(s), e.g. [...]`` for the rows where ``mask`` is True."""
     return f"{int(mask.sum())} lead(s), e.g. {list(ids[mask][:MAX_LISTED])}"
@@ -350,7 +371,8 @@ def convert_leads(frames: dict[str, pd.DataFrame], mapping: DatasetMapping) -> p
 
     The same field rules as ``convert`` (one code path, ``_lead_rows``): mapped values checked against the form
     options, unmapped columns blank, ``form_variant`` "A" when unmapped, email placeholder
-    ``<lead_id>@unmapped.invalid``.
+    ``<lead_id>@unmapped.invalid``. A mapping with ``[[features]]`` adds one column ``x_<name>`` per feature (the
+    values ``extra_features.csv`` would hold), which ``emva.scoring`` reads with a generic-feature-set bundle.
     Only the submit-time part of the mapping is read (``DatasetMapping.source_columns``): no outcome, won / close /
     contacted date or deal value, so those columns may be absent, and only the source files it names are needed.
     ``lead_id``: the mapped id when its columns are present (blank or repeated ids raise), else ``new-000001``, ... in
@@ -380,17 +402,22 @@ def convert_leads(frames: dict[str, pd.DataFrame], mapping: DatasetMapping) -> p
         out[c] = out[c].map({"True": True, "False": False})
     for c in (INT_TARGETS | FLOAT_TARGETS) & set(out.columns):
         out[c] = pd.to_numeric(out[c]).astype(float)
+    extras = extra_values(raw, mapping)
+    for name in extras.columns:
+        out[EXTRA_PREFIX + name] = extras[name].astype(object)
     return out.reset_index(drop=True)
 
 
 def convert(frames: dict[str, pd.DataFrame], mapping: DatasetMapping) -> dict[str, bytes]:
     """Convert raw source ``frames`` (file name -> frame, cells as text: ``frames_from_bytes``) with ``mapping``.
 
-    Returns the five files plus ``dataset.json`` (module docstring). Raises ``ValueError`` when the mapping is a draft
-    (``outcome_confirmed = false``), and for anything the mapping does not cover: a missing file or column, an outcome
-    value not mapped, a blank ``created_at`` (unless ``drop_rows_without_created_at``), a blank or repeated lead id, a
-    Won lead with neither ``won_at`` nor ``close_at``, a Lost lead without ``close_at`` (unless
-    ``lost_without_close = "as_of"``), an event after ``as_of``, or a field value outside its column's type or options.
+    Returns the five files plus ``dataset.json`` (module docstring), and ``extra_features.csv`` when the mapping
+    declares ``[[features]]``. Raises ``ValueError`` when the mapping is a draft (``outcome_confirmed = false``, or
+    ``[[features]]`` with ``features_confirmed = false``), and for anything the mapping does not cover: a missing file
+    or column, an outcome value not mapped, a blank ``created_at`` (unless ``drop_rows_without_created_at``), a blank
+    or repeated lead id, a Won lead with neither ``won_at`` nor ``close_at``, a Lost lead without ``close_at`` (unless
+    ``lost_without_close = "as_of"``), an event after ``as_of``, a field value outside its column's type or options, or
+    a feature value ``extra_values`` refuses.
     """
     check_confirmed(mapping)
     as_of = parse_as_of(mapping.as_of)
@@ -475,6 +502,8 @@ def convert(frames: dict[str, pd.DataFrame], mapping: DatasetMapping) -> dict[st
     files = {LEADS_FILE: _csv(leads), CRM_FILE: _csv(crm),
              COMPANIES_FILE: _csv(pd.DataFrame(columns=COMPANIES_COLUMNS)),
              PEOPLE_FILE: _csv(pd.DataFrame(columns=PEOPLE_COLUMNS))}
+    if mapping.features:
+        files[EXTRA_FEATURES_FILE] = _csv(pd.concat([lead_id.rename("lead_id"), extra_values(raw, mapping)], axis=1))
 
     mapped = mapping.mapped_targets()
     meta = {FORMAT_KEY: FORMAT_VERSION, "mapping": mapping.name, "as_of": mapping.as_of,
@@ -485,6 +514,9 @@ def convert(frames: dict[str, pd.DataFrame], mapping: DatasetMapping) -> dict[st
             "non_positive_deal_values_blanked": int(non_positive.sum()), "crm_ties_separated": ties,
             "crm_times_reordered": reordered, "crm_times_reordered_ids": reordered_ids,
             "mapped_targets": mapped, "coverage": coverage(files, mapped)}
+    if mapping.features:
+        meta["features"] = [{"name": e.name, "kind": e.kind.value, "source": e.source}
+                            for e in (f.extra() for f in mapping.features)]
     files[DATASET_META_FILE] = (json.dumps(meta, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
     return files
 
@@ -510,5 +542,5 @@ def coverage(files: dict[str, bytes], mapped_targets: list[str]) -> list[dict[st
 
 
 __all__ = ["COMPANIES_COLUMNS", "CRM_COLUMNS", "DERIVED_COUNTS", "FEATURE_INPUTS", "PEOPLE_COLUMNS",
-           "PLACEHOLDER_DOMAIN", "convert", "convert_leads", "coverage", "evaluate", "frames_from_bytes",
-           "join_sources"]
+           "PLACEHOLDER_DOMAIN", "convert", "convert_leads", "coverage", "evaluate", "extra_values",
+           "frames_from_bytes", "join_sources"]

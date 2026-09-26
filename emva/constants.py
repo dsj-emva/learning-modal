@@ -133,6 +133,12 @@ LEGAL_SUFFIXES: frozenset[str] = frozenset({"ltd", "limited", "inc", "llc", "gmb
 # at or above this makes the free text "copy_paste".
 BOILERPLATE_SIMILARITY_THRESHOLD: float = 0.6
 
+# Generic feature set (Phase 10, ADR 0024): extra source columns declared in a mapping's ``[[features]]``, encoded on
+# the training leads only. A categorical level is kept when at least GENERIC_MIN_LEVEL_COUNT training leads have it
+# (rarer and unseen values fall into ``other``); a numeric extra gets GENERIC_NUMERIC_BINS quantile bins.
+GENERIC_MIN_LEVEL_COUNT: int = 30
+GENERIC_NUMERIC_BINS: int = 5
+
 # Collinearity check (plan 2.7): the largest |correlation| allowed between two design columns.
 MAX_ABS_DESIGN_CORR: float = 0.95
 

@@ -508,6 +508,7 @@ def test_redact_keeps_dates_and_small_numbers() -> None:
 
 def _reply() -> dict:
     col = lambda file, column, target, **kw: {"file": file, "column": column, "target": target,  # noqa: E731
+                                               "feature_kind": kw.get("kind", "none"),
                                                "value_map": kw.get("vm", []), "reason": "r", "confidence": "high"}
     return {
         "sources": [{"file": "leads.csv", "join_on": ""}, {"file": "orgs.csv", "join_on": "org"}],

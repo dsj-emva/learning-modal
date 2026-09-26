@@ -29,6 +29,11 @@ frozen baseline script hard-codes, so the report omits the baseline row, the pai
 "legacy labels equal the baseline's" check, and says so (ADR 0022); it does the same when the baseline script fails.
 Without ``status_quo_rules.json`` (converted datasets have none) the status-quo row is omitted with a note.
 
+With ``--feature-set generic`` (Phase 10, ADR 0024; a converted dataset with declared extras) a v2 model is trained
+on the same data, labels and split, and a "Generic vs v2" section follows the collinearity check: the paired AUC
+difference generic − v2 on both test sets, the Phase 10 criterion's verdict and the extras' leakage screen
+(``emva.eval.generic_report``).
+
 Revenue is recorded deal value for won test leads, 0 when blank or not won. This differs
 from the baseline script's own ``top20_revenue``, which fills blank deal values with its own
 predicted value; that would move with each candidate's value model, so the report does not
@@ -52,6 +57,7 @@ from emva.constants import AS_OF, LABEL_SOURCES, TEST_FROM, TOP_FRACTION
 from emva.dataset_meta import dataset_dates, has_dataset_meta
 from emva.eval.bootstrap import N_RESAMPLES, SEED, auc_ci, paired_auc
 from emva.eval.collinearity import CollinearityResult, check_collinearity, format_result
+from emva.eval.generic_report import LEAKAGE_AUC_FLAG, LEAKAGE_FLAG_TEXT, GenericComparison, compare
 from emva.eval.metrics import (
     auc_by_month,
     bottom_share,
@@ -348,6 +354,34 @@ def collinearity_section(result: PipelineResult) -> tuple[list[str], Collinearit
              "", *format_result(res), ""], res)
 
 
+def generic_sections(cmp: GenericComparison, generic: PipelineResult, collinearity: CollinearityResult,
+                     n_resamples: int, seed: int) -> list[str]:
+    """The "Generic vs v2" section (``emva.eval.generic_report``) as markdown lines: the paired comparison on each test
+    set, the generic design's collinearity verdict, the Phase 10 criterion and the leakage screen."""
+    n_x = len(generic.extras.columns())
+    table = pd.DataFrame([{"test set": title, "n": cmp.sizes[title], "v2 AUC": f"{c.auc_a:.3f}",
+                           "generic AUC": f"{c.auc_b:.3f}", "generic − v2": f"{c.diff.point:+.3f}",
+                           "95% CI": f"[{c.diff.lo:+.3f}, {c.diff.hi:+.3f}]", "bootstrap p": f"{c.p_value:.3f}"}
+                          for title, c in cmp.paired.items()])
+    screen = cmp.screen.assign(**{"training AUC": cmp.screen["training AUC"].map(_fmt_num)})
+    flagged = [str(x) for x in cmp.screen.extra[cmp.screen.flag != ""]]
+    return ["## Generic vs v2 (Phase 10, ADR 0024)", "",
+            f"Both models trained on the same rows and split with the same labels: `v2` (the fixed "
+            f"{generic.design.shape[1] - n_x}-column design) and `generic` (the same plus {n_x} `x_` columns from "
+            f"{len(cmp.screen)} declared extras, encoded on the {int(generic.train.sum())} training leads only). "
+            f"Paired bootstrap of AUC(generic) − AUC(v2) on shared resamples ({n_resamples} resamples, seed {seed}).",
+            "", md_table(table), "",
+            f"Generic design collinearity: {collinearity.describe()} (details in the collinearity section above).", "",
+            f"**Phase 10 criterion (pre-registered): {'PASS' if cmp.passed else 'FAIL'}.** PASS iff on the horizon test "
+            "set (b) the 95% CI of generic − v2 lies entirely above 0 and the generic design passes the collinearity "
+            "check.", "",
+            "### Leakage screen", "",
+            "Single-feature training AUC of each extra's encoded levels (each level scored by its training win rate), "
+            f"folded as |AUC − 0.5| + 0.5. Above {LEAKAGE_AUC_FLAG:.2f}: flagged \"{LEAKAGE_FLAG_TEXT}\" (a flag only; "
+            "nothing is dropped).", "", md_table(screen), "",
+            f"Flagged: {', '.join(flagged)}." if flagged else "Flagged: none.", ""]
+
+
 def build_report(data: str | Path, n_resamples: int = N_RESAMPLES, seed: int = SEED,
                  labels: LabelConfig = HORIZON, features: FeatureSet = FeatureSet.V2) -> str:
     """Compute every section of the standard report and return it as markdown."""
@@ -447,6 +481,11 @@ def build_report_with_check(data: str | Path, n_resamples: int = N_RESAMPLES, se
                                  None if base is None else base.value_formula)
     collinearity_lines, collinearity = collinearity_section(cand_result)
     out += collinearity_lines
+    if cand_result.features is FeatureSet.GENERIC:
+        v2_result = run(data, labels=labels, features=FeatureSet.V2)
+        cmp = compare(cand_result, v2_result, [(t.title, t.y) for t in (test_a, test_b)], test_b.title,
+                      collinearity, n_resamples, seed)
+        out += generic_sections(cmp, cand_result, collinearity, n_resamples, seed)
     if base is None:
         out += ["## Baseline script output", "", f"- {baseline_note}"]
     else:

@@ -16,7 +16,7 @@ from emva.persist import FORMAT_VERSION, ModelBundle, load_bundle, save_bundle
 from conftest import DATA_V1, DATA_V2, REPO
 
 
-@pytest.mark.parametrize("feature_set", list(FeatureSet))
+@pytest.mark.parametrize("feature_set", [fs for fs in FeatureSet if fs is not FeatureSet.GENERIC])  # no extras here
 def test_round_trip(tmp_path, trained_run, feature_set):
     result = trained_run(DATA_V2, feature_set)
     save_bundle(result, tmp_path / "model.joblib", DATA_V2, margin=0.8)

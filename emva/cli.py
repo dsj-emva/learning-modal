@@ -13,7 +13,9 @@ def add_feature_arguments(ap: argparse.ArgumentParser) -> None:
     """Add ``--feature-set``."""
     ap.add_argument("--feature-set", choices=[f.value for f in FeatureSet], default=FeatureSet.V2.value,
                     help="legacy = baseline features and fixed deal-value residual sd (with --label-mode legacy: "
-                         "byte-identical outputs); v2 = plan Phase 2 features, residual sd estimated (default)")
+                         "byte-identical outputs); v2 = plan Phase 2 features, residual sd estimated (default); "
+                         "generic = v2 plus the dataset's declared extra columns (a converted dataset with "
+                         "extra_features.csv, ADR 0024)")
 
 
 def feature_set(a: argparse.Namespace) -> FeatureSet:

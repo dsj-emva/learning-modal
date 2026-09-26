@@ -4,7 +4,8 @@ A bundle holds everything ``emva.scoring`` needs to score a new lead exactly as 
 own leads: the feature set, label config and margin; the fitted formula model and its design columns; the
 deal-value model and its design columns; the fitted value transform (None in legacy label mode); the
 scorecard; the raw ``historical_leads.csv`` schema (column dtypes, used to coerce form input); each model
-feature's allowed levels; and provenance (UTC creation time, data directory name, library versions).
+feature's allowed levels; the extras' frozen encoder (generic feature set, else None); and provenance (UTC
+creation time, data directory name, library versions).
 
 The file is a joblib pickle of a plain dict with a ``format_version`` key, checked before the bundle is
 built, so a bundle from an incompatible release fails with a clear ``ValueError`` instead of an unpickling
@@ -26,6 +27,7 @@ from sklearn.linear_model import LogisticRegression
 from emva.constants import DEAL_VALUE_FEATURES
 from emva.feature_spec import feature_spec
 from emva.features import FeatureSet
+from emva.generic import GenericEncoder
 from emva.io import read_leads
 from emva.labels import LabelConfig
 from emva.pipeline import PipelineResult
@@ -33,7 +35,8 @@ from emva.value import DealValueModel
 from emva.value_transform import FittedValueTransform
 
 # Bump when a field is added, removed or changes meaning; load_bundle refuses any other version.
-FORMAT_VERSION: int = 1
+# 2 (Phase 10): the ``extras`` field (the generic feature set's encoder).
+FORMAT_VERSION: int = 2
 # File name ``python -m emva`` writes into ``--out``.
 BUNDLE_FILE: str = "model.joblib"
 
@@ -51,8 +54,10 @@ class ModelBundle:
     ``levels`` maps every categorical model feature (formula and deal-value) to the levels the fitted models
     can score (a lead with any other level is refused); ``lead_schema`` is an empty frame with the dtypes of
     the training ``historical_leads.csv`` (index ``lead_id``); ``weights`` is the ``weights.csv`` scorecard;
-    ``value_transform`` is None in legacy label mode (no ``value_at_submit``). Provenance: ``created_at``
-    (UTC ISO 8601), ``data_name`` (the training data directory's name), ``versions`` (``library_versions``).
+    ``value_transform`` is None in legacy label mode (no ``value_at_submit``); ``extras`` is the generic feature set's
+    encoder of the declared extra columns, fitted on the training leads (None for the other feature sets; its
+    ``x_`` columns are part of ``design_columns``, and an unseen categorical value is ``other``, not refused).
+    Provenance: ``created_at`` (UTC ISO 8601), ``data_name`` (the training data directory's name), ``versions`` (``library_versions``).
     """
 
     format_version: int
@@ -70,6 +75,7 @@ class ModelBundle:
     created_at: str
     data_name: str
     versions: dict[str, str]
+    extras: GenericEncoder | None = None
 
 
 def _column_levels(columns: tuple[str, ...], feature: str) -> list[str]:
@@ -111,7 +117,7 @@ def save_bundle(result: PipelineResult, path: str | Path, data: str | Path, marg
         model=result.model, deal_value=result.deal_value, value_transform=result.value_transform,
         weights=result.weights, lead_schema=read_leads(Path(data) / "historical_leads.csv").iloc[:0],
         created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"), data_name=Path(data).resolve().name,
-        versions=library_versions())
+        versions=library_versions(), extras=result.extras)
     joblib.dump({f.name: getattr(bundle, f.name) for f in fields(bundle)}, path)  # shallow: nested objects stay objects
 
 

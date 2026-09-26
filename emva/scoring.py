@@ -16,6 +16,11 @@ Rulings:
   levels (``ModelBundle.levels``), rather than mapping them to a missing level: a level the model never saw has
   no coefficient, and guessing one would silently misprice the lead. For the legacy feature set the allowed
   levels are those seen in training (its design is data-driven).
+- **Extras of the generic feature set** (Phase 10, ADR 0024): a bundle trained with ``--feature-set generic`` also
+  takes one raw column ``x_<name>`` per declared extra (``emva.ingest.convert.convert_leads`` adds them; an absent one
+  is blank, i.e. ``missing``). They are encoded with the bundle's frozen ``GenericEncoder``: an unseen categorical
+  value is ``other`` (a defined level, so it is not refused, amending ADR 0009 for extras only), a number outside the
+  training range falls into the edge bin, and a non-number in a numeric extra raises ``ValueError``.
 - **Bots and duplicates are flagged, not dropped** (``is_bot``, ``is_duplicate``), and still scored. The
   duplicate check sees only the batch passed in: a lead scored alone is never a duplicate, even if its email is
   in the training history. In the batch run such leads were dropped before scoring, so they have no batch score.
@@ -226,7 +231,8 @@ def _coerce(s: pd.Series, dtype: object) -> pd.Series:
 
 
 def _as_training_schema(bundle: ModelBundle, leads: pd.DataFrame) -> pd.DataFrame:
-    """``leads`` indexed by ``lead_id`` with every training column, in training order and dtypes."""
+    """``leads`` indexed by ``lead_id`` with every training column, in training order and dtypes, then the bundle's raw
+    extra columns (``x_<name>``, as given; blank when absent) for a generic-feature-set bundle."""
     if "lead_id" in leads.columns:
         L = leads.set_index("lead_id")
     elif leads.index.name == "lead_id":
@@ -236,15 +242,19 @@ def _as_training_schema(bundle: ModelBundle, leads: pd.DataFrame) -> pd.DataFram
     if L.index.duplicated().any():
         raise ValueError(f"duplicate lead_id values: {sorted(L.index[L.index.duplicated()].unique())[:5]}")
     schema = bundle.lead_schema
-    unknown = sorted(set(L.columns) - set(schema.columns))
+    extras = () if bundle.extras is None else bundle.extras.raw_columns
+    unknown = sorted(set(L.columns) - set(schema.columns) - set(extras))
     if unknown:
-        raise ValueError(f"unknown columns {unknown}; leads take historical_leads.csv columns only")
+        also = f" and the extras {list(extras)}" if extras else ""
+        raise ValueError(f"unknown columns {unknown}; leads take historical_leads.csv columns{also} only")
     if "email" not in L or L.email.isna().any():
         raise ValueError("every lead needs an email")
     blank = pd.Series(None, index=L.index, dtype=object)
     X = pd.DataFrame({c: _coerce(L[c] if c in L else blank, dtype) for c, dtype in schema.dtypes.items()},
                      index=L.index)
     X["answers"] = X.answers.fillna("{}")
+    for c in extras:
+        X[c] = L[c].astype(object) if c in L else blank
     return X
 
 
@@ -272,8 +282,11 @@ def prepare(bundle: ModelBundle, leads: pd.DataFrame, data: str | Path
     X = enrich(_as_training_schema(bundle, leads), read_companies(data))
     X = spec.featurise(flag_bots_and_duplicates(X))
     check_levels(bundle, X)
+    D = spec.design(X)
+    if bundle.extras is not None:
+        D = D.join(bundle.extras.design(X))
     # the legacy designs are data-driven: a batch lacks absent levels' columns (zero) and may carry the reference's
-    D = spec.design(X).reindex(columns=list(bundle.design_columns), fill_value=0.0)
+    D = D.reindex(columns=list(bundle.design_columns), fill_value=0.0)
     M = spec.value_design(X).reindex(columns=list(bundle.value_columns), fill_value=0.0)
     return X, D, M
 

@@ -2,10 +2,13 @@
 
 The model sees only ``emva.ingest.profile`` profiles (names, types, share missing, distinct counts, min / max of dates
 and numbers, redacted examples of low-cardinality columns), never rows. It assigns each column a target from a
-closed enum (a schema column, a lead role such as ``lead.created_at``, ``value_map`` or ``ignore``) with a reason and a
-high / medium / low confidence, and proposes the outcome column and its stage map or won / lost values. It never
-converts rows or fills values, and it drafts no derived expressions (a person adds those while reviewing). The result
-always has ``outcome_confirmed = False``; ``emva.ingest.convert`` refuses it until a person sets it to true.
+closed enum (a schema column, a lead role such as ``lead.created_at``, ``value_map``, ``feature`` or ``ignore``) with a
+reason and a high / medium / low confidence, and proposes the outcome column and its stage map or won / lost values.
+``feature`` (Phase 10, ADR 0024) proposes the column as an extra of the generic feature set, with ``feature_kind``
+numeric or categorical (``none`` for every other target); its name is the column name as a slug (``feature_name``;
+prefixed with the source name when two files share it). It never converts rows or fills values, and it drafts no
+derived expressions (a person adds those while reviewing). The result always has ``outcome_confirmed = False`` and
+``features_confirmed = False``; ``emva.ingest.convert`` refuses it until a person sets them to true.
 
 ``as_of`` and ``test_from`` are not asked of the model: pass them, or they are computed from the profile of the
 column drafted as ``lead.created_at`` (``as_of`` = the day after the latest date among the drafted date columns,
@@ -34,6 +37,7 @@ import pandas as pd
 from emva.context.agent import MAX_ATTEMPTS, MODEL_ID, is_transport_error
 from emva.context.cache import ReplyCache, cache_key
 from emva.context.contract import STATUS_OK, STATUS_PARSE_ERROR, ContractError
+from emva.generic import ExtraKind
 from emva.ingest.mapping import (
     CONFIDENCES,
     IGNORE,
@@ -43,6 +47,7 @@ from emva.ingest.mapping import (
     TARGETS,
     DatasetMapping,
     Expr,
+    FeatureMap,
     FieldMap,
     LeadColumns,
     Outcome,
@@ -53,13 +58,17 @@ from emva.ingest.profile import ColumnProfile
 
 log = logging.getLogger(__name__)
 
-PROMPT_VERSION = "mapping-draft-v1"
+PROMPT_VERSION = "mapping-draft-v2"
 MAX_TOKENS = 8000
 # The cache key's second slot (the context agent's brief hash): drafts have no brief.
 DRAFT_BRIEF_HASH = "no-brief"
 ROLE_PREFIX = "lead."
 VALUE_MAP = "value_map"
-DRAFT_TARGETS: tuple[str, ...] = (*(ROLE_PREFIX + r for r in LEAD_ROLES), *TARGETS, VALUE_MAP, IGNORE)
+FEATURE = "feature"
+DRAFT_TARGETS: tuple[str, ...] = (*(ROLE_PREFIX + r for r in LEAD_ROLES), *TARGETS, VALUE_MAP, FEATURE, IGNORE)
+# ``feature_kind`` of a column drafted as anything but ``feature``.
+NO_KIND = "none"
+FEATURE_KINDS: tuple[str, ...] = (*(k.value for k in ExtraKind), NO_KIND)
 # Placeholder dates used only to validate a reply's content before the real dates are known.
 _CHECK_DATES = ("2000-01-02", "2000-01-01")
 TEST_SHARE_OF_SPAN: float = 0.8
@@ -75,8 +84,13 @@ there is no won_at column), lead.deal_value (amount of a won deal);
 - a schema column (form and tracking fields; answers.<key> are form answers) when the column means the same thing;
 - value_map when the column's values translate into one or more schema columns (list every source value you see, \
 each with the target and value it sets; categorical schema columns only accept their listed options);
-- ignore for anything else, including every column that is only known after the outcome (it would leak the label).
-Give a reason (at most 25 words) and a confidence: high, medium or low.
+- feature when no schema column fits but the column describes the lead AT THE MOMENT IT CAME IN and could predict \
+the outcome (e.g. product, industry, company size, lead source, booking attributes); set feature_kind to numeric \
+(a number whose size matters) or categorical (a label, code or id-like category); a person confirms it later;
+- ignore for anything else, including every column that is only known after the outcome (it would leak the label) \
+and free text, ids unique per row, emails, phone numbers and names of the lead.
+For every target other than feature, set feature_kind to none. Give a reason (at most 25 words) and a confidence: \
+high, medium or low.
 
 Then name the outcome: kind stage (a column of CRM stages: map every value to New, Contacted, Qualified, Demo booked, \
 Proposal, Won or Lost), won_flag (a column whose values mean won or lost: list both), or presence (won when the \
@@ -96,6 +110,7 @@ RESPONSE_SCHEMA: dict[str, Any] = _object({
     "columns": {"type": "array", "items": _object({
         "file": {"type": "string"}, "column": {"type": "string"},
         "target": {"type": "string", "enum": list(DRAFT_TARGETS)},
+        "feature_kind": {"type": "string", "enum": list(FEATURE_KINDS)},
         "value_map": {"type": "array", "items": _object({
             "source_value": {"type": "string"}, "target": {"type": "string", "enum": list(TARGETS)},
             "target_value": {"type": "string"}})},
@@ -135,6 +150,13 @@ def source_name(file: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", PurePath(file).stem.lower()).strip("_") or "source"
 
 
+def feature_name(column: str) -> str:
+    """A feature name from a column name: lower-cased, runs of other characters turned into ``_`` (``x`` prefixed
+    when the result would not start with a letter or digit)."""
+    slug = re.sub(r"[^a-z0-9]+", "_", column.lower()).strip("_")
+    return slug if slug and slug[0].isalnum() else f"x{slug}"
+
+
 def _ref(file: str, column: str, names: dict[str, str], columns: dict[str, set[str]]) -> str:
     """``<source>.<column>`` for a column the profiles list; ``ContractError`` otherwise."""
     if file not in names:
@@ -165,11 +187,21 @@ def _build(reply: dict[str, Any], profiles: list[ColumnProfile], name: str, as_o
     roles: dict[str, Expr] = {}
     review: dict[str, Review] = {}
     fields = []
+    features = []
+    drafted = [c for c in reply["columns"] if c["target"] == FEATURE]
+    slugs = [feature_name(c["column"]) for c in drafted]
     for c in reply["columns"]:
         ref = _ref(c["file"], c["column"], names, columns)
         note = Review(c["reason"], c["confidence"])
         target = c["target"]
-        if target.startswith(ROLE_PREFIX):
+        if (target == FEATURE) != (c["feature_kind"] != NO_KIND):
+            raise ContractError(f"{ref}: feature_kind {c['feature_kind']!r} with target {target!r} (a feature needs "
+                                f"numeric or categorical, any other target {NO_KIND!r})")
+        if target == FEATURE:
+            slug = feature_name(c["column"])
+            name_ = slug if slugs.count(slug) == 1 else feature_name(f"{names[c['file']]}_{c['column']}")
+            features.append(FeatureMap(Expr.col(ref), c["feature_kind"], name_, note))
+        elif target.startswith(ROLE_PREFIX):
             role = target[len(ROLE_PREFIX):]
             if role in roles:
                 raise ContractError(f"two columns drafted as {target}")
@@ -192,7 +224,8 @@ def _build(reply: dict[str, Any], profiles: list[ColumnProfile], name: str, as_o
                       lost_values=tuple(o["lost_values"]) if o["kind"] == "won_flag" else ())
     review["outcome"] = Review(o["reason"], o["confidence"])
     return DatasetMapping(name=name, sources=tuple(sources), lead=LeadColumns(**roles), outcome=outcome, as_of=as_of,
-                          test_from=test_from, fields=tuple(fields), outcome_confirmed=False, review=review)
+                          test_from=test_from, fields=tuple(fields), outcome_confirmed=False, review=review,
+                          features=tuple(features), features_confirmed=False)
 
 
 def _known(file: str, names: dict[str, str]) -> str:
@@ -321,6 +354,6 @@ def draft_mapping(profiles: list[ColumnProfile], client: anthropic.Anthropic | N
     return _build(entry["reply"], profiles, name, as_of, test_from)
 
 
-__all__ = ["DRAFT_TARGETS", "MAX_TOKENS", "PROMPT_VERSION", "RESPONSE_SCHEMA", "SYSTEM_PROMPT", "check_reply",
-           "default_dates", "draft_key", "draft_mapping", "is_cached", "parse_reply", "profiles_hash",
-           "prompt_fingerprint", "render_profiles", "source_name"]
+__all__ = ["DRAFT_TARGETS", "FEATURE", "FEATURE_KINDS", "MAX_TOKENS", "NO_KIND", "PROMPT_VERSION", "RESPONSE_SCHEMA",
+           "SYSTEM_PROMPT", "check_reply", "default_dates", "draft_key", "draft_mapping", "feature_name", "is_cached",
+           "parse_reply", "profiles_hash", "prompt_fingerprint", "render_profiles", "source_name"]

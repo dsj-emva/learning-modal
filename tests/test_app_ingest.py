@@ -196,8 +196,8 @@ def test_convert_raw_saves_uploaded_rules_after_checking_them() -> None:
 # --- drafting: fake client, no API ------------------------------------------------------------------------------------
 
 def _col(file: str, column: str, target: str, confidence: str = "high", vm: list | None = None) -> dict:
-    return {"file": file, "column": column, "target": target, "value_map": vm or [], "reason": "hand-built test reply",
-            "confidence": confidence}
+    return {"file": file, "column": column, "target": target, "feature_kind": "none", "value_map": vm or [],
+            "reason": "hand-built test reply", "confidence": confidence}
 
 
 def hand_built_reply(created_at: str = "first_contact_date") -> dict:
