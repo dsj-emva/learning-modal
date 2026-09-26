@@ -24,7 +24,7 @@ from pathlib import Path
 import anthropic
 import pandas as pd
 
-from app.storage import DATASET_META_FILE, MAPPING_FILE, REPO_ROOT, list_mappings
+from app.storage import DATASET_META_FILE, MAPPING_FILE, REPO_ROOT, RULES_FILE, list_mappings
 from app.validation import ValidationReport, validate_files
 from emva.context.agent import MODEL_ID, make_client
 from emva.context.cache import ReplyCache
@@ -463,22 +463,27 @@ def draft(profiles: list[ColumnProfile], root: str | Path, name: str,
 
 @dataclass(frozen=True)
 class Conversion:
-    """A conversion: ``files`` (the five training files, ``dataset.json`` and ``mapping.toml``, ready for
-    ``save_dataset``), ``meta`` (``dataset.json`` parsed) and ``report`` (``validate_files`` of ``files``)."""
+    """A conversion: ``files`` (the training files, ``dataset.json``, ``mapping.toml`` and any uploaded
+    ``status_quo_rules.json``, ready for ``save_dataset``), ``meta`` (``dataset.json`` parsed) and ``report`` (``validate_files`` of ``files``)."""
 
     files: dict[str, bytes]
     meta: dict
     report: ValidationReport
 
 
-def convert_raw(frames: Mapping[str, pd.DataFrame], mapping: DatasetMapping, date: str) -> Conversion:
+def convert_raw(frames: Mapping[str, pd.DataFrame], mapping: DatasetMapping, date: str,
+                rules: bytes | None = None) -> Conversion:
     """Convert the raw ``frames`` with a confirmed ``mapping`` (``emva.ingest.convert``), add the mapping as
-    ``mapping.toml`` (``dump_mapping``, header noting it was confirmed in Keel on ``date``) and validate the result.
+    ``mapping.toml`` (``dump_mapping``, header noting it was confirmed in Keel on ``date``) and, when given, the
+    uploaded status-quo ``rules`` as ``status_quo_rules.json`` (so the standard report gets a status-quo row), then
+    validate the result (the rules by the same checks as an upload in EMVA's format).
 
     Raises ``ValueError`` for a draft mapping and for everything ``convert`` refuses (message fit for the page).
     """
     files = convert(dict(frames), mapping)
     files[MAPPING_FILE] = dump_mapping(mapping, SAVED_HEADER.format(date=date)).encode("utf-8")
+    if rules is not None:
+        files[RULES_FILE] = rules
     return Conversion(files, json.loads(files[DATASET_META_FILE]), validate_files(files))
 
 

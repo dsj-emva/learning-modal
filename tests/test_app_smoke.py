@@ -140,7 +140,7 @@ def _confirm_and_convert(at: AppTest) -> AppTest:
 def test_map_convert_validate_save_with_a_saved_mapping(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Raw Olist-shaped CSVs -> the committed hand-written mapping -> confirm -> convert -> check -> save, no model."""
     from app import ingest, storage
-    from conftest import olist_raw
+    from conftest import REPO, olist_raw
 
     _no_model_call(monkeypatch)
     at = _sign_in(_app(monkeypatch, tmp_path), "letmein")
@@ -154,7 +154,9 @@ def test_map_convert_validate_save_with_a_saved_mapping(monkeypatch: pytest.Monk
     assert not at.exception, at.exception
     assert "Loaded olist_funnel" in _text(at) and "Review the mapping" in _text(at)
     assert at.button(key="mc_convert").disabled  # not before the outcome mapping is confirmed
-    at = _confirm_and_convert(at)
+    rules = (REPO / "data" / "v1" / "status_quo_rules.json").read_bytes()
+    at.file_uploader(key="mc_rules").upload("status_quo_rules.json", rules, "application/json")
+    at = _confirm_and_convert(at.run())
     assert not at.exception, at.exception
     page = _text(at)
     assert "fills " in page and " of 39 signals" in page and "Check results" in page and "Save as a dataset" in page
@@ -165,6 +167,8 @@ def test_map_convert_validate_save_with_a_saved_mapping(monkeypatch: pytest.Monk
     assert not at.exception, at.exception
     saved = Path(storage.get_dataset(tmp_path, "olist-smoke").path)
     assert {"mapping.toml", "dataset.json", "historical_leads.csv"} <= {p.name for p in saved.iterdir()}
+    assert (saved / "status_quo_rules.json").read_bytes() == rules
+    assert storage.get_dataset(tmp_path, "olist-smoke").has_rules
     assert ingest.mapping_choices(tmp_path)[0].key == "saved:olist-smoke"  # offered for the next export
     assert at.selectbox(key="train_ds").value == "olist-smoke"  # the train picker moves to the saved dataset
 

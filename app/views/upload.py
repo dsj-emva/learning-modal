@@ -15,6 +15,7 @@ from app import charts, ingest, storage, training, ui
 from app import components as C
 from app.storage import StorageError
 from app.validation import ValidationReport, validate_files
+from emva.ingest.convert import DEFAULT_FORM_VARIANT
 from emva.ingest.draft import source_name
 from emva.ingest.mapping import (
     CONFIDENCES,
@@ -354,14 +355,23 @@ def _convert_step(root: Path, mapping: DatasetMapping | None, error: str | None,
         ui.html(C.callout(error or "", "warn", lead="The mapping is not complete:"))
         return
     toml = dump_mapping(mapping)
-    digest = hashlib.sha256(toml.encode("utf-8")).hexdigest()[:12]
+    up = st.file_uploader(f"Status-quo rules (optional) · {storage.RULES_FILE}", type=["json"], key="mc_rules",
+                          help="Today's bucket values for this source, in the sample's format: saved with the dataset "
+                               "so the standard report gets a status-quo row. Converted leads all have form variant "
+                               f"{DEFAULT_FORM_VARIANT}, so base_value_by_form needs it.")
+    rules = None
+    if up is not None and up.name.lower().startswith(storage.FORBIDDEN_PREFIX):
+        ui.html(C.callout(f"Refused {up.name}: evaluation-only ground-truth files are never accepted.", "bad"))
+    elif up is not None:
+        rules = up.getvalue()
+    digest = hashlib.sha256(toml.encode("utf-8") + (rules or b"")).hexdigest()[:12]
     ok = st.checkbox("Outcome mapping confirmed: I checked which leads count as won and lost, and the dates.",
                      key=f"mc_confirm_{digest}")
     if st.button("Convert", type="primary", icon=":material/transform:", key="mc_convert", disabled=not ok):
         try:
             with st.spinner("Converting…"):
                 conv = ingest.convert_raw(frames, ingest.confirm(mapping),
-                                          datetime.now(timezone.utc).date().isoformat())
+                                          datetime.now(timezone.utc).date().isoformat(), rules)
         except ValueError as e:
             st.session_state.pop(MC_CONV, None)
             ui.html(C.callout(str(e), "bad", lead="The conversion refused these files:"))
@@ -374,7 +384,8 @@ def _convert_step(root: Path, mapping: DatasetMapping | None, error: str | None,
     if held is None:
         return
     if held[0] != digest:
-        ui.html(C.callout("Convert again before saving.", "warn", lead="The mapping changed since the conversion."))
+        ui.html(C.callout("Convert again before saving.", "warn",
+                          lead="The mapping or the rules changed since the conversion."))
         return
     _coverage(held[1].meta)
 

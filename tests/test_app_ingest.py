@@ -177,6 +177,21 @@ def test_convert_raw_adds_the_confirmed_mapping_and_validates() -> None:
     assert "lost_dated_at_as_of" in keys and "crm_times_reordered" not in keys
 
 
+def test_convert_raw_saves_uploaded_rules_after_checking_them() -> None:
+    """R38: a Map & convert upload of status_quo_rules.json goes through the same checks and is saved with the data."""
+    rules = (REPO / "data" / "v1" / "status_quo_rules.json").read_bytes()
+    conv = ingest.convert_raw(ingest.raw_frames(olist_raw()), _olist(), "2026-09-26", rules)
+    assert conv.files[storage.RULES_FILE] == rules and conv.report.ok
+    assert not [w for w in conv.report.warnings if w.file == storage.RULES_FILE]
+    bad = ingest.convert_raw(ingest.raw_frames(olist_raw()), _olist(), "2026-09-26", b'{"value_rules": []}')
+    assert {e.column for e in bad.report.errors if e.file == storage.RULES_FILE} >= {"base_value_by_form",
+                                                                                     "lead_score"}
+    no_a = json.loads(rules)
+    del no_a["base_value_by_form"]["A"]  # converted leads all have form variant A
+    missing = ingest.convert_raw(ingest.raw_frames(olist_raw()), _olist(), "2026-09-26", json.dumps(no_a).encode())
+    assert not missing.report.ok
+
+
 # --- drafting: fake client, no API ------------------------------------------------------------------------------------
 
 def _col(file: str, column: str, target: str, confidence: str = "high", vm: list | None = None) -> dict:
