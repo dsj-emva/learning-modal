@@ -5,7 +5,8 @@ Layout, created by ``init_root``::
     DATA_DIR/
       registry.json            {"runs": [Run, ...]}  (atomic writes, guarded by registry.lock)
       datasets/<name>/         training files + keel_meta.json (the store's Dataset record); a converted dataset
-                               also holds mapping.toml (the confirmed mapping) and dataset.json (dates, coverage)
+                               also holds mapping.toml (the confirmed mapping) and dataset.json (dates, coverage),
+                               and, when its mapping declares extras, extra_features.csv (a training file)
       runs/<run_id>/           python -m emva --out (scores.csv, weights.csv, model.joblib), train.log, report.txt
 
 Only training-input files are accepted (``TRAINING_FILES``), plus the two metadata files a converted dataset carries
@@ -40,18 +41,21 @@ SAMPLE_DATASET_PATH: Path = REPO_ROOT / "data" / "v1"
 
 LEADS_FILE, CRM_FILE, COMPANIES_FILE, PEOPLE_FILE, RULES_FILE = (
     "historical_leads.csv", "crm_history.csv", "companies.csv", "people.csv", "status_quo_rules.json")
-# Every file a dataset may hold; the pipeline needs the first three, people.csv is never read by the model and
-# the rules only feed the status-quo benchmark.
-TRAINING_FILES: tuple[str, ...] = (LEADS_FILE, CRM_FILE, COMPANIES_FILE, PEOPLE_FILE, RULES_FILE)
+# The generic feature set's raw extras (``emva.generic.EXTRA_FEATURES_FILE``, Phase 10), written by the converter when
+# the mapping declares [[features]]. It is training data (the generic feature set learns from it), so it is a training
+# file, counted in ``Dataset.rows``; its columns are declared in the converter's dataset.json, so only a converted
+# dataset carries it (the EMVA-format upload has no slot for it) and ``app.validation`` refuses it without that
+# declaration (Phase 10 (b)).
+EXTRA_FEATURES_FILE: str = "extra_features.csv"
+# Every file a dataset may hold; the pipeline needs the first three, people.csv is never read by the model, the rules
+# only feed the status-quo benchmark and the extras only the generic feature set.
+TRAINING_FILES: tuple[str, ...] = (LEADS_FILE, CRM_FILE, COMPANIES_FILE, PEOPLE_FILE, RULES_FILE, EXTRA_FEATURES_FILE)
 REQUIRED_FILES: tuple[str, ...] = (LEADS_FILE, CRM_FILE, COMPANIES_FILE)
 # A dataset converted from a foreign CSV also keeps the mapping it was converted with and the converter's metadata
 # (the dataset's own as_of / test_from and a coverage table). The store writes them as given and reads only the
 # mapping's ``source_url``; a dataset that carries ``dataset.json`` is "converted".
 MAPPING_FILE, DATASET_META_FILE = "mapping.toml", "dataset.json"
-# Phase 10 (a): the generic feature set's raw extras (emva.generic), written by the converter when the mapping declares
-# [[features]]; stored as given, not validated here (Keel support comes with Phase 10 part b).
-EXTRA_FEATURES_FILE: str = "extra_features.csv"
-METADATA_FILES: tuple[str, ...] = (MAPPING_FILE, DATASET_META_FILE, EXTRA_FEATURES_FILE)
+METADATA_FILES: tuple[str, ...] = (MAPPING_FILE, DATASET_META_FILE)
 # Evaluation-only file names (ground truth) are refused on sight, never opened.
 FORBIDDEN_PREFIX: str = "ground_truth"
 
@@ -176,6 +180,12 @@ class Dataset:
     def has_rules(self) -> bool:
         """True when the dataset carries ``status_quo_rules.json`` (needed for the status-quo benchmark)."""
         return RULES_FILE in self.rows
+
+    @property
+    def has_extras(self) -> bool:
+        """True when the dataset carries ``extra_features.csv`` (the generic feature set can be trained on it). Read
+        from disk, like ``has_mapping``, so a dataset stored while the file was still metadata counts too."""
+        return (Path(self.path) / EXTRA_FEATURES_FILE).is_file()
 
     @property
     def has_mapping(self) -> bool:
@@ -450,8 +460,8 @@ def get_run(root: str | Path, run_id: str) -> Run:
     raise StorageError(f"no run '{run_id}'")
 
 
-__all__ = ["COMPANIES_FILE", "CRM_FILE", "DATASET_META_FILE", "Dataset", "LEADS_FILE", "MAPPING_FILE", "METADATA_FILES",
-           "PEOPLE_FILE", "REQUIRED_FILES", "RULES_FILE", "Run", "SAMPLE_DATASET_NAME", "STORE_META", "SavedMapping",
+__all__ = ["COMPANIES_FILE", "CRM_FILE", "DATASET_META_FILE", "Dataset", "EXTRA_FEATURES_FILE", "LEADS_FILE",
+           "MAPPING_FILE", "METADATA_FILES", "PEOPLE_FILE", "REQUIRED_FILES", "RULES_FILE", "Run", "SAMPLE_DATASET_NAME", "STORE_META", "SavedMapping",
            "StorageError", "TRAINING_FILES", "atomic_write_json", "check_file_name", "get_dataset", "get_run",
            "init_root", "is_converted", "list_datasets", "list_mappings", "list_runs", "new_run", "read_mapping",
            "register_run", "run_dir", "sample_dataset", "save_dataset", "update_run", "validate_name"]

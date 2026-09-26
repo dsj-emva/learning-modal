@@ -198,7 +198,7 @@ def test_unconfirmed_or_broken_mapping_is_an_error(converted: dict[str, bytes]) 
 
 
 def test_one_metadata_file_without_the_other_is_a_note(converted: dict[str, bytes]) -> None:
-    alone = {k: v for k, v in converted.items() if k != "dataset.json"}
+    alone = {k: v for k, v in converted.items() if k not in ("dataset.json", "extra_features.csv")}
     r = validate_files(alone)
     assert r.ok and any("without dataset.json" in m for m in _warnings(r, "mapping.toml"))
     r = validate_files({k: v for k, v in converted.items() if k != "mapping.toml"})
@@ -220,3 +220,64 @@ def test_snapshot_warning_uses_the_datasets_own_as_of(converted: dict[str, bytes
 def test_ground_truth_is_still_refused_next_to_metadata(converted: dict[str, bytes]) -> None:
     r = validate_files({**converted, "ground_truth_labels.csv": b""})
     _find(r, "ground_truth_labels.csv", None, "ground-truth")
+
+
+# --- extra_features.csv (Phase 10 (b), the generic feature set) -----------------------------------------------------
+
+def _extras(converted: dict[str, bytes], fn) -> dict[str, bytes]:
+    """``converted`` with extra_features.csv passed through ``fn(frame) -> frame`` (read as the pipeline reads it)."""
+    E = pd.read_csv(io.BytesIO(converted["extra_features.csv"]), dtype=str, keep_default_na=False, na_values=[""])
+    return {**converted, "extra_features.csv": fn(E).to_csv(index=False).encode()}
+
+
+def _declare(converted: dict[str, bytes], features: list[dict]) -> dict[str, bytes]:
+    """``converted`` with dataset.json declaring ``features``."""
+    meta = json.loads(converted["dataset.json"])
+    return {**converted, "dataset.json": json.dumps({**meta, "features": features}).encode()}
+
+
+def test_converted_extras_are_valid_and_summarised(converted: dict[str, bytes]) -> None:
+    assert "extra_features.csv" in converted  # the committed Olist mapping declares landing_page
+    r = validate_files(converted)
+    assert r.ok, r.errors
+    assert r.summary["extra_features"] == [("landing_page", "categorical")]
+    assert "extra_features" not in validate_dir(DATA_V1).summary
+
+
+def test_extras_columns_must_match_the_declaration(converted: dict[str, bytes]) -> None:
+    r = validate_files(_extras(converted, lambda E: E.rename(columns={"landing_page": "page"})))
+    _find(r, "extra_features.csv", None, "expected ['lead_id', 'landing_page']")
+    r = validate_files(_extras(converted, lambda E: E.assign(more="1")))
+    _find(r, "extra_features.csv", None, "expected ['lead_id', 'landing_page']")
+
+
+def test_extras_lead_ids_unique_and_matching_the_leads(converted: dict[str, bytes]) -> None:
+    r = validate_files(_extras(converted, lambda E: pd.concat([E, E.head(1)])))
+    _find(r, "extra_features.csv", "lead_id", "duplicate lead_id")
+    r = validate_files(_extras(converted, lambda E: E.assign(lead_id=E.lead_id.where(E.index > 0, ""))))
+    _find(r, "extra_features.csv", "lead_id", "have no lead_id")
+    r = validate_files(_extras(converted, lambda E: E.assign(lead_id=E.lead_id.where(E.index > 0, "nobody"))))
+    _find(r, "extra_features.csv", "lead_id", "not in historical_leads.csv")
+    _find(r, "extra_features.csv", "lead_id", "1 lead(s) of historical_leads.csv have no row here")
+    r = validate_files(_extras(converted, lambda E: E.iloc[1:]))
+    _find(r, "extra_features.csv", "lead_id", "have no row here")
+
+
+def test_numeric_extras_must_be_numbers(converted: dict[str, bytes]) -> None:
+    numeric = _declare(converted, [{"name": "landing_page", "kind": "numeric", "source": "mql.landing_page_id"}])
+    r = validate_files(_extras(numeric, lambda E: E.assign(landing_page=["12", "", *["3.5"] * (len(E) - 2)])))
+    assert r.ok, r.errors  # numbers or blank
+    r = validate_files(numeric)  # the landing page ids are hex strings
+    _find(r, "extra_features.csv", "landing_page", "are not numbers")
+
+
+def test_extras_and_their_declaration_come_together(converted: dict[str, bytes]) -> None:
+    r = validate_files({k: v for k, v in converted.items() if k != "extra_features.csv"})
+    _find(r, "extra_features.csv", None, "required file is missing: dataset.json declares the extra feature(s)")
+    meta = {k: v for k, v in json.loads(converted["dataset.json"]).items() if k != "features"}
+    r = validate_files({**converted, "dataset.json": json.dumps(meta).encode()})
+    _find(r, "extra_features.csv", None, "provided without a dataset.json that declares its features")
+    r = validate_files({k: v for k, v in converted.items() if k != "dataset.json"})
+    _find(r, "extra_features.csv", None, "provided without a dataset.json")
+    r = validate_files(_declare(converted, [{"name": "Bad Name", "kind": "categorical"}]))
+    _find(r, "dataset.json", "features", "must be lower-case")

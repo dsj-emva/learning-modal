@@ -163,7 +163,8 @@ def test_mapping_choices_list_saved_then_builtin(tmp_path: Path) -> None:
 
 def test_convert_raw_adds_the_confirmed_mapping_and_validates() -> None:
     conv = ingest.convert_raw(ingest.raw_frames(olist_raw()), _olist(), "2026-09-26")
-    assert set(conv.files) == {*storage.REQUIRED_FILES, storage.PEOPLE_FILE, *storage.METADATA_FILES}
+    assert set(conv.files) == {*storage.REQUIRED_FILES, storage.PEOPLE_FILE, *storage.METADATA_FILES,
+                               storage.EXTRA_FEATURES_FILE}
     text = conv.files[storage.MAPPING_FILE].decode()
     assert "Confirmed in Keel" in text and "2026-09-26" in text
     assert load_mapping(text, require_confirmed=True) == _olist()
