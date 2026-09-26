@@ -82,6 +82,13 @@ def evaluation(run_id: str, out_dir: str, dataset_path: str, test_set: str) -> d
             "wins": int(ev.test.y.sum())}
 
 
+@st.cache_data(show_spinner="Training a v2 model on the same leads for the comparison…")
+def generic_section(run_id: str, out_dir: str, dataset_path: str, label_mode: str,
+                    test_set: str) -> results.GenericSection | None:
+    """``results.generic_comparison`` for a generic-feature-set run and test set (cached per run and test set)."""
+    return results.generic_comparison(out_dir, dataset_path, label_mode, test_set)
+
+
 @st.cache_data(show_spinner=False)
 def _raw_leads(dataset_path: str) -> pd.DataFrame:
     """The dataset's ``historical_leads.csv`` as ``emva.io.read_leads`` reads it (cached per path)."""
@@ -109,5 +116,5 @@ def no_runs_state(message: str) -> None:
     st.page_link("views/upload.py", label="Upload data and train a model", icon=":material/arrow_forward:")
 
 
-__all__ = ["bundle", "base_rate", "data_root", "evaluation", "has_bundle", "html", "no_runs_state", "pick_run", "raw_lead",
-           "run_label"]
+__all__ = ["bundle", "base_rate", "data_root", "evaluation", "generic_section", "has_bundle", "html", "no_runs_state",
+           "pick_run", "raw_lead", "run_label"]

@@ -188,3 +188,68 @@ def test_joined_file_gets_the_primary_join_value() -> None:
                                                 "retail", "100", "50", "1999", "East", "Manager North"])}
     frames = scoring.frames_from_source_form(m, values)
     assert frames["accounts.csv"].account.iloc[0] == "Acme" == frames["sales_pipeline.csv"].account.iloc[0]
+
+
+# --- the generic feature set (Phase 10 (b)): extras in the source format --------------------------------------------
+
+@pytest.fixture(scope="module")
+def generic(app_generic):
+    """``(bundle, dataset dir, mapping, scores.csv)`` of the run trained with the generic feature set."""
+    root, run = app_generic
+    return load_bundle(Path(run.out_dir) / "model.joblib"), Path(run.dataset_path), \
+        scoring.run_mapping(root, run.dataset), results.load_scores(run.out_dir)
+
+
+def test_source_fields_offer_a_generic_bundles_levels(generic, converted) -> None:
+    bundle, _, mapping, _ = generic
+    assert scoring.extra_names(bundle) == ["landing_page"] and scoring.extra_names(converted[0]) == []
+    page = next(f for f in scoring.source_fields(mapping, bundle) if f.column == "landing_page_id")
+    kept = [lvl for lvl in bundle.extras.extras[0].levels if lvl not in ("other", "missing")]
+    assert page.options == (*kept, "other") and not page.numeric
+    assert "utm_content" in page.feeds and "extra feature landing_page (categorical)" in page.feeds
+    plain = next(f for f in scoring.source_fields(mapping, converted[0]) if f.column == "landing_page_id")
+    assert plain.options is None  # a v2 bundle does not use the extra: free text, as before
+    origin = next(f for f in scoring.source_fields(mapping, bundle) if f.column == "origin")
+    assert origin.options is not None and "paid_search" in origin.options  # a value map keeps its keys
+
+
+def test_numeric_extra_is_a_number_input(generic) -> None:
+    from dataclasses import replace
+
+    from emva.generic import ExtraFeature, ExtraKind, GenericEncoder, fit_encoder
+
+    bundle, _, mapping, _ = generic
+    numeric = fit_encoder((ExtraFeature("landing_page", ExtraKind.NUMERIC),),
+                          pd.DataFrame({"x_landing_page": ["1", "2", "3", "4", "5", "6"]}))
+    assert isinstance(numeric, GenericEncoder)
+    page = next(f for f in scoring.source_fields(mapping, replace(bundle, extras=numeric))
+                if f.column == "landing_page_id")
+    assert page.numeric and page.options is None
+    assert scoring.number_text(29.0) == "29" and scoring.number_text(2.5) == "2.5" and scoring.number_text(None) is None
+
+
+def test_source_upload_carries_the_extras_and_matches_the_batch_run(generic) -> None:
+    bundle, data, mapping, scores = generic
+    raw = pd.read_csv(io.BytesIO(_mql_csv()), dtype=str)
+    copy0 = raw.assign(mql_id=raw.mql_id + "-0")  # the dataset's leads are the fixture's rows with -<k> ids
+    frames = scoring.frames_from_source_uploads(mapping, {"x.csv": copy0.to_csv(index=False).encode()})
+    res = scoring.score_source(bundle, mapping, frames, data)
+    assert "x_landing_page" in res.leads  # convert_leads adds the extra; the upload needed nothing else
+    batch = scores.p_formula.reindex(res.table().lead_id)
+    got = res.table().set_index("lead_id").p
+    ok = batch.notna()  # bots and duplicates were dropped from the batch run
+    assert ok.sum() > 30 and all(_ulp_close(a, b) for a, b in zip(got[ok.values], batch[ok]))
+    blank = copy0.assign(landing_page_id="")
+    res_blank = scoring.score_source(bundle, mapping, scoring.frames_from_source_uploads(
+        mapping, {"x.csv": blank.to_csv(index=False).encode()}), data)
+    assert (res_blank.table().p != res.table().p).any()  # the extra moves the score
+
+
+def test_emva_form_on_a_generic_run_scores_extras_as_missing(generic) -> None:
+    bundle, data, _, _ = generic
+    # session fields blank: the converted training data had none (its schema types those columns as float)
+    values = {k: (None if k in scoring.SESSION_FIELDS else v) for k, v in scoring.defaults_for(data).items()}
+    got = scoring.score_form(bundle, values, data)
+    x = got.points[got.points.feature.str.startswith("x_")]
+    ref = bundle.extras.extras[0].reference
+    assert 0 < got.p < 1 and (x.level == "missing").all() and (ref == "missing" or len(x) == 1)

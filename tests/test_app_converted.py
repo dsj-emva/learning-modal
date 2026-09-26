@@ -112,3 +112,55 @@ def test_generic_is_offered_only_with_extras(app_converted) -> None:
     assert (s.train, s.test, s.mature_test) == (v2.train, v2.test, v2.mature_test)  # same rows and split
     with pytest.raises(ValueError, match="needs a converted dataset whose dataset.json declares 'features'"):
         pre_training_summary(DATA_V1, TrainingConfig(feature_set="generic"))
+
+
+def test_generic_comparison_reuses_the_reports_numbers(app_generic) -> None:
+    """Phase 10 (b): Keel's Generic vs v2 is emva.eval.generic_report.compare on the selected test set."""
+    from emva.eval.bootstrap import SEED
+    from emva.eval.collinearity import check_collinearity
+    from emva.eval.generic_report import compare
+    from emva.features import FeatureSet
+    from emva.labels import HORIZON
+
+    root, run = app_generic
+    g = results.generic_comparison(run.out_dir, run.dataset_path, "horizon", "mature", n_resamples=200)
+    assert g is not None and g.test_set == "mature" and g.v2_columns == 39 and g.x_columns > 0
+    as_of, test_from = dataset_dates(run.dataset_path)
+    y = frozen_test_labels(load(run.dataset_path), as_of, test_from)[3]
+    gen = pipeline_run(run.dataset_path, labels=HORIZON, features=FeatureSet.GENERIC)
+    v2 = pipeline_run(run.dataset_path, labels=HORIZON, features=FeatureSet.V2)
+    col = check_collinearity(gen.design[gen.train])
+    ref = compare(gen, v2, [("mature", y)], "mature", col, 200, SEED)
+    want = ref.paired["mature"]
+    assert (g.paired.auc_a, g.paired.auc_b, g.paired.p_value) == (want.auc_a, want.auc_b, want.p_value)
+    assert (g.paired.diff.point, g.paired.diff.lo, g.paired.diff.hi) == (want.diff.point, want.diff.lo, want.diff.hi)
+    assert g.n == len(y) and g.collinearity == col
+    pd.testing.assert_frame_equal(g.screen, ref.screen)
+    assert list(g.screen.extra) == ["landing_page"] and g.flagged == []
+    legacy = results.generic_comparison(run.out_dir, run.dataset_path, "horizon", "legacy", n_resamples=200)
+    assert legacy is not None and legacy.test_set == "legacy"
+
+
+def test_generic_comparison_refuses_scores_it_cannot_reproduce(app_generic, tmp_path: Path) -> None:
+    import shutil
+
+    _, run = app_generic
+    shutil.copy(Path(run.out_dir) / "scores.csv", tmp_path / "scores.csv")
+    s = pd.read_csv(tmp_path / "scores.csv")
+    s.assign(p_formula=s.p_formula * 0.5).to_csv(tmp_path / "scores.csv", index=False)
+    with pytest.raises(ValueError, match="does not reproduce this run's scores"):
+        results.generic_comparison(tmp_path, run.dataset_path, "horizon", "mature", n_resamples=50)
+    with pytest.raises(ValueError, match="needs a converted dataset"):
+        results.generic_comparison(tmp_path, DATA_V1, "horizon", "mature", n_resamples=50)
+
+
+def test_generic_scorecard_names_the_extras(app_generic) -> None:
+    from emva.persist import load_bundle
+
+    _, run = app_generic
+    bundle = load_bundle(Path(run.out_dir) / "model.joblib")
+    card = results.scorecard(run.out_dir, bundle.extras)
+    x = card[card.column.str.startswith("x_landing_page=")]
+    assert len(x) == len(bundle.extras.columns()) > 0
+    assert set(x.feature) == {"Extra · landing_page"} and set(x.reference) == {bundle.extras.extras[0].reference}
+    assert set(results.scorecard(run.out_dir).loc[x.index, "reference"]) == {""}  # without the bundle: unknown

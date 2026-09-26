@@ -9,6 +9,7 @@ import streamlit as st
 from app import charts, scoring, storage, ui
 from app import components as C
 from app.scoring import FormField
+from emva.generic import OTHER
 from emva.ingest.mapping import DatasetMapping
 from emva.model import INTERCEPT
 from emva.persist import BUNDLE_FILE, ModelBundle
@@ -88,17 +89,26 @@ def _result(res: scoring.LeadScore, base: float, transform: str, batch: bool = F
                     key="lead_points")
 
 
-def _source_form(mapping: DatasetMapping, run_id: str) -> dict[str, object] | None:
-    """The source-format form: only the raw columns the mapping reads at submit time; returns values on submit."""
+def _option_label(o: str) -> str:
+    """A source-form option: "" is a blank cell; ``other`` stands for any value the model was not trained with."""
+    return "— blank —" if o == "" else "other (any value not listed)" if o == OTHER else o
+
+
+def _source_form(mapping: DatasetMapping, bundle: ModelBundle, run_id: str) -> dict[str, object] | None:
+    """The source-format form: only the raw columns the mapping reads at submit time (a generic bundle's extras as a
+    number input or their training levels); returns values on submit."""
     values: dict[str, object] = {}
     with st.form(f"source_form_{run_id}", border=False):
         cols = st.columns(2, gap="medium")
-        for i, f in enumerate(scoring.source_fields(mapping)):
+        for i, f in enumerate(scoring.source_fields(mapping, bundle)):
             with cols[i % 2]:
                 label, key, help_text = f.column, f"src_{run_id}_{f.key}", f"{f.file} · feeds {f.feeds}"
-                if f.options is not None:
+                if f.numeric:
+                    values[f.key] = scoring.number_text(st.number_input(label, value=None, key=key, help=help_text,
+                                                                        placeholder="blank", format="%g"))
+                elif f.options is not None:
                     values[f.key] = st.selectbox(label, ["", *f.options], key=key, help=help_text,
-                                                 format_func=lambda o: "— blank —" if o == "" else o)
+                                                 format_func=_option_label)
                 else:
                     values[f.key] = st.text_input(label, key=key, help=help_text)
         submitted = st.form_submit_button("Score this lead", type="primary", icon=":material/target:",
@@ -117,7 +127,7 @@ def _source_mode(run: storage.Run, bundle: ModelBundle, mapping: DatasetMapping)
         one, many = st.tabs(["One lead", "Upload a CSV"])
         try:
             with one:
-                values = _source_form(mapping, run.run_id)
+                values = _source_form(mapping, bundle, run.run_id)
                 if values is not None:
                     frames = scoring.frames_from_source_form(mapping, values)
             with many:
@@ -185,6 +195,12 @@ def render() -> None:
         if mode == "source":
             _source_mode(run, bundle, mapping)
             return
+    extras = scoring.extra_names(bundle)
+    if extras:
+        ui.html(C.callout(f"This model also reads {len(extras)} extra feature(s) ({', '.join(extras)}), which the EMVA "
+                          "form has no inputs for, so a lead scored here has every extra set to missing."
+                          + (" Switch the lead format to Source format to give them." if mapping is not None else ""),
+                          "info", lead="Extra features are scored as missing."))
     left, right = st.columns([3, 2], gap="large")
     with left:
         lead_id = st.text_input("Start from a lead in the training data (optional)", key=f"prefill_{run.run_id}",

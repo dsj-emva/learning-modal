@@ -8,6 +8,12 @@ trained on. The test sets are the standard report's frozen definitions (``emva.e
 from ``emva.eval.metrics`` / ``emva.eval.bootstrap``, value scale from ``emva.eval.value_report.scale_stats``.
 Nothing is parsed out of ``report.txt``.
 
+A run trained with the generic feature set (Phase 10, ADR 0024) also gets ``generic_comparison``: a v2 model trained
+by ``emva.pipeline.run`` on the same data, labels and split, compared on the selected test set with
+``emva.eval.generic_report.compare`` (paired bootstrap AUC difference), the generic design's collinearity check
+(``emva.eval.collinearity``) and the extras' leakage screen, the numbers of the standard report's "Generic vs v2"
+section. The scorecard names ``x_`` columns as extras and takes their reference levels from the run's bundle.
+
 The baseline row is optional (ADR 0022): a converted dataset (one carrying ``dataset.json``) never gets one, and a
 dataset the frozen script cannot score loses it; ``Evaluation.baseline_missing`` then says why, and the page shows
 the model and status-quo rows without the paired comparison.
@@ -26,13 +32,19 @@ import pandas as pd
 from app.storage import DATASET_META_FILE, RULES_FILE, is_converted
 from emva.constants import AS_OF, CATS, CATS_V2_CANDIDATES, TEST_FROM, TOP_FRACTION
 from emva.dataset_meta import dataset_dates
-from emva.eval.bootstrap import N_RESAMPLES, SEED, auc_ci
+from emva.eval.bootstrap import N_RESAMPLES, SEED, PairedComparison, auc_ci
+from emva.eval.collinearity import CollinearityResult, check_collinearity
+from emva.eval.generic_report import LEAKAGE_AUC_FLAG, compare
 from emva.eval.metrics import auc_by_month, calibration_by_decile
 from emva.eval.report import ScoredModel, TestSet, frozen_test_labels, headline_frame, paired_frame, run_baseline
 from emva.eval.status_quo import load_rules, status_quo_value
 from emva.eval.value_report import scale_stats
+from emva.features import FeatureSet
+from emva.generic import EXTRA_PREFIX, GenericEncoder
 from emva.io import load
+from emva.labels import LabelConfig
 from emva.model import INTERCEPT, split_design_column
+from emva.pipeline import run as pipeline_run
 
 log = logging.getLogger(__name__)
 
@@ -64,8 +76,15 @@ FEATURE_LABELS: dict[str, str] = {
 REFERENCE_LEVELS: dict[str, str] = {**CATS, **CATS_V2_CANDIDATES}
 
 
+# Prefix of an extra feature's plain name (generic feature set): "Extra · landing_page".
+EXTRA_LABEL: str = "Extra · "
+
+
 def feature_label(feature: str) -> str:
-    """Plain-language name of a model feature (the raw name when it has none)."""
+    """Plain-language name of a model feature (the raw name when it has none); an extra of the generic feature set
+    (``x_<name>``) is ``EXTRA_LABEL`` plus its declared name."""
+    if feature.startswith(EXTRA_PREFIX):
+        return EXTRA_LABEL + feature[len(EXTRA_PREFIX):]
     return FEATURE_LABELS.get(feature, feature.replace("_", " ").capitalize())
 
 
@@ -75,17 +94,20 @@ def load_scores(run_dir: str | Path) -> pd.DataFrame:
     return pd.read_csv(Path(run_dir) / "scores.csv", index_col="lead_id", float_precision="round_trip")
 
 
-def scorecard(run_dir: str | Path) -> pd.DataFrame:
+def scorecard(run_dir: str | Path, extras: GenericEncoder | None = None) -> pd.DataFrame:
     """The run's ``weights.csv`` as a readable scorecard, sorted by points (highest first).
 
     Columns: ``feature`` (plain name), ``level``, ``reference`` (the level it is compared with, which scores 0),
     ``points`` (20 points = odds of closing double), ``odds_multiplier``, ``log_odds``, ``column`` (raw name).
+    ``extras`` is the run's bundle's encoder (``ModelBundle.extras``, generic feature set): it gives the ``x_``
+    columns' reference levels (fitted on the training leads).
     """
     w = pd.read_csv(Path(run_dir) / "weights.csv", index_col=0, float_precision="round_trip")
     parts = [split_design_column(c) for c in w.index]
+    refs = {**REFERENCE_LEVELS, **({e.feature.column: e.reference for e in extras.extras} if extras else {})}
     out = pd.DataFrame({
         "feature": [feature_label(f) for f, _ in parts], "level": [lvl for _, lvl in parts],
-        "reference": [REFERENCE_LEVELS.get(f, "") for f, _ in parts], "points": w.points.to_numpy(),
+        "reference": [refs.get(f, "") for f, _ in parts], "points": w.points.to_numpy(),
         "odds_multiplier": w.odds_multiplier.to_numpy(), "log_odds": w.log_odds.to_numpy(), "column": list(w.index)})
     return out.sort_values(["points", "column"], ascending=[False, True], kind="stable").reset_index(drop=True)
 
@@ -222,6 +244,58 @@ def auc_month(ev: Evaluation, n_resamples: int = N_RESAMPLES) -> pd.DataFrame:
     return out.assign(auc_lo=lo, auc_hi=hi)
 
 
+@dataclass(frozen=True)
+class GenericSection:
+    """The "Generic vs v2" numbers of a generic-feature-set run on one test set (``generic_comparison``):
+    ``paired`` (a = v2, b = generic: AUCs and the bootstrap difference generic − v2), ``n`` test leads,
+    ``collinearity`` (the generic design on its training rows), ``screen`` (``emva.eval.generic_report.leakage_screen``:
+    one row per extra, ``flag`` set above ``LEAKAGE_AUC_FLAG``), and the design sizes ``v2_columns`` / ``x_columns``."""
+
+    test_set: str
+    paired: PairedComparison
+    n: int
+    collinearity: CollinearityResult
+    screen: pd.DataFrame
+    v2_columns: int
+    x_columns: int
+
+    @property
+    def flagged(self) -> list[str]:
+        """Extras whose single-feature training AUC exceeds ``LEAKAGE_AUC_FLAG``."""
+        return [str(x) for x in self.screen.extra[self.screen.flag != ""]]
+
+
+def generic_comparison(run_dir: str | Path, dataset: str | Path, label_mode: str, test_set: str = "mature",
+                       n_resamples: int = N_RESAMPLES) -> GenericSection | None:
+    """Generic vs v2 for a run trained with the generic feature set and ``label_mode`` on ``dataset``, on ``test_set``
+    (``mature`` or ``legacy``, the standard report's frozen definitions); None when that test set is empty or has a
+    single class.
+
+    Both models are retrained with ``emva.pipeline.run`` on the same data, labels and split (deterministic, so the
+    generic one reproduces the run); ``emva.eval.generic_report.compare`` gives the paired difference (seed
+    ``SEED``) and the leakage screen. Raises ``ValueError`` when the dataset has no extras, or when the retrained
+    generic model does not reproduce the run's ``scores.csv`` on the test leads (the dataset changed since the run).
+    """
+    if test_set not in TEST_SETS:
+        raise ValueError(f"test set must be one of {TEST_SETS}, got {test_set!r}")
+    as_of, test_from = dataset_dates(dataset)
+    _, _, y_a, y_b = frozen_test_labels(load(dataset), as_of, test_from)
+    y = y_b if test_set == "mature" else y_a
+    if len(y) == 0 or y.nunique() < 2:
+        return None
+    labels = LabelConfig(mode=label_mode)
+    generic = pipeline_run(dataset, labels=labels, features=FeatureSet.GENERIC)
+    s = load_scores(run_dir)
+    if not np.allclose(generic.X.p_formula.loc[y.index], s.p_formula.reindex(y.index), rtol=1e-9, atol=0):
+        raise ValueError("retraining the generic model does not reproduce this run's scores; the dataset changed "
+                         "since the run was trained")
+    v2 = pipeline_run(dataset, labels=labels, features=FeatureSet.V2)
+    collinearity = check_collinearity(generic.design[generic.train])
+    cmp = compare(generic, v2, [(test_set, y)], test_set, collinearity, n_resamples, SEED)
+    return GenericSection(test_set=test_set, paired=cmp.paired[test_set], n=len(y), collinearity=collinearity,
+                          screen=cmp.screen, v2_columns=v2.design.shape[1], x_columns=len(generic.extras.columns()))
+
+
 VALUE_COLUMNS: dict[str, str] = {"value_at_submit": "Value sent at submit", "value_formula": "p × expected deal value"}
 
 
@@ -249,7 +323,8 @@ def top_fraction_label() -> str:
     return f"top {int(TOP_FRACTION * 100)}%"
 
 
-__all__ = ["BASELINE", "BASELINE_CONVERTED", "BASELINE_FAILED", "CANDIDATE", "Evaluation", "FEATURE_LABELS",
-           "KPI_REFERENCES", "STATUS_QUO", "TEST_SETS", "VALUE_COLUMNS", "auc_month", "baseline_scores", "calibration",
-           "evaluate", "feature_label", "kpi_reference", "load_scores", "scorecard", "standard_table",
+__all__ = ["BASELINE", "BASELINE_CONVERTED", "BASELINE_FAILED", "CANDIDATE", "EXTRA_LABEL", "Evaluation",
+           "FEATURE_LABELS", "GenericSection", "KPI_REFERENCES", "LEAKAGE_AUC_FLAG", "STATUS_QUO", "TEST_SETS",
+           "VALUE_COLUMNS", "auc_month", "baseline_scores", "calibration", "evaluate", "feature_label",
+           "generic_comparison", "kpi_reference", "load_scores", "scorecard", "standard_table",
            "training_base_rate", "value_distribution"]

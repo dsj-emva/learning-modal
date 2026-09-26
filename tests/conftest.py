@@ -107,22 +107,37 @@ def olist_raw(copies: int = OLIST_COPIES) -> dict[str, bytes]:
     return out
 
 
-@pytest.fixture(scope="session")
-def app_converted(tmp_path_factory):
-    """``(root, run)``: an app data root holding ``olist_raw()`` converted with the committed hand-written
-    ``mappings/olist_funnel.toml`` (``app.ingest.convert_raw``), saved with its mapping.toml and dataset.json, and
-    trained end to end by ``app.training.start_training`` (horizon + v2, report with 200 resamples)."""
+def _converted_and_trained(tmp_path_factory, root_name: str, feature_set: str):
+    """``(root, run)``: ``olist_raw()`` converted with the committed ``mappings/olist_funnel.toml`` in a fresh app data
+    root and trained end to end by ``app.training.start_training`` (horizon labels, ``feature_set``)."""
     import sys
 
     from app import ingest, storage, training
     from emva.ingest.mapping import load_mapping
 
-    root = storage.init_root(tmp_path_factory.mktemp("app-converted"))
+    root = storage.init_root(tmp_path_factory.mktemp(root_name))
     mapping = load_mapping((REPO / "mappings" / "olist_funnel.toml").read_text(encoding="utf-8"))
     conv = ingest.convert_raw(ingest.raw_frames(olist_raw()), mapping, "2026-09-26")
     assert conv.report.ok, conv.report.errors
     ds = storage.save_dataset(root, "olist-fixture", conv.files)
-    run = storage.register_run(root, storage.new_run(root, ds, training.TrainingConfig().as_dict()))
+    config = training.TrainingConfig(feature_set=feature_set)
+    run = storage.register_run(root, storage.new_run(root, ds, config.as_dict()))
     proc = training.start_training(root, run, python=sys.executable, report_resamples=APP_REPORT_RESAMPLES)
     assert proc.wait(timeout=180) == 0, Path(run.log_path).read_text()
     return root, storage.get_run(root, run.run_id)
+
+
+@pytest.fixture(scope="session")
+def app_converted(tmp_path_factory):
+    """``(root, run)``: an app data root holding ``olist_raw()`` converted with the committed hand-written
+    ``mappings/olist_funnel.toml`` (``app.ingest.convert_raw``), saved with its mapping.toml, dataset.json and
+    extra_features.csv, and trained end to end by ``app.training.start_training`` (horizon + v2, report with 200
+    resamples)."""
+    return _converted_and_trained(tmp_path_factory, "app-converted", "v2")
+
+
+@pytest.fixture(scope="session")
+def app_generic(tmp_path_factory):
+    """``(root, run)``: as ``app_converted``, in its own data root, trained with the generic feature set (v2 plus the
+    mapping's one extra, landing_page; Phase 10 (b))."""
+    return _converted_and_trained(tmp_path_factory, "app-generic", "generic")

@@ -255,3 +255,81 @@ def test_score_page_source_format(monkeypatch: pytest.MonkeyPatch, app_converted
     page = _text(at)
     assert not at.exception and "These leads cannot be scored" in page
     assert "<b>pigeon</b>" not in page and "&lt;b&gt;pigeon&lt;/b&gt;" in page
+
+
+# --- the generic feature set in Keel (Phase 10 (b)) ------------------------------------------------------------------
+
+def test_map_with_extras_confirm_both_convert_save_train_generic_and_see_the_comparison(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Raw Olist-shaped CSVs -> the committed mapping (one extra, landing_page) -> both confirmations -> convert ->
+    check -> save -> train with generic -> the results page shows Generic vs v2. No model call."""
+    import time
+
+    from app import storage
+    from app.views.upload import ACTIVE_KEY, PROCS_KEY
+    from conftest import olist_raw
+
+    _no_model_call(monkeypatch)
+    at = _sign_in(_app(monkeypatch, tmp_path), "letmein")
+    at.switch_page("views/upload.py").run()
+    at = _upload_raw(at, olist_raw())
+    at.selectbox(key="mc_choice").select("builtin:olist_funnel").run()
+    at.button(key="mc_load").click().run()
+    assert not at.exception, at.exception
+    assert "Fields and extra features" in _text(at)
+    feat = [c for c in at.checkbox if c.key and c.key.startswith("mc_features_confirm_")]
+    assert len(feat) == 1 and not feat[0].value  # never pre-ticked, even for a mapping confirmed on disk
+    assert feat[0].label == "Extra features are known when the lead is submitted"
+    next(c for c in at.checkbox if c.key and c.key.startswith("mc_confirm_")).check().run()
+    assert at.button(key="mc_convert").disabled  # the outcome alone is not enough with declared extras
+    next(c for c in at.checkbox if c.key and c.key.startswith("mc_features_confirm_")).check().run()
+    assert not at.button(key="mc_convert").disabled
+    at.button(key="mc_convert").click()
+    at.run()
+    assert not at.exception, at.exception
+    page = _text(at)
+    assert "Extra features" in page and "landing_page. How many design columns" in page
+    assert "Extra features (generic feature set)" in page  # its own file card in the check results
+    at.text_input(key="dataset_name").input("olist-generic")
+    next(b for b in at.button if b.label == "Save dataset").click()
+    at.run()
+    assert not at.exception, at.exception
+    ds = storage.get_dataset(tmp_path, "olist-generic")
+    assert ds.has_extras and storage.EXTRA_FEATURES_FILE in ds.rows
+    control = at.segmented_control(key="feature_set_3")
+    assert control.options == ["v2", "Generic (v2 + extras)", "Legacy (POC)"] and control.value == "v2"  # not default
+    control.set_value("generic").run()
+    assert not at.exception, at.exception
+    assert "Extra features" in _text(at) and "1 (0 numeric)" in _text(at)  # the pre-training summary
+    at.button(key="train").click().run()
+    run_id = at.session_state[ACTIVE_KEY]
+    assert at.session_state[PROCS_KEY][run_id].wait(timeout=240) == 0
+    for _ in range(40):  # the job records the outcome right after the report
+        if storage.get_run(tmp_path, run_id).is_done:
+            break
+        time.sleep(0.5)
+    run = storage.get_run(tmp_path, run_id)
+    assert run.status == "succeeded" and run.args["feature_set"] == "generic" and run.has_report, run.error
+    at.switch_page("views/results.py").run()
+    assert not at.exception, at.exception
+    page = _text(at)
+    assert "Generic vs v2" in page and "Leakage screen" in page and "landing_page" in page
+    assert "Collinearity of the generic design" in page and "extra columns" in page
+
+
+def test_generic_run_score_page_offers_the_extras(monkeypatch: pytest.MonkeyPatch, app_generic) -> None:
+    """Source format: the extra's training levels are offered; EMVA form: a note that extras score as missing."""
+    root, run = app_generic
+    at = _sign_in(_app(monkeypatch, root), "letmein")
+    at.switch_page("views/score.py").run()
+    assert not at.exception, at.exception
+    assert "Extra features are scored as missing." in _text(at) and "landing_page" in _text(at)
+    at.segmented_control(key=f"score_mode_{run.run_id}").set_value("source").run()
+    assert not at.exception, at.exception
+    page = next(s for s in at.selectbox if s.key.endswith(":landing_page_id"))
+    assert page.options[0] == "— blank —" and page.options[-1] == "other (any value not listed)"
+    page.select_index(1)
+    next(b for b in at.button if b.label == "Score this lead").click()
+    at.run()
+    assert not at.exception, at.exception
+    assert "Chance this lead closes" in _text(at)
