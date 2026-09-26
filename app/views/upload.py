@@ -497,6 +497,7 @@ def _check_and_save() -> None:
             ui.html(C.callout(str(e), "bad"))
         else:
             st.session_state["train_dataset"] = ds.name
+            st.session_state["train_ds"] = ds.name  # the picker keeps its own state; point it at the new dataset
             for k in (VALIDATION, VALIDATED_FILES, VALIDATED_ORIGIN):
                 st.session_state.pop(k, None)
             st.toast(f"Saved {ds.name}: {ds.n_leads:,} leads", icon=":material/check_circle:")

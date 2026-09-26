@@ -145,6 +145,7 @@ def test_map_convert_validate_save_with_a_saved_mapping(monkeypatch: pytest.Monk
     _no_model_call(monkeypatch)
     at = _sign_in(_app(monkeypatch, tmp_path), "letmein")
     at.switch_page("views/upload.py").run()
+    assert at.selectbox(key="train_ds").value == "sample-v1"  # the picker holds its own state from here on
     at = _upload_raw(at, olist_raw())
     assert not at.exception, at.exception
     assert "Column profile" in _text(at) and "Start the mapping" in _text(at)
@@ -164,6 +165,7 @@ def test_map_convert_validate_save_with_a_saved_mapping(monkeypatch: pytest.Monk
     saved = Path(storage.get_dataset(tmp_path, "olist-smoke").path)
     assert {"mapping.toml", "dataset.json", "historical_leads.csv"} <= {p.name for p in saved.iterdir()}
     assert ingest.mapping_choices(tmp_path)[0].key == "saved:olist-smoke"  # offered for the next export
+    assert at.selectbox(key="train_ds").value == "olist-smoke"  # the train picker moves to the saved dataset
 
 
 def test_fill_by_hand_then_apply_a_hand_written_toml(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
