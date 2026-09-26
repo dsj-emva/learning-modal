@@ -7,19 +7,24 @@ trained on. The test sets are the standard report's frozen definitions (``emva.e
 ``run_baseline``, this run's scores, the status quo from the dataset's rules); calibration and AUC by month come
 from ``emva.eval.metrics`` / ``emva.eval.bootstrap``, value scale from ``emva.eval.value_report.scale_stats``.
 Nothing is parsed out of ``report.txt``.
+
+The baseline row is optional (ADR 0022): a converted dataset (one carrying ``dataset.json``) never gets one, and a
+dataset the frozen script cannot score loses it; ``Evaluation.baseline_missing`` then says why, and the page shows
+the model and status-quo rows without the paired comparison.
 """
 from __future__ import annotations
 
 import logging
 import tempfile
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from app.storage import RULES_FILE
-from emva.constants import CATS, CATS_V2_CANDIDATES, TEST_FROM, TOP_FRACTION
+from app.storage import DATASET_META_FILE, RULES_FILE, is_converted
+from emva.constants import AS_OF, CATS, CATS_V2_CANDIDATES, TEST_FROM, TOP_FRACTION
 from emva.eval.bootstrap import N_RESAMPLES, SEED, auc_ci
 from emva.eval.metrics import auc_by_month, calibration_by_decile
 from emva.eval.report import ScoredModel, TestSet, frozen_test_labels, headline_frame, paired_frame, run_baseline
@@ -32,6 +37,15 @@ log = logging.getLogger(__name__)
 
 TEST_SETS: tuple[str, ...] = ("mature", "legacy")
 BASELINE, CANDIDATE, STATUS_QUO = "Baseline (frozen POC)", "This model", "Status quo"
+# What the KPI strip compares this model with, in order of preference (none when neither row exists).
+KPI_REFERENCES: tuple[str, ...] = (STATUS_QUO, BASELINE)
+# Why a baseline row can be missing (ADR 0022); the frozen script hard-codes the v1 snapshot dates and file format.
+BASELINE_CONVERTED: str = (
+    f"No baseline row: this dataset was converted from another source (it carries {DATASET_META_FILE} with its own "
+    f"dates). The frozen baseline script hard-codes the sample's file format and dates (as of {AS_OF.date()}, test "
+    f"from {TEST_FROM}), so its scores would mean nothing here; the comparison with the baseline is left out.")
+BASELINE_FAILED: str = ("No baseline row: the frozen baseline script could not score this dataset, so the comparison "
+                        "with the baseline is left out.")
 # Months with fewer test leads than this get no bootstrap band (the interval would be meaningless).
 MIN_MONTH_FOR_CI: int = 30
 
@@ -81,7 +95,8 @@ class Evaluation:
 
     ``test`` is the report's ``TestSet`` (labels, raw lead rows, revenue); ``models`` the report's ``ScoredModel``
     list: the frozen baseline (when its script ran on this dataset), this run's model, and the status quo (when the
-    dataset has rules). ``notes`` say why a row is missing; ``base_rate`` is the win rate of the run's training labels.
+    dataset has rules). ``notes`` say why the status-quo row is missing; ``baseline_missing`` why the baseline row is
+    (None when it is there); ``base_rate`` is the win rate of the run's training labels.
     """
 
     name: str
@@ -89,6 +104,7 @@ class Evaluation:
     models: list[ScoredModel]
     notes: list[str]
     base_rate: float
+    baseline_missing: str | None = None
 
     def model(self, name: str) -> ScoredModel | None:
         """The scored model called ``name`` (``BASELINE``, ``CANDIDATE``, ``STATUS_QUO``), or None if absent."""
@@ -100,22 +116,40 @@ class Evaluation:
         return self.model(CANDIDATE)
 
 
-def training_base_rate(scores: pd.DataFrame, created_at: pd.Series) -> float:
-    """Win rate of the run's training labels: ``scores.y`` of labelled leads created before ``TEST_FROM``
+def training_base_rate(scores: pd.DataFrame, created_at: pd.Series, test_from: str = TEST_FROM) -> float:
+    """Win rate of the run's training labels: ``scores.y`` of labelled leads created before ``test_from``
     (``created_at`` indexed by ``lead_id``). The same rows ``emva.pipeline.run`` trains on: in horizon mode ``y``
     is already NaN for leads that are not mature."""
-    train = scores.y.notna() & (created_at.reindex(scores.index) < pd.Timestamp(TEST_FROM, tz="UTC"))
+    train = scores.y.notna() & (created_at.reindex(scores.index) < pd.Timestamp(test_from, tz="UTC"))
     return float(scores.y[train].mean())
 
 
-def _baseline(dataset: str | Path) -> tuple[pd.DataFrame | None, str | None]:
-    """The frozen baseline's scores on ``dataset`` (``emva.eval.report.run_baseline``), or None and why not."""
+def baseline_scores(dataset: str | Path, test_ids: pd.Index) -> tuple[pd.DataFrame | None, str | None]:
+    """The frozen baseline's scores on ``dataset`` (``emva.eval.report.run_baseline``), or None and why not.
+
+    None with ``BASELINE_CONVERTED`` for a converted dataset (the script is not run); None with ``BASELINE_FAILED``
+    (logged) when the script fails, its output cannot be read, or it leaves a lead of ``test_ids`` unscored.
+    """
+    if is_converted(dataset):
+        return None, BASELINE_CONVERTED
     with tempfile.TemporaryDirectory() as tmp:
         try:
-            return run_baseline(dataset, tmp)[0], None
-        except RuntimeError as e:
+            base = run_baseline(dataset, tmp)[0]
+        except (RuntimeError, OSError, ValueError) as e:  # script exit != 0, no or unparsable scores.csv
             log.warning("baseline script failed on %s: %s", dataset, e)
-            return None, "The frozen baseline script could not run on this dataset, so it has no row."
+            return None, BASELINE_FAILED
+    unscored = test_ids.difference(base.index[base.p_formula.notna()]) if "p_formula" in base else test_ids
+    if len(unscored):
+        log.warning("baseline script left %d test leads of %s unscored (e.g. %s)", len(unscored), dataset,
+                    list(unscored[:3]))
+        return None, BASELINE_FAILED
+    return base, None
+
+
+def kpi_reference(models: Iterable[str]) -> str | None:
+    """The row the KPI strip compares this model with: the first of ``KPI_REFERENCES`` among ``models``, else None."""
+    present = set(models)
+    return next((n for n in KPI_REFERENCES if n in present), None)
 
 
 def evaluate(run_dir: str | Path, dataset: str | Path, test_set: str = "mature",
@@ -137,10 +171,8 @@ def evaluate(run_dir: str | Path, dataset: str | Path, test_set: str = "mature",
         raise ValueError(f"the run has no score for {len(missing)} test leads (e.g. {list(missing[:3])}); "
                          "was it trained on this dataset?")
     models, notes = [], []
-    base, why = _baseline(dataset)
-    if base is None:
-        notes.append(why)
-    else:
+    base, baseline_missing = baseline_scores(dataset, y.index)
+    if base is not None:
         models.append(ScoredModel(BASELINE, base.p_formula, base.value_formula))
     models.append(ScoredModel(CANDIDATE, s.p_formula.loc[X.index], s.value_formula.loc[X.index]))
     rules = Path(dataset) / RULES_FILE
@@ -149,7 +181,7 @@ def evaluate(run_dir: str | Path, dataset: str | Path, test_set: str = "mature",
     else:
         notes.append(f"The dataset has no {RULES_FILE}, so there is no status-quo row.")
     return Evaluation(name=test_set, test=TestSet(test_set, "", y, L.loc[y.index]), models=models, notes=notes,
-                      base_rate=training_base_rate(s, L.created_at))
+                      base_rate=training_base_rate(s, L.created_at), baseline_missing=baseline_missing)
 
 
 def standard_table(ev: Evaluation, n_resamples: int = N_RESAMPLES) -> tuple[pd.DataFrame, pd.DataFrame | None]:
@@ -213,6 +245,7 @@ def top_fraction_label() -> str:
     return f"top {int(TOP_FRACTION * 100)}%"
 
 
-__all__ = ["BASELINE", "CANDIDATE", "Evaluation", "FEATURE_LABELS", "STATUS_QUO", "TEST_SETS", "VALUE_COLUMNS", "auc_month",
-           "calibration", "evaluate", "feature_label", "load_scores", "scorecard", "standard_table", "training_base_rate",
-           "value_distribution"]
+__all__ = ["BASELINE", "BASELINE_CONVERTED", "BASELINE_FAILED", "CANDIDATE", "Evaluation", "FEATURE_LABELS",
+           "KPI_REFERENCES", "STATUS_QUO", "TEST_SETS", "VALUE_COLUMNS", "auc_month", "baseline_scores", "calibration",
+           "evaluate", "feature_label", "kpi_reference", "load_scores", "scorecard", "standard_table",
+           "training_base_rate", "value_distribution"]

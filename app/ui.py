@@ -75,7 +75,8 @@ def evaluation(run_id: str, out_dir: str, dataset_path: str, test_set: str) -> d
     if ev is None:
         return None
     head, paired = results.standard_table(ev)
-    return {"headline": head, "paired": paired, "notes": ev.notes, "calibration": results.calibration(ev),
+    return {"headline": head, "paired": paired, "notes": ev.notes, "baseline_missing": ev.baseline_missing,
+            "calibration": results.calibration(ev),
             "auc_month": results.auc_month(ev), "base_rate": ev.base_rate, "n": len(ev.test.y),
             "wins": int(ev.test.y.sum())}
 
