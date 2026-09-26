@@ -26,7 +26,7 @@ name = "crm_opportunities"
 as_of = "2018-01-01"
 test_from = "2017-07-01"
 source_url = "https://www.kaggle.com/datasets/innocentmfa/crm-sales-opportunities"
-licence = "see Kaggle page (unverified)"
+licence = "Apache 2.0 (Kaggle dataset metadata, licenseName, read 2026-09-26)"
 outcome_confirmed = true
 drop_rows_without_created_at = true
 

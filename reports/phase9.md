@@ -166,6 +166,9 @@ all three datasets (constant on the training rows, see each report's collinearit
 
 - Source: <https://www.kaggle.com/datasets/olistbr/marketing-funnel-olist>. Licence: CC BY-NC-SA 4.0. Two files:
   8,000 marketing-qualified leads (MQLs) and 842 closed deals, joined on `mql_id`.
+- **Licence restriction: CC BY-NC-SA 4.0 is non-commercial** (confirmed from the Kaggle dataset metadata in the fix
+  round). The Olist data and every number derived from it may be used for this evaluation only: not commercially,
+  not in marketing material, and not quoted to customers.
 - **Outcome**: `presence` of a closed deal. An MQL with a deal is Won at `won_date`. An MQL with no deal is **Lost,
   dated at as_of** (`lost_without_close = "as_of"`, 7,158 leads), because Olist gives no close date for it. The
   snapshot is 5.5 months after the last MQL, and 75% of deals close within 55 days of first contact. Treating
@@ -410,8 +413,10 @@ Candidate design (`v2` features, 39 columns) on its 4171 training rows; fails wh
 ### crm_opportunities: CRM sales opportunities
 
 - Source: <https://www.kaggle.com/datasets/innocentmfa/crm-sales-opportunities> (a fictitious B2B computer-hardware
-  company). Licence: "see Kaggle page (unverified)", as the mapping records it. `sales_pipeline.csv` (8,800
-  opportunities) is left-joined with `accounts.csv` on `account`.
+  company). Licence: Apache 2.0, from the Kaggle dataset metadata (`licenseName` of
+  `/api/v1/datasets/view/innocentmfa/crm-sales-opportunities`, read 2026-09-26 in the fix round; the Phase 9 run
+  recorded "unverified"). The metadata is the uploader's declaration; the data describe a fictitious company.
+  `sales_pipeline.csv` (8,800 opportunities) is left-joined with `accounts.csv` on `account`.
 - **Outcome**: `stage` from `deal_stage`. Won is Won at `close_date` (with `close_value`), Lost is Lost at
   `close_date`, Engaging becomes Contacted (open: idle 90+ days at as_of means stalled, censored by default), and
   Prospecting becomes New. The 500 Prospecting rows have no `engage_date`, so they have no creation date and are
@@ -654,7 +659,8 @@ Candidate design (`v2` features, 39 columns) on its 3649 training rows; fails wh
 ### hotel_bookings: hotel booking demand (bookings, not enquiries)
 
 - Source: <https://www.kaggle.com/datasets/jessemostipak/hotel-booking-demand>. Licence: CC BY 4.0 (Antonio,
-  Almeida and Nunes 2019, Data in Brief, doi:10.1016/j.dib.2018.11.126). One file, 119,390 rows.
+  Almeida and Nunes 2019, Data in Brief, doi:10.1016/j.dib.2018.11.126); the Kaggle metadata says "Attribution 4.0
+  International (CC BY 4.0)". One file, 119,390 rows.
 - **These are hotel bookings, not B2B enquiries.** We ran them to exercise the converter at scale (derived
   expressions, 119k rows). The numbers say nothing about lead scoring on real enquiries.
 - **Outcome**: `won_flag` on `is_canceled`. A kept booking (0) is **Won at the arrival date**, the moment it can no
