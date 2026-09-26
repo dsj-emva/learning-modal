@@ -17,6 +17,15 @@
 # sector (with typos such as "technolgy"), revenue, employees and year_established have no lead-schema target (company
 # columns are not mapped; employees would need a binning operation the mapping does not have): ignored.
 #
+# Features (Phase 10, generic feature set, ADR 0024; features_confirmed = true after a review BY HAND, no API key):
+# third source sales_teams.csv, joined on sales_agent (3 sources, the maximum). Extras: product, sales_agent; the
+# account's sector, revenue, employees, office_location, year_established (accounts.csv; blank for the 1,425
+# opportunities without an account); the agent's regional_office and manager (sales_teams.csv). sales_agent and
+# manager are person names: as model features they are categories (30 agents, 6 managers), and the column profiles
+# keep redacting them (R39). Caveat: product may be settled during the deal rather than at engagement; the dataset
+# gives one product per opportunity from engagement on, so it is kept and watched in the leakage screen. Not
+# declared: deal_stage, close_date, close_value (the outcome) and subsidiary_of (sparse).
+#
 # Dates: engage_date 2016-10-20 .. 2017-12-27, close_date 2017-03-01 .. 2017-12-31. as_of = 2018-01-01 (the day after
 # the last close). Mature (H = 120) = engaged on or before 2017-09-03. test_from = 2017-07-01: the last ~20% of the
 # mature span (the horizon test set, July to early September 2017) and the last ~42% of the engage-date span (the
@@ -29,6 +38,7 @@ source_url = "https://www.kaggle.com/datasets/innocentmfa/crm-sales-opportunitie
 licence = "Apache 2.0 (Kaggle dataset metadata, licenseName, read 2026-09-26)"
 outcome_confirmed = true
 drop_rows_without_created_at = true
+features_confirmed = true
 
 [[sources]]
 name = "opp"
@@ -38,6 +48,11 @@ file = "sales_pipeline.csv"
 name = "acct"
 file = "accounts.csv"
 join_on = "account"
+
+[[sources]]
+name = "team"
+file = "sales_teams.csv"
+join_on = "sales_agent"
 
 [lead]
 lead_id = "opp.opportunity_id"
@@ -82,23 +97,86 @@ confidence = "low"
 [[fields]]
 source = "opp.sales_agent"
 target = "ignore"
-reason = "A person's name; assigned by the seller, not a lead attribute."
+reason = "A person's name; no schema target (declared as an extra feature below)."
 confidence = "high"
 
 [[fields]]
 source = "opp.product"
 target = "ignore"
-reason = "Chosen during the deal (may leak the outcome); no schema target."
+reason = "No schema target (declared as an extra feature below; leakage caveat in the header)."
 confidence = "medium"
 
 [[fields]]
 source = "acct.sector"
 target = "ignore"
-reason = "Company column; this converter writes companies.csv header-only."
+reason = "Company column; companies.csv is header-only (declared as an extra feature below)."
 confidence = "medium"
 
 [[fields]]
 source = "acct.employees"
 target = "ignore"
-reason = "Would need binning into company-size bands; no such operation."
+reason = "Would need binning into company-size bands (declared as a numeric extra feature below)."
+confidence = "medium"
+
+[[features]]
+source = "opp.product"
+kind = "categorical"
+name = "product"
+reason = "Product of the opportunity; caveat: may be settled during the deal."
+confidence = "medium"
+
+[[features]]
+source = "opp.sales_agent"
+kind = "categorical"
+name = "sales_agent"
+reason = "Assigned sales agent (a person's name, used as a category)."
+confidence = "medium"
+
+[[features]]
+source = "acct.sector"
+kind = "categorical"
+name = "sector"
+reason = "Account's industry (raw spelling, typos kept)."
+confidence = "high"
+
+[[features]]
+source = "acct.revenue"
+kind = "numeric"
+name = "revenue"
+reason = "Account's annual revenue."
+confidence = "high"
+
+[[features]]
+source = "acct.employees"
+kind = "numeric"
+name = "employees"
+reason = "Account's employee count."
+confidence = "high"
+
+[[features]]
+source = "acct.office_location"
+kind = "categorical"
+name = "office_location"
+reason = "Account's office country; rare countries fall into other."
+confidence = "medium"
+
+[[features]]
+source = "acct.year_established"
+kind = "numeric"
+name = "year_established"
+reason = "Account's founding year."
+confidence = "high"
+
+[[features]]
+source = "team.regional_office"
+kind = "categorical"
+name = "regional_office"
+reason = "Sales agent's regional office."
+confidence = "high"
+
+[[features]]
+source = "team.manager"
+kind = "categorical"
+name = "manager"
+reason = "Sales agent's manager (a person's name, used as a category)."
 confidence = "medium"

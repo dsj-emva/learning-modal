@@ -23,6 +23,17 @@
 # so most design columns are unfilled (see dataset.json coverage). is_repeated_guest -> returned_visitor is carried
 # for the record (the model does not read it). Everything else is ignored, notably reservation_status(_date),
 # assigned_room_type, booking_changes and days_in_waiting_list, which are known only after booking (label leakage).
+#
+# Features (Phase 10, generic feature set, ADR 0024; features_confirmed = true after a review BY HAND, no API key):
+# the booking attributes known when the booking is made: hotel, lead_time, arrival month, the planned weekend and week
+# nights (two numerics), adults, children, babies, meal, country, market_segment, distribution_channel,
+# is_repeated_guest, previous_cancellations, previous_bookings_not_canceled, reserved_room_type, deposit_type, agent,
+# company, customer_type, adr, required_car_parking_spaces, total_of_special_requests. EXCLUDED as post-booking or
+# outcome-linked: reservation_status, reservation_status_date, assigned_room_type, booking_changes,
+# days_in_waiting_list, is_canceled. Caveats, kept deliberately (the dataset paper describes them as booking
+# attributes): required_car_parking_spaces and total_of_special_requests can be updated after booking in real
+# systems, and adr is defined in the paper from lodging transactions, so for a kept booking it may reflect the stay;
+# all three are watched in the report's leakage screen. agent and company are ids (categorical; NULL = blank).
 
 name = "hotel_bookings"
 as_of = "2017-09-01"
@@ -31,6 +42,7 @@ source_url = "https://www.kaggle.com/datasets/jessemostipak/hotel-booking-demand
 licence = "CC BY 4.0 (Antonio, Almeida and Nunes 2019, Data in Brief, doi:10.1016/j.dib.2018.11.126)"
 outcome_confirmed = true
 drop_rows_without_created_at = false
+features_confirmed = true
 
 [[sources]]
 name = "b"
@@ -107,3 +119,164 @@ source = "b.days_in_waiting_list"
 target = "ignore"
 reason = "Accumulates after booking (leakage)."
 confidence = "high"
+
+[[features]]
+source = "b.hotel"
+kind = "categorical"
+name = "hotel"
+reason = "City or resort hotel."
+confidence = "high"
+
+[[features]]
+source = "b.lead_time"
+kind = "numeric"
+name = "lead_time"
+reason = "Days between booking and arrival; known at booking."
+confidence = "high"
+
+[[features]]
+source = "b.arrival_date_month"
+kind = "categorical"
+name = "arrival_month"
+reason = "Month of the planned arrival."
+confidence = "high"
+
+[[features]]
+source = "b.stays_in_weekend_nights"
+kind = "numeric"
+name = "weekend_nights"
+reason = "Planned weekend nights."
+confidence = "high"
+
+[[features]]
+source = "b.stays_in_week_nights"
+kind = "numeric"
+name = "week_nights"
+reason = "Planned week nights."
+confidence = "high"
+
+[[features]]
+source = "b.adults"
+kind = "numeric"
+name = "adults"
+reason = "Adults on the booking."
+confidence = "high"
+
+[[features]]
+source = "b.children"
+kind = "numeric"
+name = "children"
+reason = "Children on the booking."
+confidence = "high"
+
+[[features]]
+source = "b.babies"
+kind = "numeric"
+name = "babies"
+reason = "Babies on the booking."
+confidence = "high"
+
+[[features]]
+source = "b.meal"
+kind = "categorical"
+name = "meal"
+reason = "Meal package booked."
+confidence = "high"
+
+[[features]]
+source = "b.country"
+kind = "categorical"
+name = "country"
+reason = "Guest country; rare countries fall into other."
+confidence = "medium"
+
+[[features]]
+source = "b.market_segment"
+kind = "categorical"
+name = "market_segment"
+reason = "Market segment of the booking."
+confidence = "high"
+
+[[features]]
+source = "b.distribution_channel"
+kind = "categorical"
+name = "distribution_channel"
+reason = "Booking distribution channel."
+confidence = "high"
+
+[[features]]
+source = "b.is_repeated_guest"
+kind = "categorical"
+name = "repeated_guest"
+reason = "Guest has stayed before (0/1)."
+confidence = "high"
+
+[[features]]
+source = "b.previous_cancellations"
+kind = "numeric"
+name = "previous_cancellations"
+reason = "Guest's earlier cancellations, known at booking."
+confidence = "high"
+
+[[features]]
+source = "b.previous_bookings_not_canceled"
+kind = "numeric"
+name = "previous_bookings_kept"
+reason = "Guest's earlier kept bookings, known at booking."
+confidence = "high"
+
+[[features]]
+source = "b.reserved_room_type"
+kind = "categorical"
+name = "reserved_room_type"
+reason = "Room type reserved (not the one assigned at check-in)."
+confidence = "high"
+
+[[features]]
+source = "b.deposit_type"
+kind = "categorical"
+name = "deposit_type"
+reason = "Deposit terms of the booking."
+confidence = "high"
+
+[[features]]
+source = "b.agent"
+kind = "categorical"
+name = "agent"
+reason = "Travel agency id; rare agencies fall into other."
+confidence = "medium"
+
+[[features]]
+source = "b.company"
+kind = "categorical"
+name = "company"
+reason = "Company id of a company booking; mostly blank."
+confidence = "medium"
+
+[[features]]
+source = "b.customer_type"
+kind = "categorical"
+name = "customer_type"
+reason = "Contract, group, transient or transient-party."
+confidence = "high"
+
+[[features]]
+source = "b.adr"
+kind = "numeric"
+name = "adr"
+reason = "Average daily rate; caveat: may reflect the stay for kept bookings."
+confidence = "low"
+
+[[features]]
+source = "b.required_car_parking_spaces"
+kind = "numeric"
+name = "parking_spaces"
+reason = "Parking requested; caveat: can change after booking."
+confidence = "low"
+
+[[features]]
+source = "b.total_of_special_requests"
+kind = "numeric"
+name = "special_requests"
+reason = "Special requests; caveat: can change after booking."
+confidence = "low"

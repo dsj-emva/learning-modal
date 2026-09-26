@@ -20,7 +20,9 @@ Rulings:
   takes one raw column ``x_<name>`` per declared extra (``emva.ingest.convert.convert_leads`` adds them; an absent one
   is blank, i.e. ``missing``). They are encoded with the bundle's frozen ``GenericEncoder``: an unseen categorical
   value is ``other`` (a defined level, so it is not refused, amending ADR 0009 for extras only), a number outside the
-  training range falls into the edge bin, and a non-number in a numeric extra raises ``ValueError``.
+  training range falls into the edge bin, and a non-number in a numeric extra raises ``ValueError``. Like the
+  ``historical_leads.csv`` columns the models do not read, ``x_`` columns a bundle does not use are accepted and not
+  read (a v2 bundle scores ``convert_leads`` output of a mapping that declares features).
 - **Bots and duplicates are flagged, not dropped** (``is_bot``, ``is_duplicate``), and still scored. The
   duplicate check sees only the batch passed in: a lead scored alone is never a duplicate, even if its email is
   in the training history. In the batch run such leads were dropped before scoring, so they have no batch score.
@@ -39,6 +41,7 @@ import pandas as pd
 
 from emva.constants import ANSWER_KEYS, CHANNEL_SOURCES, LEAD_ADS_MEDIUM, MISSING, V2_LEVELS, WEEKDAYS
 from emva.feature_spec import feature_spec
+from emva.generic import EXTRA_PREFIX
 from emva.io import enrich, flag_bots_and_duplicates, read_companies
 from emva.model import coefficients, intercept_row, predict, split_design_column
 from emva.persist import ModelBundle
@@ -243,10 +246,9 @@ def _as_training_schema(bundle: ModelBundle, leads: pd.DataFrame) -> pd.DataFram
         raise ValueError(f"duplicate lead_id values: {sorted(L.index[L.index.duplicated()].unique())[:5]}")
     schema = bundle.lead_schema
     extras = () if bundle.extras is None else bundle.extras.raw_columns
-    unknown = sorted(set(L.columns) - set(schema.columns) - set(extras))
+    unknown = sorted(c for c in set(L.columns) - set(schema.columns) if not str(c).startswith(EXTRA_PREFIX))
     if unknown:
-        also = f" and the extras {list(extras)}" if extras else ""
-        raise ValueError(f"unknown columns {unknown}; leads take historical_leads.csv columns{also} only")
+        raise ValueError(f"unknown columns {unknown}; leads take historical_leads.csv columns and x_<name> extras only")
     if "email" not in L or L.email.isna().any():
         raise ValueError("every lead needs an email")
     blank = pd.Series(None, index=L.index, dtype=object)

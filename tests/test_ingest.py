@@ -652,7 +652,8 @@ def test_cli_convert_writes_the_dataset_and_refuses_a_draft(tmp_path: Path,
     meta = json.loads((tmp_path / "out" / "dataset.json").read_text())
     assert all(f"{k} = {meta[k]}: " in printed for k in DERIVED_COUNTS) and meta["lost_dated_at_as_of"] > 0
     assert {p.name for p in (tmp_path / "out").iterdir()} == {
-        "historical_leads.csv", "crm_history.csv", "companies.csv", "people.csv", "dataset.json", "mapping.toml"}
+        "historical_leads.csv", "crm_history.csv", "companies.csv", "people.csv", "dataset.json", "mapping.toml",
+        "extra_features.csv"}  # the mapping declares [[features]] (Phase 10)
     draft = tmp_path / "draft.toml"
     draft.write_text((REPO / "mappings" / "olist_funnel.toml").read_text().replace(
         "outcome_confirmed = true", "outcome_confirmed = false"))

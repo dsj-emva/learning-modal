@@ -403,11 +403,16 @@ def test_unseen_value_at_scoring_is_other_and_absent_extras_are_missing(bundle, 
         score_leads(bundle, leads.assign(form_variant="Z"), dataset)
 
 
-def test_a_v2_bundle_refuses_extra_columns(dataset, frames, mapping, tmp_path) -> None:
-    save_bundle(run(dataset, features=FeatureSet.V2), tmp_path / "m.joblib", dataset, 1.0)
+def test_a_v2_bundle_accepts_and_ignores_extra_columns(dataset, frames, mapping, tmp_path) -> None:
+    v2 = run(dataset, features=FeatureSet.V2)
+    save_bundle(v2, tmp_path / "m.joblib", dataset, 1.0)
+    b = load_bundle(tmp_path / "m.joblib")
     leads = convert_leads({"leads.csv": frames["leads.csv"].head(2), "orgs.csv": frames["orgs.csv"]}, mapping)
-    with pytest.raises(ValueError, match="unknown columns.*x_seats"):
-        score_leads(load_bundle(tmp_path / "m.joblib"), leads, dataset)
+    with_x = score_leads(b, leads, dataset)
+    pd.testing.assert_frame_equal(with_x, score_leads(b, leads.drop(columns=["x_tier", "x_seats", "x_sector"]),
+                                                      dataset))
+    with pytest.raises(ValueError, match="unknown columns.*shoe_size"):
+        score_leads(b, leads.assign(shoe_size=1), dataset)
 
 
 def test_cli_trains_and_scores_generic(dataset, frames, tmp_path, capsys) -> None:

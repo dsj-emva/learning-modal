@@ -177,10 +177,14 @@ def test_joined_file_gets_the_primary_join_value() -> None:
 
     m = load_mapping((REPO / "mappings" / "crm_opportunities.toml").read_text(encoding="utf-8"))
     fields = scoring.source_fields(m)
-    assert [(f.file, f.column) for f in fields] == [("sales_pipeline.csv", "opportunity_id"),
-                                                    ("sales_pipeline.csv", "engage_date"),
-                                                    ("sales_pipeline.csv", "account"),
-                                                    ("accounts.csv", "office_location")]
-    values = {f.key: v for f, v in zip(fields, ["", "2017-03-01", "Acme", "United States"])}
+    # the Phase 10 [[features]] columns are submit-time inputs too (extras of the generic feature set)
+    assert [(f.file, f.column) for f in fields] == [
+        ("sales_pipeline.csv", "opportunity_id"), ("sales_pipeline.csv", "engage_date"),
+        ("sales_pipeline.csv", "account"), ("sales_pipeline.csv", "product"), ("sales_pipeline.csv", "sales_agent"),
+        ("accounts.csv", "office_location"), ("accounts.csv", "sector"), ("accounts.csv", "revenue"),
+        ("accounts.csv", "employees"), ("accounts.csv", "year_established"), ("sales_teams.csv", "regional_office"),
+        ("sales_teams.csv", "manager")]
+    values = {f.key: v for f, v in zip(fields, ["", "2017-03-01", "Acme", "GTX Pro", "Agent One", "United States",
+                                                "retail", "100", "50", "1999", "East", "Manager North"])}
     frames = scoring.frames_from_source_form(m, values)
     assert frames["accounts.csv"].account.iloc[0] == "Acme" == frames["sales_pipeline.csv"].account.iloc[0]

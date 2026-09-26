@@ -43,6 +43,7 @@ from emva.ingest.mapping import (
     TARGETS,
     DatasetMapping,
     Expr,
+    FeatureMap,
     FieldMap,
     LeadColumns,
     Outcome,
@@ -81,6 +82,8 @@ class MappingForm:
     reference ("" = not chosen); ``outcome_values`` raw value -> stage (kind ``stage``) or ``Won`` / ``Lost`` (kind
     ``won_flag``; unused for ``presence``); ``fields`` every field row (plain targets are edited in the review table,
     value maps only as TOML); dates and the other top-level keys as strings; ``origin`` says where the form came from.
+    ``features`` / ``features_confirmed`` (Phase 10 (a), the generic feature set's ``[[features]]``) are carried through
+    unchanged; they have no form controls yet (Phase 10 part b) and are edited as TOML.
     """
 
     name: str
@@ -98,6 +101,8 @@ class MappingForm:
     drop_rows_without_created_at: bool = False
     review: Mapping[str, Review] = field(default_factory=dict)
     origin: str = ""
+    features: tuple[FeatureMap, ...] = ()
+    features_confirmed: bool = False
 
     def refs(self) -> list[str]:
         """Every ``<source>.<column>`` a field row, lead role or the outcome may use: the field rows' sources in order
@@ -187,7 +192,7 @@ def form_from_mapping(m: DatasetMapping, frames: Mapping[str, pd.DataFrame] | No
                        lost_without_close=o.lost_without_close, fields=tuple(rows), as_of=m.as_of,
                        test_from=m.test_from, source_url=m.source_url, licence=m.licence,
                        drop_rows_without_created_at=m.drop_rows_without_created_at, review=dict(m.review),
-                       origin=origin)
+                       origin=origin, features=m.features, features_confirmed=m.features_confirmed)
 
 
 def mapping_from_form(f: MappingForm) -> DatasetMapping:
@@ -220,7 +225,8 @@ def mapping_from_form(f: MappingForm) -> DatasetMapping:
     return DatasetMapping(name=f.name, sources=f.sources, lead=lead, outcome=outcome, as_of=f.as_of,
                           test_from=f.test_from, fields=f.fields, source_url=f.source_url, licence=f.licence,
                           outcome_confirmed=False, drop_rows_without_created_at=f.drop_rows_without_created_at,
-                          review={k: v for k, v in f.review.items()})
+                          review={k: v for k, v in f.review.items()}, features=f.features,
+                          features_confirmed=f.features_confirmed)
 
 
 def confirm(m: DatasetMapping) -> DatasetMapping:

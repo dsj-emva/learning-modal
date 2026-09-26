@@ -48,7 +48,10 @@ REQUIRED_FILES: tuple[str, ...] = (LEADS_FILE, CRM_FILE, COMPANIES_FILE)
 # (the dataset's own as_of / test_from and a coverage table). The store writes them as given and reads only the
 # mapping's ``source_url``; a dataset that carries ``dataset.json`` is "converted".
 MAPPING_FILE, DATASET_META_FILE = "mapping.toml", "dataset.json"
-METADATA_FILES: tuple[str, ...] = (MAPPING_FILE, DATASET_META_FILE)
+# Phase 10 (a): the generic feature set's raw extras (emva.generic), written by the converter when the mapping declares
+# [[features]]; stored as given, not validated here (Keel support comes with Phase 10 part b).
+EXTRA_FEATURES_FILE: str = "extra_features.csv"
+METADATA_FILES: tuple[str, ...] = (MAPPING_FILE, DATASET_META_FILE, EXTRA_FEATURES_FILE)
 # Evaluation-only file names (ground truth) are refused on sight, never opened.
 FORBIDDEN_PREFIX: str = "ground_truth"
 
