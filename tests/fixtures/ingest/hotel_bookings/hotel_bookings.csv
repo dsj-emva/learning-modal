@@ -1,0 +1,41 @@
+hotel,is_canceled,lead_time,arrival_date_year,arrival_date_month,arrival_date_week_number,arrival_date_day_of_month,stays_in_weekend_nights,stays_in_week_nights,adults,children,babies,meal,country,market_segment,distribution_channel,is_repeated_guest,previous_cancellations,previous_bookings_not_canceled,reserved_room_type,assigned_room_type,booking_changes,deposit_type,agent,company,days_in_waiting_list,customer_type,adr,required_car_parking_spaces,total_of_special_requests,reservation_status,reservation_status_date
+Resort Hotel,1,175,2016,June,26,27,1,2,1,0,0,HB,PRT,Online TA,Direct,1,0,0,E,E,1,No Deposit,9,NULL,0,Contract,14.43,0,1,No-Show,2016-06-27
+Resort Hotel,0,231,2017,May,19,8,2,4,2,1,0,BB,PRT,Direct,TA/TO,0,0,0,A,D,1,No Deposit,NULL,NULL,0,Transient,187.7,0,1,Check-Out,2017-05-14
+City Hotel,0,57,2017,June,24,14,1,0,1,0,0,SC,ESP,Direct,Corporate,0,0,0,E,A,2,No Deposit,240,NULL,0,Contract,41.45,0,1,Check-Out,2017-06-15
+Resort Hotel,1,175,2015,September,39,21,0,3,3,0,0,SC,GBR,Groups,Corporate,0,0,0,E,A,0,No Deposit,9,NULL,0,Transient,3.87,0,1,Canceled,2015-07-24
+City Hotel,0,208,2017,March,13,29,1,2,3,0,0,SC,,Online TA,Corporate,0,0,0,A,E,0,No Deposit,NULL,NULL,0,Contract,217.22,0,1,Check-Out,2017-04-01
+City Hotel,0,167,2016,July,29,19,2,1,1,1,0,SC,,Offline TA/TO,Direct,0,0,0,A,E,0,No Deposit,240,NULL,0,Transient,99.31,0,2,Check-Out,2016-07-22
+City Hotel,1,258,2017,April,17,28,2,2,3,1,0,BB,PRT,Online TA,TA/TO,0,0,0,D,A,1,No Deposit,NULL,NULL,0,Contract,245.98,0,1,Canceled,2017-03-08
+City Hotel,0,27,2015,December,51,17,2,4,2,0,0,SC,PRT,Offline TA/TO,Direct,0,0,0,E,E,1,No Deposit,NULL,NULL,0,Contract,19.19,0,1,Check-Out,2015-12-23
+City Hotel,0,199,2016,April,13,2,0,1,3,0,0,SC,,Online TA,TA/TO,0,0,0,D,A,1,No Deposit,9,NULL,0,Transient,148.21,0,1,Check-Out,2016-04-03
+City Hotel,1,57,2017,June,22,1,0,1,2,1,0,HB,,Direct,Direct,0,0,0,D,E,1,No Deposit,240,NULL,0,Contract,120.3,0,2,No-Show,2017-06-01
+City Hotel,0,43,2016,March,13,29,0,1,3,0,0,BB,ESP,Online TA,TA/TO,1,0,0,A,A,0,No Deposit,NULL,NULL,0,Contract,110.67,0,0,Check-Out,2016-03-30
+Resort Hotel,0,70,2017,January,2,10,2,0,1,1,0,HB,,Direct,Corporate,0,0,0,E,D,0,No Deposit,NULL,NULL,0,Contract,101.74,0,2,Check-Out,2017-01-12
+Resort Hotel,1,28,2016,October,39,2,2,4,2,1,0,SC,PRT,Offline TA/TO,TA/TO,0,0,0,D,A,2,No Deposit,240,NULL,0,Contract,199.85,0,0,Canceled,2016-09-23
+Resort Hotel,0,53,2016,May,17,1,2,1,3,0,0,SC,PRT,Online TA,Corporate,0,0,0,E,E,0,No Deposit,240,NULL,0,Transient,113.31,0,0,Check-Out,2016-05-04
+City Hotel,0,28,2015,September,37,13,1,4,1,0,0,SC,ESP,Groups,Corporate,0,0,0,E,D,1,No Deposit,9,NULL,0,Contract,98.07,0,2,Check-Out,2015-09-18
+City Hotel,1,7,2016,June,26,28,1,1,2,1,0,SC,,Groups,Direct,0,0,0,A,A,0,No Deposit,240,NULL,0,Contract,223.84,0,0,Canceled,2016-06-22
+Resort Hotel,0,252,2017,January,4,28,1,4,3,1,0,HB,GBR,Direct,Corporate,0,0,0,D,A,1,No Deposit,NULL,NULL,0,Contract,186.94,0,2,Check-Out,2017-02-02
+Resort Hotel,0,219,2016,August,32,8,0,2,1,0,0,HB,,Offline TA/TO,Direct,0,0,0,E,E,2,No Deposit,240,NULL,0,Transient,121.66,0,1,Check-Out,2016-08-10
+City Hotel,1,107,2015,July,30,22,1,0,3,1,0,SC,,Offline TA/TO,TA/TO,0,0,0,E,E,0,No Deposit,9,NULL,0,Contract,236.14,0,0,No-Show,2015-07-22
+City Hotel,0,236,2016,March,12,27,0,0,1,1,0,BB,PRT,Online TA,Direct,0,0,0,E,D,0,No Deposit,240,NULL,0,Contract,160.4,0,1,Check-Out,2016-03-27
+Resort Hotel,0,1,2017,March,13,31,0,2,2,0,0,BB,GBR,Groups,TA/TO,1,0,0,D,A,1,No Deposit,240,NULL,0,Transient,62.94,0,2,Check-Out,2017-04-02
+Resort Hotel,1,70,2016,September,35,4,0,3,2,0,0,BB,PRT,Groups,Direct,0,0,0,E,D,1,No Deposit,NULL,NULL,0,Contract,3.33,0,0,Canceled,2016-09-04
+Resort Hotel,0,281,2016,May,19,9,2,4,2,1,0,HB,,Groups,Direct,0,0,0,D,E,2,No Deposit,9,NULL,0,Contract,162.58,0,2,Check-Out,2016-05-15
+City Hotel,0,95,2016,November,46,16,0,2,2,1,0,HB,ESP,Offline TA/TO,Corporate,0,0,0,D,E,0,No Deposit,240,NULL,0,Transient,137.4,0,0,Check-Out,2016-11-18
+City Hotel,1,167,2016,September,37,16,1,3,2,1,0,BB,ESP,Direct,Direct,0,0,0,A,A,1,No Deposit,NULL,NULL,0,Contract,165.75,0,2,Canceled,2016-07-12
+Resort Hotel,0,270,2017,March,12,24,1,2,1,1,0,SC,FRA,Online TA,Direct,0,0,0,A,D,0,No Deposit,NULL,NULL,0,Contract,192.75,0,0,Check-Out,2017-03-27
+City Hotel,0,287,2017,February,6,12,2,3,1,0,0,SC,GBR,Offline TA/TO,Direct,0,0,0,A,A,2,No Deposit,240,NULL,0,Contract,19.56,0,2,Check-Out,2017-02-17
+Resort Hotel,1,176,2016,February,7,21,2,0,1,0,0,HB,PRT,Direct,TA/TO,0,0,0,A,A,1,No Deposit,9,NULL,0,Transient,227.73,0,2,No-Show,2016-02-21
+Resort Hotel,0,19,2015,September,38,16,0,3,2,0,0,BB,,Direct,Direct,0,0,0,A,E,0,No Deposit,NULL,NULL,0,Contract,213.22,0,2,Check-Out,2015-09-19
+Resort Hotel,0,2,2016,October,42,20,2,4,2,0,0,SC,PRT,Online TA,Direct,0,0,0,E,D,1,No Deposit,240,NULL,0,Transient,86.36,0,2,Check-Out,2016-10-26
+Resort Hotel,1,69,2015,October,40,3,1,4,1,0,0,HB,,Direct,Corporate,1,0,0,A,E,2,No Deposit,NULL,NULL,0,Transient,7.98,0,1,Canceled,2015-08-15
+Resort Hotel,0,154,2015,July,27,5,0,3,1,0,0,SC,FRA,Groups,Direct,0,0,0,A,A,2,No Deposit,NULL,NULL,0,Contract,126.44,0,1,Check-Out,2015-07-08
+City Hotel,0,89,2016,July,26,3,2,0,1,0,0,BB,,Offline TA/TO,Corporate,0,0,0,E,E,2,No Deposit,240,NULL,0,Transient,247.56,0,0,Check-Out,2016-07-05
+Resort Hotel,1,218,2017,July,27,9,0,4,1,0,0,BB,FRA,Direct,TA/TO,0,0,0,D,D,0,No Deposit,9,NULL,0,Contract,41.08,0,0,Canceled,2017-02-27
+City Hotel,0,171,2017,April,14,6,2,4,3,1,0,SC,FRA,Groups,Direct,0,0,0,D,E,2,No Deposit,9,NULL,0,Transient,15.2,0,0,Check-Out,2017-04-12
+Resort Hotel,0,194,2015,November,47,21,1,0,1,1,0,SC,GBR,Offline TA/TO,Corporate,0,0,0,D,D,0,No Deposit,NULL,NULL,0,Transient,69.98,0,0,Check-Out,2015-11-22
+City Hotel,1,9,2016,March,10,11,1,0,3,1,0,HB,GBR,Direct,TA/TO,0,0,0,D,D,0,No Deposit,NULL,NULL,0,Contract,127.65,0,2,No-Show,2016-03-11
+Resort Hotel,0,117,2016,March,9,1,0,2,1,0,0,BB,FRA,Offline TA/TO,Direct,0,0,0,A,E,2,No Deposit,9,NULL,0,Contract,35.25,0,1,Check-Out,2016-03-03
+City Hotel,0,187,2017,February,6,12,0,1,1,1,0,HB,PRT,Direct,Direct,0,0,0,A,E,2,No Deposit,9,NULL,0,Contract,220.76,0,2,Check-Out,2017-02-13
+Resort Hotel,1,87,2017,February,9,27,1,3,3,0,0,SC,PRT,Groups,Corporate,0,0,0,E,E,2,No Deposit,NULL,NULL,0,Contract,176.17,0,1,Canceled,2017-01-23

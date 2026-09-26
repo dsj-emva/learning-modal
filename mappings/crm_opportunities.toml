@@ -1,0 +1,104 @@
+# CRM sales opportunities (Kaggle "innocentmfa/crm-sales-opportunities"; a fictitious B2B computer-hardware company).
+# Written and reviewed BY HAND (the API key was not available); this is NOT an LLM draft. outcome_confirmed = true
+# only because a person reviewed the outcome mapping below.
+#
+# Lead = one opportunity (sales_pipeline.csv, 8,800 rows, unique opportunity_id), left-joined with accounts.csv on
+# account (unique there; 1,425 opportunities have no account). created_at = contacted_at = engage_date (the date the
+# sales agent engaged: the opportunity is worked from then). The 500 Prospecting opportunities have no engage_date
+# and so no creation date: they are dropped (drop_rows_without_created_at, counted in dataset.json).
+# Outcome = deal_stage: Won -> Won at close_date (deal_value = close_value), Lost -> Lost at close_date,
+# Engaging -> Contacted (open; it carries engage_date, so an Engaging deal idle 90+ days at as_of is "stalled" and
+# censored by default), Prospecting -> New (all dropped, see above).
+#
+# Fields: the opportunity has no form, UTM, email, domain or session data. account -> company_name (name enrichment;
+# the converted companies.csv is header-only, so it matches nothing and enrichment_missing stays yes); the account's
+# office_location -> answers.country (the account's country, not a typed one; low confidence; read only with an
+# on-site session). sales_agent is a person's name and product is chosen during the deal: ignored. The accounts'
+# sector (with typos such as "technolgy"), revenue, employees and year_established have no lead-schema target (company
+# columns are not mapped; employees would need a binning operation the mapping does not have): ignored.
+#
+# Dates: engage_date 2016-10-20 .. 2017-12-27, close_date 2017-03-01 .. 2017-12-31. as_of = 2018-01-01 (the day after
+# the last close). Mature (H = 120) = engaged on or before 2017-09-03. test_from = 2017-07-01: the last ~20% of the
+# mature span (the horizon test set, July to early September 2017) and the last ~42% of the engage-date span (the
+# legacy test set). A later boundary would leave the horizon test set empty. Frozen here (ground rule 4).
+
+name = "crm_opportunities"
+as_of = "2018-01-01"
+test_from = "2017-07-01"
+source_url = "https://www.kaggle.com/datasets/innocentmfa/crm-sales-opportunities"
+licence = "see Kaggle page (unverified)"
+outcome_confirmed = true
+drop_rows_without_created_at = true
+
+[[sources]]
+name = "opp"
+file = "sales_pipeline.csv"
+
+[[sources]]
+name = "acct"
+file = "accounts.csv"
+join_on = "account"
+
+[lead]
+lead_id = "opp.opportunity_id"
+created_at = "opp.engage_date"
+contacted_at = "opp.engage_date"
+won_at = "opp.close_date"
+close_at = "opp.close_date"
+deal_value = "opp.close_value"
+
+[outcome]
+kind = "stage"
+column = "opp.deal_stage"
+lost_without_close = "error"
+
+[outcome.stage_map]
+Won = "Won"
+Lost = "Lost"
+Engaging = "Contacted"
+Prospecting = "New"
+
+[review]
+lead_id = { reason = "opportunity_id, unique.", confidence = "high" }
+created_at = { reason = "engage_date: when the opportunity was engaged; Prospecting rows have none and are dropped.", confidence = "medium" }
+contacted_at = { reason = "Engaged = worked by a sales agent.", confidence = "high" }
+won_at = { reason = "close_date of a Won deal.", confidence = "high" }
+close_at = { reason = "close_date of a Lost deal.", confidence = "high" }
+deal_value = { reason = "close_value of a Won deal.", confidence = "high" }
+outcome = { reason = "deal_stage values map one to one; Engaging is open.", confidence = "high" }
+
+[[fields]]
+source = "opp.account"
+target = "company_name"
+reason = "Buying account's name; enables name enrichment when a companies file exists."
+confidence = "high"
+
+[[fields]]
+source = "acct.office_location"
+target = "answers.country"
+reason = "Account's office country; not typed by a lead."
+confidence = "low"
+
+[[fields]]
+source = "opp.sales_agent"
+target = "ignore"
+reason = "A person's name; assigned by the seller, not a lead attribute."
+confidence = "high"
+
+[[fields]]
+source = "opp.product"
+target = "ignore"
+reason = "Chosen during the deal (may leak the outcome); no schema target."
+confidence = "medium"
+
+[[fields]]
+source = "acct.sector"
+target = "ignore"
+reason = "Company column; this converter writes companies.csv header-only."
+confidence = "medium"
+
+[[fields]]
+source = "acct.employees"
+target = "ignore"
+reason = "Would need binning into company-size bands; no such operation."
+confidence = "medium"

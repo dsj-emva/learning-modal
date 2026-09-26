@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from typing import IO
 
 import pandas as pd
 
@@ -64,9 +65,16 @@ def match_company_names(names: list[pd.Series], companies: pd.DataFrame) -> pd.S
     return out
 
 
-def read_leads(path: str | Path) -> pd.DataFrame:
-    """Read a ``historical_leads.csv`` file: indexed by ``lead_id``, ``created_at`` parsed as UTC timestamps."""
-    return pd.read_csv(path, parse_dates=["created_at"]).set_index("lead_id")
+# historical_leads.csv columns the pipeline reads with string methods: read as text even when every cell is blank
+# (a converted dataset leaves unmapped columns blank, which pandas would otherwise read as float).
+TEXT_LEAD_COLUMNS: tuple[str, ...] = ("email", "company_name", "company_domain", "user_agent", "utm_term")
+
+
+def read_leads(path: str | Path | IO[bytes]) -> pd.DataFrame:
+    """Read a ``historical_leads.csv`` file (path or binary buffer): indexed by ``lead_id``, ``created_at`` parsed as
+    UTC timestamps, ``TEXT_LEAD_COLUMNS`` as text."""
+    return pd.read_csv(path, parse_dates=["created_at"], dtype=dict.fromkeys(TEXT_LEAD_COLUMNS, "str")
+                       ).set_index("lead_id")
 
 
 def read_companies(data: str | Path) -> pd.DataFrame:
