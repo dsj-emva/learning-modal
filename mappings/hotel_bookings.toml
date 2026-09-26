@@ -34,6 +34,10 @@
 # attributes): required_car_parking_spaces and total_of_special_requests can be updated after booking in real
 # systems, and adr is defined in the paper from lodging transactions, so for a kept booking it may reflect the stay;
 # all three are watched in the report's leakage screen. agent and company are ids (categorical; NULL = blank).
+# country caveat (Phase 10 fix round; the feature list is unchanged): PRT (Portugal, 41% of bookings) cancels at 57%
+# against 24% for every other country. The reviewer's reading, not verified against the dataset paper: nationality is
+# reportedly entered as the home country at booking and corrected at check-in, so a kept booking is more likely to
+# carry its guest's real nationality than a cancelled one, and country may partly encode the outcome.
 
 name = "hotel_bookings"
 as_of = "2017-09-01"

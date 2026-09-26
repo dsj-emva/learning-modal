@@ -13,9 +13,10 @@
 # Fields: the opportunity has no form, UTM, email, domain or session data. account -> company_name (name enrichment;
 # the converted companies.csv is header-only, so it matches nothing and enrichment_missing stays yes); the account's
 # office_location -> answers.country (the account's country, not a typed one; low confidence; read only with an
-# on-site session). sales_agent is a person's name and product is chosen during the deal: ignored. The accounts'
-# sector (with typos such as "technolgy"), revenue, employees and year_established have no lead-schema target (company
-# columns are not mapped; employees would need a binning operation the mapping does not have): ignored.
+# on-site session). sales_agent (a person's name) and product (possibly settled during the deal) have no lead-schema
+# field target: no [[fields]] row reads them (both are declared as extras below). The accounts' sector (with typos
+# such as "technolgy"), revenue, employees and year_established have no lead-schema target (company columns are not
+# mapped; employees would need a binning operation the mapping does not have): no [[fields]] row either.
 #
 # Features (Phase 10, generic feature set, ADR 0024; features_confirmed = true after a review BY HAND, no API key):
 # third source sales_teams.csv, joined on sales_agent (3 sources, the maximum). Extras: product, sales_agent; the
@@ -25,6 +26,14 @@
 # keep redacting them (R39). Caveat: product may be settled during the deal rather than at engagement; the dataset
 # gives one product per opportunity from engagement on, so it is kept and watched in the leakage screen. Not
 # declared: deal_stage, close_date, close_value (the outcome) and subsidiary_of (sparse).
+# Caveat (Phase 10 fix round, disclosed rather than fixed: changing the feature list now would be post hoc): in the raw
+# sales_pipeline.csv, account is blank only on open deals (1,088 Engaging + 337 Prospecting; no Won or Lost deal lacks
+# one), so the five account extras' level "missing" means "not closed yet", not something about the lead. Under the
+# default horizon labels those open deals are censored or unlabelled: no labelled training lead lacks an account, the
+# "missing" columns have weight 0, and a new lead with no account scores its account extras as their reference levels
+# (sector retail, revenue <=497.11, employees <=1165, office_location United States, year_established <=1987). Under
+# legacy labels (stalled Engaging deals counted as lost) the model learns "missing" = lost directly, and the (a)
+# legacy test set's 525 no-account leads are all lost. The report's missingness screen flags these five extras.
 #
 # Dates: engage_date 2016-10-20 .. 2017-12-27, close_date 2017-03-01 .. 2017-12-31. as_of = 2018-01-01 (the day after
 # the last close). Mature (H = 120) = engaged on or before 2017-09-03. test_from = 2017-07-01: the last ~20% of the
