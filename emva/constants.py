@@ -138,6 +138,10 @@ BOILERPLATE_SIMILARITY_THRESHOLD: float = 0.6
 # (rarer and unseen values fall into ``other``); a numeric extra gets GENERIC_NUMERIC_BINS quantile bins.
 GENERIC_MIN_LEVEL_COUNT: int = 30
 GENERIC_NUMERIC_BINS: int = 5
+# Missingness screen of the generic report (Phase 10 fix round, ADR 0024): an extra whose share of missing values among
+# closed leads (label_source won / crm_lost) and among open ones (open / stalled / ghosted) differs by at least this is
+# flagged "missingness tracks outcome status" (a flag only; fixed before the Kaggle results were recomputed, not tuned).
+GENERIC_MISSINGNESS_FLAG: float = 0.5
 
 # Collinearity check (plan 2.7): the largest |correlation| allowed between two design columns.
 MAX_ABS_DESIGN_CORR: float = 0.95

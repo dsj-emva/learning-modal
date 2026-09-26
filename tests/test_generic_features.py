@@ -531,6 +531,7 @@ def test_report_has_the_generic_vs_v2_section(dataset) -> None:
     assert "`generic` features" in text and "| (b) Horizon labels, mature test set |" in section
     assert "Phase 10 criterion (pre-registered): PASS" in section  # the planted signal clears the bar here
     assert "### Leakage screen" in section and "| tier | categorical |" in section
+    assert "| missing: closed | missing: open | missingness flag |" in section and "Missingness screen" in section
     assert "## Generic vs v2" not in build_report(dataset, n_resamples=20)  # v2 candidate: no section
 
 
@@ -547,3 +548,27 @@ def test_leakage_screen_flags_a_leaky_extra(dataset, generic_run) -> None:
     assert flagged.loc["tier", "training AUC"] == pytest.approx(1.0) and flagged.loc["tier", "flag"] == LEAKAGE_FLAG_TEXT
     with pytest.raises(ValueError, match="generic"):
         leakage_screen(replace(r, extras=None))
+
+
+def test_missingness_screen_flags_an_extra_blank_only_on_open_leads(generic_run) -> None:
+    """Hand-built: 100 leads moved to an open CRM stage, with sector blank on k of them. The share missing among
+    closed leads is 0 and among open ones k / 100: flagged at a difference >= GENERIC_MISSINGNESS_FLAG (0.5), not
+    below; the AUC screen (training leads only) does not see it. Nothing is dropped."""
+    from emva.constants import GENERIC_MISSINGNESS_FLAG
+    from emva.eval.generic_report import MISSINGNESS_FLAG_TEXT, flagged, leakage_screen
+
+    assert GENERIC_MISSINGNESS_FLAG == 0.5
+    r = generic_run
+    screen = leakage_screen(r).set_index("extra")
+    assert (screen["missing: open"].isna()).all() and (screen["missingness flag"] == "").all()  # every lead closed
+    assert screen.loc["seats", "missing: closed"] == pytest.approx(r.X.x_seats.isna().mean())
+    opened = r.X.index[:100]
+    for k, flag in ((50, MISSINGNESS_FLAG_TEXT), (49, "")):
+        X = r.X.copy()
+        X.loc[opened, "final_stage"] = "Qualified"
+        X.loc[opened[:k], "x_sector"] = None
+        got = leakage_screen(replace(r, X=X)).set_index("extra")
+        assert got.loc["sector", "missing: closed"] == 0.0 and got.loc["sector", "missing: open"] == k / 100
+        assert got.loc["sector", "missingness flag"] == flag and got.loc["tier", "missingness flag"] == ""
+        assert got.loc["sector", "flag"] == ""  # the training AUC screen is blind to it
+        assert flagged(got.reset_index()) == (["sector"] if flag else [])

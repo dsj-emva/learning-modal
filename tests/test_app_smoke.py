@@ -316,6 +316,7 @@ def test_map_with_extras_confirm_both_convert_save_train_generic_and_see_the_com
     assert not at.exception, at.exception
     page = _text(at)
     assert "Generic vs v2" in page and "Leakage screen" in page and "landing_page" in page
+    assert "Missing: closed" in page and "Missingness flag" in page
     assert "Collinearity of the generic design" in page and "extra columns" in page
 
 

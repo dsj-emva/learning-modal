@@ -131,10 +131,16 @@ def _generic(run: storage.Run, test_set: str) -> None:
     ui.html(C.section("Leakage screen", "Each extra feature alone, on the training leads: the AUC of its levels "
                       f"scored by their win rate, folded so that 0.5 is no signal. Above {results.LEAKAGE_AUC_FLAG:.2f} "
                       "a single column separates wins from losses suspiciously well: check that it is known when the "
-                      "lead is submitted. A flag only; nothing is dropped."))
-    ui.html(C.table(["Extra feature", "Kind", "Levels", "Design columns", "Training AUC", "Flag"],
+                      "lead is submitted. The missingness columns compare the share of leads with the extra blank "
+                      "among closed leads (won or lost in the CRM) and among open ones (open, stalled or ghosted); a "
+                      f"difference of {results.GENERIC_MISSINGNESS_FLAG:.2f} or more means blank stands for \"not "
+                      "closed yet\" rather than for the lead. A flag only; nothing is dropped."))
+    ui.html(C.table(["Extra feature", "Kind", "Levels", "Design columns", "Training AUC", "Flag", "Missing: closed",
+                     "Missing: open", "Missingness flag"],
                     [[str(r["extra"]), str(r["kind"]), str(r["levels"]), str(r["design columns"]),
-                      C.num(r["training AUC"]), str(r["flag"])] for _, r in g.screen.iterrows()], numeric_from=2))
+                      C.num(r["training AUC"]), str(r["flag"]), C.num(r["missing: closed"]),
+                      C.num(r["missing: open"]), str(r["missingness flag"])] for _, r in g.screen.iterrows()],
+                    numeric_from=2))
     if g.flagged:
         ui.html(C.callout(", ".join(g.flagged), "bad", lead="Check for leakage:"))
 

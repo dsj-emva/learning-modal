@@ -31,8 +31,8 @@ Without ``status_quo_rules.json`` (converted datasets have none) the status-quo 
 
 With ``--feature-set generic`` (Phase 10, ADR 0024; a converted dataset with declared extras) a v2 model is trained
 on the same data, labels and split, and a "Generic vs v2" section follows the collinearity check: the paired AUC
-difference generic − v2 on both test sets, the Phase 10 criterion's verdict and the extras' leakage screen
-(``emva.eval.generic_report``).
+difference generic − v2 on both test sets, the Phase 10 criterion's verdict and the extras' leakage and missingness
+screen (``emva.eval.generic_report``).
 
 Revenue is recorded deal value for won test leads, 0 when blank or not won. This differs
 from the baseline script's own ``top20_revenue``, which fills blank deal values with its own
@@ -53,11 +53,18 @@ import pandas as pd
 from sklearn.metrics import brier_score_loss
 
 from emva.cli import add_feature_arguments, add_label_arguments, feature_set, label_config
-from emva.constants import AS_OF, LABEL_SOURCES, TEST_FROM, TOP_FRACTION
+from emva.constants import AS_OF, GENERIC_MISSINGNESS_FLAG, LABEL_SOURCES, TEST_FROM, TOP_FRACTION
 from emva.dataset_meta import dataset_dates, has_dataset_meta
 from emva.eval.bootstrap import N_RESAMPLES, SEED, auc_ci, paired_auc
 from emva.eval.collinearity import CollinearityResult, check_collinearity, format_result
-from emva.eval.generic_report import LEAKAGE_AUC_FLAG, LEAKAGE_FLAG_TEXT, GenericComparison, compare
+from emva.eval.generic_report import (
+    LEAKAGE_AUC_FLAG,
+    LEAKAGE_FLAG_TEXT,
+    MISSINGNESS_FLAG_TEXT,
+    GenericComparison,
+    compare,
+)
+from emva.eval.generic_report import flagged as generic_flagged
 from emva.eval.metrics import (
     auc_by_month,
     bottom_share,
@@ -357,14 +364,15 @@ def collinearity_section(result: PipelineResult) -> tuple[list[str], Collinearit
 def generic_sections(cmp: GenericComparison, generic: PipelineResult, collinearity: CollinearityResult,
                      n_resamples: int, seed: int) -> list[str]:
     """The "Generic vs v2" section (``emva.eval.generic_report``) as markdown lines: the paired comparison on each test
-    set, the generic design's collinearity verdict, the Phase 10 criterion and the leakage screen."""
+    set, the generic design's collinearity verdict, the Phase 10 criterion and the leakage and missingness screen."""
     n_x = len(generic.extras.columns())
     table = pd.DataFrame([{"test set": title, "n": cmp.sizes[title], "v2 AUC": f"{c.auc_a:.3f}",
                            "generic AUC": f"{c.auc_b:.3f}", "generic − v2": f"{c.diff.point:+.3f}",
                            "95% CI": f"[{c.diff.lo:+.3f}, {c.diff.hi:+.3f}]", "bootstrap p": f"{c.p_value:.3f}"}
                           for title, c in cmp.paired.items()])
-    screen = cmp.screen.assign(**{"training AUC": cmp.screen["training AUC"].map(_fmt_num)})
-    flagged = [str(x) for x in cmp.screen.extra[cmp.screen.flag != ""]]
+    screen = cmp.screen.assign(**{c: cmp.screen[c].map(_fmt_num)
+                                  for c in ("training AUC", "missing: closed", "missing: open")})
+    flagged = generic_flagged(cmp.screen)
     return ["## Generic vs v2 (Phase 10, ADR 0024)", "",
             f"Both models trained on the same rows and split with the same labels: `v2` (the fixed "
             f"{generic.design.shape[1] - n_x}-column design) and `generic` (the same plus {n_x} `x_` columns from "
@@ -378,7 +386,10 @@ def generic_sections(cmp: GenericComparison, generic: PipelineResult, collineari
             "### Leakage screen", "",
             "Single-feature training AUC of each extra's encoded levels (each level scored by its training win rate), "
             f"folded as |AUC − 0.5| + 0.5. Above {LEAKAGE_AUC_FLAG:.2f}: flagged \"{LEAKAGE_FLAG_TEXT}\" (a flag only; "
-            "nothing is dropped).", "", md_table(screen), "",
+            "nothing is dropped). Missingness screen: the share of cleaned leads with the extra missing among closed "
+            "leads (label source won / crm_lost) and among open ones (open / stalled / ghosted), at as_of whatever the "
+            f"label mode; a difference of at least {GENERIC_MISSINGNESS_FLAG:.2f}: flagged \"{MISSINGNESS_FLAG_TEXT}\" "
+            "(a flag only).", "", md_table(screen), "",
             f"Flagged: {', '.join(flagged)}." if flagged else "Flagged: none.", ""]
 
 

@@ -11,7 +11,8 @@ Nothing is parsed out of ``report.txt``.
 A run trained with the generic feature set (Phase 10, ADR 0024) also gets ``generic_comparison``: a v2 model trained
 by ``emva.pipeline.run`` on the same data, labels and split, compared on the selected test set with
 ``emva.eval.generic_report.compare`` (paired bootstrap AUC difference), the generic design's collinearity check
-(``emva.eval.collinearity``) and the extras' leakage screen, the numbers of the standard report's "Generic vs v2"
+(``emva.eval.collinearity``) and the extras' leakage and missingness screen, the numbers of the standard report's
+"Generic vs v2"
 section. The scorecard names ``x_`` columns as extras and takes their reference levels from the run's bundle.
 
 The baseline row is optional (ADR 0022): a converted dataset (one carrying ``dataset.json``) never gets one, and a
@@ -34,7 +35,9 @@ from emva.constants import AS_OF, CATS, CATS_V2_CANDIDATES, TEST_FROM, TOP_FRACT
 from emva.dataset_meta import dataset_dates
 from emva.eval.bootstrap import N_RESAMPLES, SEED, PairedComparison, auc_ci
 from emva.eval.collinearity import CollinearityResult, check_collinearity
-from emva.eval.generic_report import LEAKAGE_AUC_FLAG, compare
+from emva.constants import GENERIC_MISSINGNESS_FLAG
+from emva.eval.generic_report import LEAKAGE_AUC_FLAG, MISSINGNESS_FLAG_TEXT, compare
+from emva.eval.generic_report import flagged as screen_flagged
 from emva.eval.metrics import auc_by_month, calibration_by_decile
 from emva.eval.report import ScoredModel, TestSet, frozen_test_labels, headline_frame, paired_frame, run_baseline
 from emva.eval.status_quo import load_rules, status_quo_value
@@ -249,7 +252,9 @@ class GenericSection:
     """The "Generic vs v2" numbers of a generic-feature-set run on one test set (``generic_comparison``):
     ``paired`` (a = v2, b = generic: AUCs and the bootstrap difference generic − v2), ``n`` test leads,
     ``collinearity`` (the generic design on its training rows), ``screen`` (``emva.eval.generic_report.leakage_screen``:
-    one row per extra, ``flag`` set above ``LEAKAGE_AUC_FLAG``), and the design sizes ``v2_columns`` / ``x_columns``."""
+    one row per extra, ``flag`` set above ``LEAKAGE_AUC_FLAG``, ``missingness flag`` when the share missing differs by
+    ``GENERIC_MISSINGNESS_FLAG`` or more between closed and open leads), and the design sizes ``v2_columns`` /
+    ``x_columns``."""
 
     test_set: str
     paired: PairedComparison
@@ -261,8 +266,8 @@ class GenericSection:
 
     @property
     def flagged(self) -> list[str]:
-        """Extras whose single-feature training AUC exceeds ``LEAKAGE_AUC_FLAG``."""
-        return [str(x) for x in self.screen.extra[self.screen.flag != ""]]
+        """Extras with either screen flag set (``emva.eval.generic_report.flagged``)."""
+        return screen_flagged(self.screen)
 
 
 def generic_comparison(run_dir: str | Path, dataset: str | Path, label_mode: str, test_set: str = "mature",
@@ -324,7 +329,8 @@ def top_fraction_label() -> str:
 
 
 __all__ = ["BASELINE", "BASELINE_CONVERTED", "BASELINE_FAILED", "CANDIDATE", "EXTRA_LABEL", "Evaluation",
-           "FEATURE_LABELS", "GenericSection", "KPI_REFERENCES", "LEAKAGE_AUC_FLAG", "STATUS_QUO", "TEST_SETS",
+           "FEATURE_LABELS", "GENERIC_MISSINGNESS_FLAG", "GenericSection", "KPI_REFERENCES", "LEAKAGE_AUC_FLAG",
+           "MISSINGNESS_FLAG_TEXT", "STATUS_QUO", "TEST_SETS",
            "VALUE_COLUMNS", "auc_month", "baseline_scores", "calibration", "evaluate", "feature_label",
            "generic_comparison", "kpi_reference", "load_scores", "scorecard", "standard_table",
            "training_base_rate", "value_distribution"]

@@ -137,6 +137,7 @@ def test_generic_comparison_reuses_the_reports_numbers(app_generic) -> None:
     assert g.n == len(y) and g.collinearity == col
     pd.testing.assert_frame_equal(g.screen, ref.screen)
     assert list(g.screen.extra) == ["landing_page"] and g.flagged == []
+    assert {"missing: closed", "missing: open", "missingness flag"} <= set(g.screen.columns)
     legacy = results.generic_comparison(run.out_dir, run.dataset_path, "horizon", "legacy", n_resamples=200)
     assert legacy is not None and legacy.test_set == "legacy"
 
