@@ -132,7 +132,10 @@ def _no_model_call(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _confirm_and_convert(at: AppTest) -> AppTest:
+    """Tick the outcome confirmation and, when the mapping declares extras, the features one; then convert."""
     next(c for c in at.checkbox if c.key and c.key.startswith("mc_confirm_")).check().run()
+    for c in [c for c in at.checkbox if c.key and c.key.startswith("mc_features_confirm_")]:
+        c.check().run()
     at.button(key="mc_convert").click()
     return at.run()
 

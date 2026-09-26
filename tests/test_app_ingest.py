@@ -49,9 +49,11 @@ def test_raw_frames_reads_text_and_refuses_bad_input() -> None:
 def test_committed_mappings_round_trip_through_the_form(path: Path) -> None:
     m = load_mapping(path.read_text(encoding="utf-8"))
     form = ingest.form_from_mapping(m)
-    assert ingest.confirm(ingest.mapping_from_form(form)) == m
-    assert not ingest.mapping_from_form(form).outcome_confirmed  # a person must confirm again in the app
+    assert ingest.confirm(ingest.mapping_from_form(form), features_confirmed=True) == m
+    draft = ingest.mapping_from_form(form)
+    assert not draft.outcome_confirmed and not draft.features_confirmed  # a person must confirm again in the app
     assert load_mapping(ingest.form_toml(form)) == ingest.mapping_from_form(form)
+    assert ingest.apply_review(form, ingest.review_frame(form)) == form  # the table alone changes nothing
 
 
 def test_form_lists_every_uploaded_column_once(frames: dict[str, pd.DataFrame]) -> None:
@@ -106,14 +108,81 @@ def test_review_table_flags_low_confidence_and_applies_edits(frames: dict[str, p
     assert list(table.columns) == list(ingest.REVIEW_COLUMNS)
     assert table.set_index("source").loc["mql.landing_page_id", "check"] == "check"
     assert set(table.check) == {"", "check"}
-    table.loc[table.source == "mql.landing_page_id", ["target", "confidence", "reason"]] = [IGNORE, "high", "an id"]
+    table.loc[table.source == "mql.landing_page_id", ["target", "confidence", "reason", "feature"]] = \
+        [IGNORE, "high", "an id", False]
     edited = ingest.apply_review(form, table)
     row = next(f for f in edited.fields if f.source == "mql.landing_page_id")
     assert (row.target, row.review.confidence, row.review.reason) == (IGNORE, "high", "an id")
+    assert edited.features == ()  # its only feature was unticked
     assert edited.value_map_rows == form.value_map_rows  # value maps are not in the table
     table.loc[0, "target"] = "not_a_column"
     with pytest.raises(ValueError, match="unknown target"):
         ingest.apply_review(form, table)
+
+
+def test_review_table_edits_the_extra_features(frames: dict[str, pd.DataFrame]) -> None:
+    """Phase 10 (b): the review table's feature / kind / name columns declare the generic feature set's extras."""
+    form = ingest.form_from_mapping(_olist(), frames)
+    assert ingest.apply_review(form, ingest.review_frame(form)) == form
+    table = ingest.review_frame(form).set_index("source")
+    assert table.loc["mql.landing_page_id", ["target", "feature", "kind", "name"]].tolist() == \
+        ["utm_content", True, "categorical", "landing_page"]  # a field and a feature at once
+    assert not table.loc["deal.business_segment", "feature"]
+    table.loc["deal.business_segment", ["feature", "kind", "reason", "confidence"]] = \
+        [True, "categorical", "known at submit?", "low"]
+    table.loc["mql.origin", ["feature", "kind", "name"]] = [True, "categorical", "origin_raw"]  # has a value map
+    edited = ingest.apply_review(form, table.reset_index())
+    assert [(f.name, f.kind, f.source.column) for f in edited.features] == [
+        ("landing_page", "categorical", "mql.landing_page_id"), ("business_segment", "categorical",
+                                                                 "deal.business_segment"),
+        ("origin_raw", "categorical", "mql.origin")]
+    seg = edited.features[1]
+    assert (seg.review.reason, seg.review.confidence) == ("known at submit?", "low")  # target ignore: the feature's
+    old = next(f for f in form.fields if f.source == "deal.business_segment").review
+    assert next(f for f in edited.fields if f.source == "deal.business_segment").review == old  # field keeps its own
+    assert edited.value_map_rows == form.value_map_rows
+    again = ingest.review_frame(edited).set_index("source")
+    assert again.loc["mql.origin", "target"] == ingest.VALUE_MAP_TARGET  # listed once more, as a feature
+    assert again.loc["deal.business_segment", "check"] == "check"  # a low-confidence feature is highlighted
+    assert ingest.apply_review(edited, again.reset_index()) == edited
+    m = ingest.mapping_from_form(edited)
+    assert len(m.features) == 3 and not m.features_confirmed
+    assert ingest.features_signature(m.features) != ingest.features_signature(form.features)
+    assert ingest.features_signature(edited.features) == ingest.features_signature(m.features)
+
+
+def test_review_table_refuses_bad_feature_rows(frames: dict[str, pd.DataFrame]) -> None:
+    form = ingest.form_from_mapping(_olist(), frames)
+    table = ingest.review_frame(form).set_index("source")
+    no_kind = table.copy()
+    no_kind.loc["deal.business_segment", "feature"] = True
+    with pytest.raises(ValueError, match="deal.business_segment: choose the feature kind"):
+        ingest.apply_review(form, no_kind.reset_index())
+    clash = table.copy()
+    clash.loc["deal.business_segment", ["feature", "kind", "name"]] = [True, "categorical", "landing_page"]
+    with pytest.raises(ValueError, match="repeated: \\['landing_page'\\]"):
+        ingest.apply_review(form, clash.reset_index())
+    bad = table.copy()
+    bad.loc["deal.business_segment", ["feature", "kind", "name"]] = [True, "categorical", "Not A Slug"]
+    with pytest.raises(ValueError, match="must be lower-case"):
+        ingest.apply_review(form, bad.reset_index())
+    vm = table.copy()
+    vm.loc["deal.business_segment", "target"] = ingest.VALUE_MAP_TARGET
+    with pytest.raises(ValueError, match="only a column with a value map"):
+        ingest.apply_review(form, vm.reset_index())
+    # a blank name is the column's slug, prefixed with the source when that name is taken
+    assert ingest.default_feature_name("deal.lead_type", set()) == "lead_type"
+    assert ingest.default_feature_name("deal.lead_type", {"lead_type"}) == "deal_lead_type"
+
+
+def test_confirm_sets_the_features_confirmation_only_with_features() -> None:
+    m = ingest.mapping_from_form(ingest.form_from_mapping(_olist()))
+    assert ingest.confirm(m).outcome_confirmed and not ingest.confirm(m).features_confirmed
+    assert ingest.confirm(m, features_confirmed=True).features_confirmed
+    none = replace(m, features=())
+    assert not ingest.confirm(none, features_confirmed=True).features_confirmed
+    with pytest.raises(ValueError, match="features_confirmed is false"):
+        ingest.convert_raw(ingest.raw_frames(olist_raw()), ingest.confirm(m), "2026-09-26")
 
 
 def test_outcome_table_for_stage_and_won_flag(frames: dict[str, pd.DataFrame]) -> None:
@@ -173,6 +242,9 @@ def test_convert_raw_adds_the_confirmed_mapping_and_validates() -> None:
     assert cov.total == 39 == cov.data + cov.constant + cov.unfilled and cov.data >= 1
     frame = ingest.coverage_frame(conv.meta)
     assert len(frame) == 39 and (frame.status == "data").sum() == cov.data
+    extras = ingest.extras_summary(conv.meta)
+    assert (extras.names, extras.n, extras.numeric, extras.categorical) == (("landing_page",), 1, 0, 1)
+    assert ingest.extras_summary({"coverage": []}).n == 0
     derived = ingest.derived_counts(conv.meta)
     assert derived and all(n > 0 and conv.meta[k] == n for k, n, _ in derived)
     keys = [k for k, _, _ in derived]
@@ -201,10 +273,13 @@ def _col(file: str, column: str, target: str, confidence: str = "high", vm: list
             "reason": "hand-built test reply", "confidence": confidence}
 
 
-def hand_built_reply(created_at: str = "first_contact_date") -> dict:
-    """A reply in the draft contract, written by hand for these tests (not model output)."""
-    ignored = ("seller_id", "sdr_id", "sr_id", "business_segment", "lead_type", "lead_behaviour_profile", "has_company",
-               "has_gtin", "average_stock", "business_type", "declared_product_catalog_size")
+def hand_built_reply(created_at: str = "first_contact_date", features: dict[str, tuple[str, str]] | None = None) -> dict:
+    """A reply in the draft contract, written by hand for these tests (not model output). ``features`` proposes
+    closed-deal columns as extras: column -> (feature_kind, confidence)."""
+    features = features or {}
+    ignored = [c for c in ("seller_id", "sdr_id", "sr_id", "business_segment", "lead_type", "lead_behaviour_profile",
+                           "has_company", "has_gtin", "average_stock", "business_type", "declared_product_catalog_size")
+               if c not in features]
     return {
         "sources": [{"file": OLIST_MQL, "join_on": ""}, {"file": OLIST_DEALS, "join_on": "mql_id"}],
         "columns": [_col(OLIST_MQL, "mql_id", "lead.lead_id"), _col(OLIST_MQL, created_at, "lead.created_at"),
@@ -212,7 +287,8 @@ def hand_built_reply(created_at: str = "first_contact_date") -> dict:
                     _col(OLIST_MQL, "origin" if created_at != "origin" else "first_contact_date", "ignore"),
                     _col(OLIST_DEALS, "won_date", "lead.won_at"),
                     _col(OLIST_DEALS, "declared_monthly_revenue", "lead.deal_value", "low")]
-        + [_col(OLIST_DEALS, c, "ignore") for c in ignored],
+        + [_col(OLIST_DEALS, c, "ignore") for c in ignored]
+        + [{**_col(OLIST_DEALS, c, "feature", conf), "feature_kind": kind} for c, (kind, conf) in features.items()],
         "outcome": {"kind": "presence", "file": OLIST_DEALS, "column": "won_date", "stage_map": [], "won_values": [],
                     "lost_values": [], "reason": "hand-built", "confidence": "medium"},
     }
@@ -268,6 +344,21 @@ def test_draft_with_a_fake_client_then_from_the_cache(tmp_path: Path, frames: di
     form = ingest.form_from_mapping(out.mapping, frames, out.origin)
     low = ingest.review_frame(form).set_index("source").loc[f"{form.sources[0].name}.landing_page_id", "check"]
     assert low == "check"
+
+
+def test_drafted_features_appear_in_the_review_table(tmp_path: Path, frames: dict[str, pd.DataFrame]) -> None:
+    client = FakeClient(reply_message(hand_built_reply(features={"business_segment": ("categorical", "low"),
+                                                                 "declared_product_catalog_size": ("numeric", "high")})))
+    out = ingest.draft(ingest.profile(frames), tmp_path, "olist_draft", client_factory=lambda: client)
+    assert [(f.name, f.kind) for f in out.mapping.features] == [("business_segment", "categorical"),
+                                                                ("declared_product_catalog_size", "numeric")]
+    assert not out.mapping.features_confirmed
+    table = ingest.review_frame(ingest.form_from_mapping(out.mapping, frames, out.origin)).set_index("source")
+    seg = table.loc[f"{out.mapping.sources[1].name}.business_segment"]
+    assert (seg.target, seg.feature, seg.kind, seg.reason, seg.confidence, seg.check) == (
+        IGNORE, True, "categorical", "hand-built test reply", "low", "check")
+    size = table.loc[f"{out.mapping.sources[1].name}.declared_product_catalog_size"]
+    assert (size.feature, size.kind, size.check) == (True, "numeric", "")
 
 
 def test_draft_api_error_is_logged_and_shown(tmp_path: Path, frames: dict[str, pd.DataFrame],

@@ -50,7 +50,7 @@ LOST_LABELS: dict[str, str] = {"error": "Refuse the conversion", "as_of": "Date 
 MC_SIG, MC_FORM, MC_VERSION, MC_MSG, MC_CONV = "mc_sig", "mc_form", "mc_version", "mc_msg", "mc_conv"
 VALIDATION, VALIDATED_FILES, VALIDATED_ORIGIN = "validation", "validated_files", "validated_origin"
 LABEL_MODES = {"horizon": "Horizon", "legacy": "Legacy (POC)"}
-FEATURE_SETS = {"v2": "v2", "legacy": "Legacy (POC)"}
+FEATURE_SETS = {"v2": "v2", "generic": "Generic (v2 + extras)", "legacy": "Legacy (POC)"}
 PROCS_KEY, ACTIVE_KEY = "training_procs", "active_run"
 LOG_TAIL_LINES = 60
 
@@ -78,10 +78,12 @@ def _collect() -> tuple[dict[str, bytes], list[str]]:
 def _render_report(report: ValidationReport, provided: set[str]) -> None:
     """Per-file cards with errors and warnings, then the preview summary."""
     slots = [n for n, _, _ in SLOTS]
-    meta = [n for n in storage.METADATA_FILES if n in provided or report.for_file(n) != ([], [])]
+    meta = [n for n in (*storage.METADATA_FILES, storage.EXTRA_FEATURES_FILE)
+            if n in provided or report.for_file(n) != ([], [])]
     names = slots + meta + sorted({i.file for i in report.errors} - set(slots) - set(meta))
     labels = {n: lbl for n, lbl, _ in SLOTS} | {storage.MAPPING_FILE: "Confirmed mapping",
-                                                 storage.DATASET_META_FILE: "Converter metadata (dates, coverage)"}
+                                                 storage.DATASET_META_FILE: "Converter metadata (dates, coverage)",
+                                                 storage.EXTRA_FEATURES_FILE: "Extra features (generic feature set)"}
     left, right = st.columns(2, gap="medium")
     for i, name in enumerate(names):
         errors, warnings = report.for_file(name)
@@ -299,8 +301,14 @@ def _lead_and_outcome(form: ingest.MappingForm, edited: ingest.MappingForm, fram
 
 
 def _field_table(form: ingest.MappingForm, edited: ingest.MappingForm, v: int) -> ingest.MappingForm:
-    """The review table of field rows (low-confidence rows highlighted) and the read-only value maps."""
-    st.markdown("**Fields** (one row per uploaded column; ignore = not used)")
+    """The review table of field rows and extra features (low-confidence rows highlighted), the read-only value maps
+    and the read-only derived features."""
+    st.markdown("**Fields and extra features** (one row per uploaded column; ignore = not used as a field)")
+    st.caption("Tick Feature to use a column as an extra feature of the generic feature set (v2 + extras): numeric "
+               "columns are cut into 5 bins, categorical ones keep levels with at least 30 training leads. Only "
+               "columns known when the lead is submitted: an outcome column here leaks the label. A column can be a "
+               "field and a feature at once. Reason and confidence describe the field when it has a target, else "
+               "the feature.")
     rf = ingest.review_frame(form)
     low = rf.source[rf.check != ""].tolist()
     styled = rf.style.apply(lambda r: ["background-color: rgba(214, 150, 40, 0.22)" if r.check else ""] * len(r),
@@ -308,11 +316,16 @@ def _field_table(form: ingest.MappingForm, edited: ingest.MappingForm, v: int) -
     table = st.data_editor(styled, key=f"mc_fields_{v}", hide_index=True, width="stretch",
                            height=min(38 + 35 * len(rf), 460), disabled=["source", "check"], column_config={
                                "source": st.column_config.TextColumn("Source column"),
-                               "target": st.column_config.SelectboxColumn("Target", options=list(
-                                   ingest.TARGET_OPTIONS), required=True),
+                               "target": st.column_config.SelectboxColumn("Target", options=[
+                                   *ingest.TARGET_OPTIONS, ingest.VALUE_MAP_TARGET], required=True),
                                "reason": st.column_config.TextColumn("Reason", width="large"),
                                "confidence": st.column_config.SelectboxColumn(
                                    "Confidence", options=["", *CONFIDENCES]),
+                               "feature": st.column_config.CheckboxColumn(
+                                   "Feature", help="An extra feature of the generic feature set"),
+                               "kind": st.column_config.SelectboxColumn("Kind", options=["", *ingest.FEATURE_KINDS]),
+                               "name": st.column_config.TextColumn(
+                                   "Feature name", help="Lower-case letters, digits and _; blank = from the column"),
                                "check": st.column_config.TextColumn("Check", width="small")})
     if low:
         ui.html(C.callout(", ".join(low), "warn", lead="Low confidence, check these rows:"))
@@ -324,6 +337,10 @@ def _field_table(form: ingest.MappingForm, edited: ingest.MappingForm, v: int) -
     if not vm.empty:
         st.markdown("**Value maps** (read-only here; edit them as TOML below)")
         st.dataframe(vm, hide_index=True, width="stretch", height=min(38 + 35 * len(vm), 320))
+    derived = ingest.derived_features_frame(form)
+    if not derived.empty:
+        st.markdown("**Derived extra features** (read-only here; edit them as TOML below)")
+        st.dataframe(derived, hide_index=True, width="stretch", height=min(38 + 35 * len(derived), 320))
     return edited
 
 
@@ -368,10 +385,20 @@ def _convert_step(root: Path, mapping: DatasetMapping | None, error: str | None,
     digest = hashlib.sha256(toml.encode("utf-8") + (rules or b"")).hexdigest()[:12]
     ok = st.checkbox("Outcome mapping confirmed: I checked which leads count as won and lost, and the dates.",
                      key=f"mc_confirm_{digest}")
-    if st.button("Convert", type="primary", icon=":material/transform:", key="mc_convert", disabled=not ok):
+    features_ok = True
+    if mapping.features:
+        ui.html(C.callout(", ".join(f"{f.name} ({f.kind})" for f in mapping.features), "info",
+                          lead=f"{len(mapping.features)} extra feature(s) declared:"))
+        # keyed by the features alone: any change to them (source, kind, name) clears the tick
+        features_ok = st.checkbox("Extra features are known when the lead is submitted",
+                                  key=f"mc_features_confirm_{ingest.features_signature(mapping.features)}",
+                                  help="None of them is filled in or changed after the lead arrives (a column like "
+                                       "that would leak the outcome into the model). Required to convert.")
+    if st.button("Convert", type="primary", icon=":material/transform:", key="mc_convert",
+                 disabled=not (ok and features_ok)):
         try:
             with st.spinner("Converting…"):
-                conv = ingest.convert_raw(frames, ingest.confirm(mapping),
+                conv = ingest.convert_raw(frames, ingest.confirm(mapping, features_confirmed=features_ok),
                                           datetime.now(timezone.utc).date().isoformat(), rules)
         except ValueError as e:
             st.session_state.pop(MC_CONV, None)
@@ -394,15 +421,25 @@ def _convert_step(root: Path, mapping: DatasetMapping | None, error: str | None,
 def _coverage(meta: dict) -> None:
     """The coverage card: how many of the model's signals the converted data fill."""
     cov = ingest.coverage_summary(meta)
+    extras = ingest.extras_summary(meta)
     ui.html(C.section("Coverage", "Which of the model's input signals (design columns of the v2 features) the "
                       "converted leads fill. Unfilled signals are blank on every lead, so the model cannot use them."))
-    ui.html(C.kpi_row([
+    cards = [
         C.kpi("Signals with data", f"{cov.data} of {cov.total}", "vary across leads",
               note=f"fills {cov.data} of {cov.total} signals"),
         C.kpi("Constant", str(cov.constant), "mapped, but the same on every lead"),
         C.kpi("Unfilled", str(cov.unfilled), "no source column mapped"),
         C.kpi("Leads", f"{meta['leads']:,}", ", ".join(f"{k} {v:,}" for k, v in meta["final_stage_counts"].items()),
-              note=f"as_of {meta['as_of']} · test from {meta['test_from']}")]))
+              note=f"as_of {meta['as_of']} · test from {meta['test_from']}")]
+    if extras.n:
+        cards.append(C.kpi("Extra features", str(extras.n), f"{extras.numeric} numeric, {extras.categorical} "
+                           "categorical", note="design columns: fixed at training"))
+    ui.html(C.kpi_row(cards))
+    if extras.n:
+        ui.html(C.callout(f"{', '.join(extras.names)}. How many design columns they become is known only when a "
+                          "model is trained with the generic feature set (v2 + extras): categorical levels with at "
+                          "least 30 training leads plus other and missing, numeric values in 5 quantile bins plus "
+                          "missing, all fitted on the training leads.", "info", lead="Extra features:"))
     derived = ingest.derived_counts(meta)
     if derived:
         st.markdown("**Derived during conversion** (counts in dataset.json)")
@@ -543,23 +580,28 @@ def _train_section() -> None:
     with c2:
         label_mode = st.segmented_control("Labels", list(LABEL_MODES), default="horizon", required=True,
                                           format_func=LABEL_MODES.get, key="label_mode")
-    with c3:
-        feature_set = st.segmented_control("Features", list(FEATURE_SETS), default="v2", required=True,
-                                           format_func=FEATURE_SETS.get, key="feature_set")
+    ds = by_name[ds_name]
+    options = training.feature_set_options(ds)
+    with c3:  # keyed per offer, so a choice of generic does not outlive a switch to a dataset without extras
+        feature_set = st.segmented_control("Features", options, default="v2", required=True,
+                                           format_func=FEATURE_SETS.get, key=f"feature_set_{len(options)}")
     st.caption("Recommended: horizon labels and v2 features. Horizon labels count a lead as won only if it closed "
                "within 120 days, and leave out leads too young to know. Legacy reproduces the frozen proof of "
                "concept, which counted slow or neglected leads as lost and let missing data fall into the "
-               "reference level.")
-    ds = by_name[ds_name]
+               "reference level."
+               + (" This dataset declares extra features: generic trains on v2 plus them, and its results compare "
+                  "it with v2 on the same leads." if ds.has_extras else ""))
     try:
         s = _summary(ds.path, label_mode, feature_set, ds.created_at)
     except ValueError as e:
         ui.html(C.callout(str(e), "bad", lead="This dataset cannot be trained as it is."))
         return
+    extra_stats = [("Extra features", f"{len(s.extras)} ({sum(k == 'numeric' for _, k in s.extras)} numeric)")] \
+        if s.extras else []
     ui.html(C.stats([("Leads after bot/duplicate removal", f"{s.scored:,}"),
                      ("Training leads (won)", f"{s.train:,} ({s.train_wins:,})"),
                      ("Test leads (won)", f"{s.test:,} ({s.test_wins:,})"),
-                     ("Mature test set (won)", f"{s.mature_test:,} ({s.mature_test_wins:,})")]))
+                     ("Mature test set (won)", f"{s.mature_test:,} ({s.mature_test_wins:,})"), *extra_stats]))
     with st.expander("Labels by CRM state (label_source)"):
         t = s.label_counts_frame()
         st.dataframe(t, hide_index=True, width="stretch", column_config={

@@ -97,3 +97,18 @@ def test_sample_keeps_the_constant_dates(app_trained) -> None:
     assert list(ev.test.y.index) == list(frozen_test_labels(L)[3].index)
     assert ev.base_rate == results.training_base_rate(results.load_scores(run.out_dir), L.created_at)
     assert isinstance(ev.base_rate, float) and not pd.isna(ev.base_rate)
+
+
+def test_generic_is_offered_only_with_extras(app_converted) -> None:
+    """Phase 10 (b): the training panel offers generic for a dataset with extra_features.csv, and its summary lists
+    the extras as the pipeline reads them."""
+    root, run = app_converted
+    ds = storage.get_dataset(root, run.dataset)
+    assert ds.has_extras and training.feature_set_options(ds) == ["v2", "generic", "legacy"]
+    assert training.feature_set_options(storage.sample_dataset()) == ["v2", "legacy"]
+    s = pre_training_summary(run.dataset_path, TrainingConfig(feature_set="generic"))
+    v2 = pre_training_summary(run.dataset_path, TrainingConfig())
+    assert s.extras == (("landing_page", "categorical"),) and v2.extras == ()
+    assert (s.train, s.test, s.mature_test) == (v2.train, v2.test, v2.mature_test)  # same rows and split
+    with pytest.raises(ValueError, match="needs a converted dataset whose dataset.json declares 'features'"):
+        pre_training_summary(DATA_V1, TrainingConfig(feature_set="generic"))

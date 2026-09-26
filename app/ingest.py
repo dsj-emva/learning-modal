@@ -15,6 +15,7 @@ its filtered environment without ``ANTHROPIC_*`` (ADR 0019). A missing key or a 
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from collections.abc import Callable, Mapping
@@ -31,7 +32,8 @@ from emva.context.agent import MODEL_ID, make_client
 from emva.context.cache import ReplyCache
 from emva.context.contract import ContractError
 from emva.ingest.convert import DERIVED_COUNTS, convert, frames_from_bytes
-from emva.ingest.draft import default_dates, draft_mapping, is_cached, source_name
+from emva.generic import ExtraKind
+from emva.ingest.draft import default_dates, draft_mapping, feature_name, is_cached, source_name
 from emva.ingest.mapping import (
     COLUMN_OP,
     CONFIDENCES,
@@ -82,8 +84,10 @@ class MappingForm:
     reference ("" = not chosen); ``outcome_values`` raw value -> stage (kind ``stage``) or ``Won`` / ``Lost`` (kind
     ``won_flag``; unused for ``presence``); ``fields`` every field row (plain targets are edited in the review table,
     value maps only as TOML); dates and the other top-level keys as strings; ``origin`` says where the form came from.
-    ``features`` / ``features_confirmed`` (Phase 10 (a), the generic feature set's ``[[features]]``) are carried through
-    unchanged; they have no form controls yet (Phase 10 part b) and are edited as TOML.
+    ``features`` are the generic feature set's ``[[features]]`` rows (Phase 10): those whose source is a plain column
+    are edited in the review table (``feature`` / ``kind`` / ``name`` columns), derived ones only as TOML. Like the
+    outcome, the features are never confirmed in the form: a person ticks both confirmations before converting
+    (``confirm``), so a loaded mapping's ``features_confirmed`` is not carried over.
     """
 
     name: str
@@ -102,7 +106,6 @@ class MappingForm:
     review: Mapping[str, Review] = field(default_factory=dict)
     origin: str = ""
     features: tuple[FeatureMap, ...] = ()
-    features_confirmed: bool = False
 
     def refs(self) -> list[str]:
         """Every ``<source>.<column>`` a field row, lead role or the outcome may use: the field rows' sources in order
@@ -192,11 +195,12 @@ def form_from_mapping(m: DatasetMapping, frames: Mapping[str, pd.DataFrame] | No
                        lost_without_close=o.lost_without_close, fields=tuple(rows), as_of=m.as_of,
                        test_from=m.test_from, source_url=m.source_url, licence=m.licence,
                        drop_rows_without_created_at=m.drop_rows_without_created_at, review=dict(m.review),
-                       origin=origin, features=m.features, features_confirmed=m.features_confirmed)
+                       origin=origin, features=m.features)
 
 
 def mapping_from_form(f: MappingForm) -> DatasetMapping:
-    """The ``DatasetMapping`` the form describes, as a draft (``outcome_confirmed = False``; ``confirm`` sets it).
+    """The ``DatasetMapping`` the form describes, as a draft (``outcome_confirmed = False`` and ``features_confirmed =
+    False``; ``confirm`` sets them).
 
     Raises ``ValueError`` with a plain message for what is missing (``created_at``, the outcome column, a
     join column, the dates) and for anything ``DatasetMapping`` refuses.
@@ -226,12 +230,14 @@ def mapping_from_form(f: MappingForm) -> DatasetMapping:
                           test_from=f.test_from, fields=f.fields, source_url=f.source_url, licence=f.licence,
                           outcome_confirmed=False, drop_rows_without_created_at=f.drop_rows_without_created_at,
                           review={k: v for k, v in f.review.items()}, features=f.features,
-                          features_confirmed=f.features_confirmed)
+                          features_confirmed=False)
 
 
-def confirm(m: DatasetMapping) -> DatasetMapping:
-    """``m`` with ``outcome_confirmed = True``: call only once a person ticked "Outcome mapping confirmed"."""
-    return replace(m, outcome_confirmed=True)
+def confirm(m: DatasetMapping, features_confirmed: bool = False) -> DatasetMapping:
+    """``m`` with ``outcome_confirmed = True``: call only once a person ticked "Outcome mapping confirmed". With
+    ``features_confirmed`` (the person also ticked "Extra features are known when the lead is submitted") and declared
+    ``[[features]]``, ``features_confirmed = True`` too; a mapping without features keeps it False."""
+    return replace(m, outcome_confirmed=True, features_confirmed=features_confirmed and bool(m.features))
 
 
 def form_from_toml(text: str, frames: Mapping[str, pd.DataFrame] | None = None) -> MappingForm:
@@ -249,17 +255,48 @@ def form_toml(f: MappingForm) -> str | None:
 
 # --- review table ----------------------------------------------------------------------------------------------------
 
-REVIEW_COLUMNS: tuple[str, ...] = ("source", "target", "reason", "confidence", "check")
+REVIEW_COLUMNS: tuple[str, ...] = ("source", "target", "reason", "confidence", "feature", "kind", "name", "check")
 LOW_CONFIDENCE: str = "low"
 CHECK_FLAG: str = "check"
+# Target shown for a column that has a value map (edited as TOML) but is listed in the table as an extra feature.
+VALUE_MAP_TARGET: str = "(value map)"
+# Kinds of an extra feature (``emva.generic.ExtraKind``), for the table's kind column.
+FEATURE_KINDS: tuple[str, ...] = tuple(k.value for k in ExtraKind)
+
+
+def _plain_features(f: MappingForm) -> dict[str, FeatureMap]:
+    """The form's features whose source is a plain column, by column reference (edited in the review table)."""
+    return {fm.source.column: fm for fm in f.features if fm.source.op == COLUMN_OP}
+
+
+def derived_features(f: MappingForm) -> list[FeatureMap]:
+    """The form's features whose source is a derived expression (shown read-only; edited as TOML)."""
+    return [fm for fm in f.features if fm.source.op != COLUMN_OP]
 
 
 def review_frame(f: MappingForm) -> pd.DataFrame:
-    """The review table: one row per plain field row with its ``source``, ``target``, ``reason``, ``confidence``
-    ("" when none) and ``check`` ("check" on a low-confidence row, for highlighting)."""
-    rows = [{"source": r.source, "target": r.target, "reason": r.review.reason,
-             "confidence": r.review.confidence or "",
-             "check": CHECK_FLAG if r.review.confidence == LOW_CONFIDENCE else ""} for r in f.target_rows]
+    """The review table: one row per plain field row, then one per plain-column extra feature without such a row
+    (target ``ignore``, or ``VALUE_MAP_TARGET`` when its column has a value map).
+
+    Columns: ``source``, ``target``; ``reason`` / ``confidence`` ("" when none) describe the field row when it has a
+    target, else the feature; ``feature`` (True when the column is an extra feature of the generic feature set),
+    ``kind`` and ``name`` (the feature's, "" otherwise); ``check`` ("check" when the field's or the feature's confidence
+    is low, for highlighting)."""
+    feats = _plain_features(f)
+    rows = []
+
+    def row(source: str, target: str, field_review: Review | None) -> dict[str, object]:
+        fm = feats.get(source)
+        shown = field_review if field_review is not None and (target != IGNORE or fm is None) else             (fm.review if fm is not None else Review())
+        low = shown.confidence == LOW_CONFIDENCE or (fm is not None and fm.review.confidence == LOW_CONFIDENCE)
+        return {"source": source, "target": target, "reason": shown.reason, "confidence": shown.confidence or "",
+                "feature": fm is not None, "kind": fm.kind if fm is not None else "",
+                "name": fm.name if fm is not None else "", "check": CHECK_FLAG if low else ""}
+
+    listed = {r.source for r in f.target_rows}
+    value_mapped = {r.source for r in f.value_map_rows}
+    rows = [row(r.source, r.target, r.review) for r in f.target_rows]
+    rows += [row(src, VALUE_MAP_TARGET if src in value_mapped else IGNORE, None) for src in feats if src not in listed]
     return pd.DataFrame(rows, columns=list(REVIEW_COLUMNS))
 
 
@@ -268,23 +305,124 @@ def _cell(v: object) -> str:
     return "" if v is None or (not isinstance(v, str) and pd.isna(v)) else str(v).strip()
 
 
+def _review_of(r: pd.Series, where: str) -> Review:
+    """The row's ``reason`` / ``confidence`` as a ``Review``; ``ValueError`` for an unknown confidence."""
+    conf = _cell(r["confidence"]) or None
+    if conf is not None and conf not in CONFIDENCES:
+        raise ValueError(f"{where}: confidence must be one of {list(CONFIDENCES)}")
+    return Review(_cell(r["reason"]), conf)
+
+
+def default_feature_name(source: str, taken: set[str]) -> str:
+    """A feature name for column ``source`` (``<source>.<column>``): the column as a slug
+    (``emva.ingest.draft.feature_name``), prefixed with the source name when that name is already ``taken``."""
+    name = feature_name(source.split(".", 1)[1])
+    return name if name not in taken else feature_name(source.replace(".", "_"))
+
+
+def _feature_from_row(r: pd.Series, source: str, old: FeatureMap | None, review: Review | None,
+                      taken: set[str]) -> FeatureMap:
+    """The feature a ticked table row describes (``review`` None keeps ``old``'s review)."""
+    kind = _cell(r["kind"])
+    if kind not in FEATURE_KINDS:
+        raise ValueError(f"{source}: choose the feature kind ({' or '.join(FEATURE_KINDS)})")
+    name = _cell(r["name"]) or default_feature_name(source, taken)
+    keep = old.review if old is not None else Review()
+    return FeatureMap(Expr.col(source), kind, name, review if review is not None else keep)
+
+
 def apply_review(f: MappingForm, table: pd.DataFrame) -> MappingForm:
-    """``f`` with the plain field rows taken from an edited review table (``review_frame`` columns; rows matched by
-    ``source``, value-map rows untouched). Raises ``ValueError`` for an unknown target or confidence."""
+    """``f`` with the plain field rows and the plain-column features taken from an edited review table
+    (``review_frame`` columns; rows matched by ``source``; value-map rows and derived features untouched).
+
+    A row's reason and confidence go to its field row when it has a target, else to its feature (``review_frame``).
+    Features keep their order; newly ticked ones follow in table order; a blank name becomes
+    ``default_feature_name``. Raises ``ValueError`` for an unknown target or confidence, ``VALUE_MAP_TARGET`` on a
+    column without a value map, a ticked row without a kind, an invalid or repeated feature name."""
     edited = {_cell(r["source"]): r for _, r in table.iterrows()}
-    rows = []
+    value_mapped = {r.source for r in f.value_map_rows}
+    rows, feature_reviews = [], {}
     for fm in f.fields:
         r = edited.get(fm.source)
         if fm.value_map is not None or r is None:
             rows.append(fm)
             continue
-        target, conf = _cell(r["target"]) or IGNORE, _cell(r["confidence"]) or None
-        if target not in TARGET_OPTIONS:
-            raise ValueError(f"{fm.source}: unknown target {target!r}")
-        if conf is not None and conf not in CONFIDENCES:
-            raise ValueError(f"{fm.source}: confidence must be one of {list(CONFIDENCES)}")
-        rows.append(FieldMap(fm.source, target=target, review=Review(_cell(r["reason"]), conf)))
-    return replace(f, fields=tuple(rows))
+        target, review = _target(r, fm.source, fm.source in value_mapped), _review_of(r, fm.source)
+        if target == IGNORE and _ticked(r):  # the row's reason is the feature's
+            feature_reviews[fm.source] = review
+            review = fm.review
+        rows.append(FieldMap(fm.source, target=target, review=review))
+    listed = {fm.source for fm in f.fields}
+    for source, r in edited.items():
+        if source in listed:
+            continue
+        target, review = _target(r, source, source in value_mapped), _review_of(r, source)
+        if target in (IGNORE, VALUE_MAP_TARGET):
+            feature_reviews[source] = review
+        else:
+            rows.append(FieldMap(source, target=target, review=review))
+    return replace(f, fields=tuple(rows), features=_features_from_table(f, edited, feature_reviews))
+
+
+def _target(r: pd.Series, source: str, value_mapped: bool) -> str:
+    """The row's target (blank = ignore); ``ValueError`` for an unknown one or ``VALUE_MAP_TARGET`` on a column
+    without a value map."""
+    target = _cell(r["target"]) or IGNORE
+    if target == VALUE_MAP_TARGET and value_mapped:
+        return target
+    if target == VALUE_MAP_TARGET:
+        raise ValueError(f"{source}: only a column with a value map can show {VALUE_MAP_TARGET!r}")
+    if target not in TARGET_OPTIONS:
+        raise ValueError(f"{source}: unknown target {target!r}")
+    return target
+
+
+def _ticked(r: pd.Series) -> bool:
+    """True when the row's ``feature`` cell is ticked (NaN-safe)."""
+    return r["feature"] == True  # noqa: E712 (an edited table may hold NaN or None)
+
+
+def _features_from_table(f: MappingForm, edited: Mapping[str, pd.Series],
+                         reviews: Mapping[str, Review]) -> tuple[FeatureMap, ...]:
+    """The form's features after the table edit (``apply_review``)."""
+    out: list[FeatureMap] = []
+    taken: set[str] = {fm.name for fm in derived_features(f)}
+    plain = _plain_features(f)
+    for fm in f.features:
+        if fm.source.op != COLUMN_OP:
+            out.append(fm)
+            continue
+        r = edited.get(fm.source.column)
+        if r is None:
+            out.append(fm)
+        elif _ticked(r):
+            out.append(_feature_from_row(r, fm.source.column, fm, reviews.get(fm.source.column), taken))
+        else:
+            continue
+        taken.add(out[-1].name)
+    for source, r in edited.items():
+        if source not in plain and _ticked(r):
+            out.append(_feature_from_row(r, source, None, reviews.get(source), taken))
+            taken.add(out[-1].name)
+    names = [fm.name for fm in out]
+    if len(set(names)) != len(names):
+        raise ValueError(f"feature names must be unique; repeated: {sorted({n for n in names if names.count(n) > 1})}")
+    return tuple(out)
+
+
+def derived_features_frame(f: MappingForm) -> pd.DataFrame:
+    """The derived-expression features, read-only: ``name``, ``kind``, ``source`` (``expr_text``), ``reason``,
+    ``confidence``."""
+    return pd.DataFrame([{"name": fm.name, "kind": fm.kind, "source": expr_text(fm.source), "reason": fm.review.reason,
+                          "confidence": fm.review.confidence or ""} for fm in derived_features(f)],
+                        columns=["name", "kind", "source", "reason", "confidence"])
+
+
+def features_signature(features: tuple[FeatureMap, ...]) -> str:
+    """A short digest of the declared features (source, kind, name): the features confirmation resets when it
+    changes."""
+    text = "\n".join(f"{expr_text(fm.source)}|{fm.kind}|{fm.name}" for fm in features)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
 
 
 def value_map_frame(f: MappingForm) -> pd.DataFrame:
@@ -523,16 +661,41 @@ def derived_counts(meta: Mapping[str, object]) -> list[tuple[str, int, str]]:
     return [(k, int(meta.get(k, 0)), what) for k, what in DERIVED_COUNTS.items() if meta.get(k, 0)]
 
 
+@dataclass(frozen=True)
+class ExtrasSummary:
+    """The extra features a conversion declared (``dataset.json`` ``features``): ``names`` in declaration order,
+    ``numeric`` and ``categorical`` counts. Their design columns are only known at training (the encoding is fitted
+    on the training leads)."""
+
+    names: tuple[str, ...]
+    numeric: int
+    categorical: int
+
+    @property
+    def n(self) -> int:
+        """Number of declared extras."""
+        return len(self.names)
+
+
+def extras_summary(meta: Mapping[str, object]) -> ExtrasSummary:
+    """The declared extras of ``dataset.json`` (none when it has no ``features``)."""
+    feats = list(meta.get("features", []))
+    kinds = [str(x["kind"]) for x in feats]
+    return ExtrasSummary(tuple(str(x["name"]) for x in feats), kinds.count(ExtraKind.NUMERIC.value),
+                         kinds.count(ExtraKind.CATEGORICAL.value))
+
+
 def coverage_frame(meta: Mapping[str, object]) -> pd.DataFrame:
     """``dataset.json``'s ``coverage`` as a table: design column, status, mapped inputs, leads with a 1."""
     return pd.DataFrame([{"column": c["column"], "status": c["status"], "inputs": ", ".join(c["inputs_mapped"]),
                           "leads_with_1": c["leads_with_1"], "leads": c["leads"]} for c in meta["coverage"]])
 
 
-__all__ = ["BUILTIN_MAPPINGS_DIR", "Conversion", "CoverageSummary", "DRAFT_CACHE", "DraftOutcome", "MappingChoice",
-           "MappingForm", "NO_KEY_MESSAGE", "PLACEHOLDER_DATES", "TARGET_OPTIONS", "apply_outcome", "apply_review",
-           "blank_form", "column_values", "confirm", "convert_raw", "coverage_frame", "coverage_summary",
-           "derived_counts", "draft", "draft_cache", "draft_is_cached", "expr_text", "form_from_mapping",
-           "form_from_toml", "form_toml", "is_plain", "load_choice", "mapping_choices", "mapping_from_form", "meanings",
-           "missing_files", "outcome_frame", "profile", "profile_frame", "raw_frames", "review_frame",
-           "value_map_frame", "with_join", "with_role"]
+__all__ = ["BUILTIN_MAPPINGS_DIR", "Conversion", "CoverageSummary", "DRAFT_CACHE", "DraftOutcome", "ExtrasSummary",
+           "FEATURE_KINDS", "MappingChoice", "MappingForm", "NO_KEY_MESSAGE", "PLACEHOLDER_DATES", "TARGET_OPTIONS",
+           "VALUE_MAP_TARGET", "apply_outcome", "apply_review", "blank_form", "column_values", "confirm", "convert_raw",
+           "coverage_frame", "coverage_summary", "default_feature_name", "derived_counts", "derived_features",
+           "derived_features_frame", "draft", "draft_cache", "draft_is_cached", "expr_text", "extras_summary",
+           "features_signature", "form_from_mapping", "form_from_toml", "form_toml", "is_plain", "load_choice",
+           "mapping_choices", "mapping_from_form", "meanings", "missing_files", "outcome_frame", "profile",
+           "profile_frame", "raw_frames", "review_frame", "value_map_frame", "with_join", "with_role"]
