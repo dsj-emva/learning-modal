@@ -416,6 +416,13 @@ def test_unseen_value_at_scoring_is_other_and_absent_extras_are_missing(bundle, 
     # a lead without its extra columns (e.g. from the EMVA form) scores with every extra missing
     bare = score_leads(bundle, leads.drop(columns=["x_tier", "x_seats", "x_sector"]), dataset)
     assert np.isfinite(bare.p_formula).all()
+    # no training lead had tier missing: its missing column has weight 0, so a blank tier scores as the reference
+    tier = next(e for e in bundle.extras.extras if e.feature.name == "tier")
+    assert tier.train_counts[MISSING] == 0
+    assert bundle.model.coef_[0][list(bundle.design_columns).index("x_tier=missing")] == 0.0
+    as_ref = score_leads(bundle, leads.assign(x_tier=tier.reference), dataset)
+    np.testing.assert_allclose(score_leads(bundle, leads.assign(x_tier=None), dataset).p_formula, as_ref.p_formula,
+                               rtol=1e-12)
     # a generic bundle refuses an x_ column it does not declare (a misspelt extra would silently be missing)
     with pytest.raises(ValueError, match="unknown extra columns \\['x_teir'\\].*x_tier"):
         score_leads(bundle, leads.rename(columns={"x_tier": "x_teir"}), dataset)
