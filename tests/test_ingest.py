@@ -508,9 +508,10 @@ def test_redact_keeps_dates_and_small_numbers() -> None:
 
 def _reply() -> dict:
     col = lambda file, column, target, **kw: {"file": file, "column": column, "target": target,  # noqa: E731
+                                               "feature_kind": kw.get("kind", "none"),
                                                "value_map": kw.get("vm", []), "reason": "r", "confidence": "high"}
     return {
-        "sources": [{"file": "leads.csv", "join_on": ""}, {"file": "orgs.csv", "join_on": "org"}],
+        "primary_file": "leads.csv", "joins": [{"file": "orgs.csv", "join_on": "org"}],
         "columns": [
             col("leads.csv", "id", "lead.lead_id"), col("leads.csv", "signup", "lead.created_at"),
             col("leads.csv", "closed", "lead.won_at"), col("leads.csv", "amount", "lead.deal_value"),
@@ -536,6 +537,23 @@ def test_a_draft_needs_created_at_but_not_won_at(frames: dict[str, pd.DataFrame]
     no_created = {**reply, "columns": [c for c in reply["columns"] if c["target"] != "lead.created_at"]}
     with pytest.raises(ContractError, match="created_at"):
         check_reply(no_created, profiles)
+
+
+def test_a_draft_names_its_primary_file_and_joins_each_other_file_once(frames: dict[str, pd.DataFrame]) -> None:
+    from emva.ingest.draft import check_reply
+
+    profiles = profile(frames)
+    reply = _reply()
+    with pytest.raises(ContractError, match="primary or joined once"):
+        check_reply({**reply, "joins": [*reply["joins"], {"file": "leads.csv", "join_on": "org"}]}, profiles)
+    with pytest.raises(ContractError, match="primary or joined once"):
+        check_reply({**reply, "joins": reply["joins"] * 2}, profiles)
+    with pytest.raises(ContractError, match="not in the profiles"):
+        check_reply({**reply, "primary_file": "deals.csv"}, profiles)
+    with pytest.raises(ContractError, match="not_a_column"):
+        check_reply({**reply, "joins": [{"file": "orgs.csv", "join_on": "not_a_column"}]}, profiles)
+    single = {**reply, "joins": [], "columns": [c for c in reply["columns"] if c["file"] == "leads.csv"]}
+    assert check_reply(single, profiles) is single
 
 
 def message(text: str, stop_reason: str = "end_turn") -> SimpleNamespace:
@@ -632,7 +650,7 @@ def test_committed_mapping_converts_its_fixture(name: str) -> None:
     assert m.source_url and m.licence and "BY HAND" in text and "NOT an LLM draft" in text
     raw = FIXTURES / name
     files = convert(frames_from_bytes({s.file: (raw / s.file).read_bytes() for s in m.sources}), m)
-    report = validate_files(_training(files))
+    report = validate_files(files)  # with dataset.json: it declares the extras of extra_features.csv (Phase 10)
     assert [e.message for e in report.errors] == [f"only {report.summary['leads']} leads; training needs at least "
                                                   f"{MIN_LEADS}"]  # fixtures are a few dozen rows
     meta = json.loads(files["dataset.json"])
@@ -651,7 +669,8 @@ def test_cli_convert_writes_the_dataset_and_refuses_a_draft(tmp_path: Path,
     meta = json.loads((tmp_path / "out" / "dataset.json").read_text())
     assert all(f"{k} = {meta[k]}: " in printed for k in DERIVED_COUNTS) and meta["lost_dated_at_as_of"] > 0
     assert {p.name for p in (tmp_path / "out").iterdir()} == {
-        "historical_leads.csv", "crm_history.csv", "companies.csv", "people.csv", "dataset.json", "mapping.toml"}
+        "historical_leads.csv", "crm_history.csv", "companies.csv", "people.csv", "dataset.json", "mapping.toml",
+        "extra_features.csv"}  # the mapping declares [[features]] (Phase 10)
     draft = tmp_path / "draft.toml"
     draft.write_text((REPO / "mappings" / "olist_funnel.toml").read_text().replace(
         "outcome_confirmed = true", "outcome_confirmed = false"))
@@ -686,6 +705,28 @@ def test_new_source_rows_score_like_the_training_run(converted_dir: Path, frames
     assert np.isfinite(scores.p_formula).all()
     np.testing.assert_allclose(scores.p_formula, r.X.p_formula.loc[new.id], rtol=1e-12)
     np.testing.assert_allclose(scores.value_at_submit, r.X.value_at_submit.loc[new.id], rtol=1e-12)
+
+
+def test_form_text_in_a_column_blank_on_every_training_lead_scores(converted_dir: Path, frames: dict[str, pd.DataFrame],
+                                                                  mapping: DatasetMapping, tmp_path: Path) -> None:
+    """Phase 9 bug: the fixture maps no landing_url / ip_country, so they are blank on every training lead and the
+    bundle's lead schema reads them as float64; a form lead that fills them in used to fail to parse its text as a
+    number. It now scores, and leads from the source rows still score exactly like the batch run."""
+    from emva.persist import load_bundle, save_bundle
+    from emva.scoring import lead_from_form, score_leads
+
+    r = run(converted_dir)
+    save_bundle(r, tmp_path / "model.joblib", converted_dir, 1.0)
+    bundle = load_bundle(tmp_path / "model.joblib")
+    assert pd.api.types.is_float_dtype(bundle.lead_schema.dtypes["landing_url"])
+    assert pd.api.types.is_float_dtype(bundle.lead_schema.dtypes["ip_country"])
+    form = lead_from_form({"email": "ann@firm.example", "form_variant": "A", "utm_source": "google",
+                           "utm_medium": "cpc", "ip_country": "UK", "landing_url": "https://firm.example/p"})
+    assert np.isfinite(score_leads(bundle, form, converted_dir).p_formula).all()
+    new = frames["leads.csv"].iloc[[0, 1, 2, 3, 40]].drop(columns=["stage", "closed", "amount", "notes"])
+    leads = convert_leads({"leads.csv": new, "orgs.csv": frames["orgs.csv"]}, mapping)
+    np.testing.assert_allclose(score_leads(bundle, leads, converted_dir).p_formula, r.X.p_formula.loc[new.id],
+                               rtol=1e-12)
 
 
 def test_convert_leads_without_ids_dates_or_outcome_columns(frames: dict[str, pd.DataFrame],
@@ -803,3 +844,24 @@ def test_dump_escapes_what_toml_forbids_raw_and_refuses_lone_surrogates(mapping:
     assert load_mapping(text) == odd
     with pytest.raises(ValueError, match="lone surrogate"):
         dump_mapping(replace(mapping, review={"created_at": Review("broken \ud800")}))
+
+
+# --- the committed live drafts (Phase 10 live draft check) ----------------------------------------------------------
+
+@pytest.mark.parametrize("name", ["olist", "crm_opportunities", "hotel_bookings"])
+def test_committed_live_draft_stays_an_unconfirmed_draft(name: str) -> None:
+    text = (REPO / "mappings" / "drafts" / f"{name}.draft.toml").read_text()
+    m = load_mapping(text)
+    assert text.startswith("# DRAFT by claude-haiku-4-5-20251001") and "BY HAND" not in text
+    assert not m.outcome_confirmed and not m.features_confirmed
+    with pytest.raises(ValueError, match="outcome_confirmed is false"):
+        load_mapping(text, require_confirmed=True)
+
+
+def test_committed_draft_cache_holds_a_current_reply_per_dataset() -> None:
+    from emva.ingest.draft import PROMPT_VERSION, prompt_fingerprint
+
+    entries = json.loads((REPO / "mappings" / "drafts" / "draft_cache.json").read_text())["entries"].values()
+    current = [e for e in entries if e["prompt_fingerprint"] == prompt_fingerprint()]
+    assert len(current) == 3 and all(e["status"] == "ok" and e["prompt_version"] == PROMPT_VERSION for e in current)
+    assert all(e["model_id"] == "claude-haiku-4-5-20251001" for e in entries)

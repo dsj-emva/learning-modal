@@ -1,0 +1,116 @@
+# DRAFT by claude-haiku-4-5-20251001 from column profiles of crm_opportunities (no rows were sent). Review every row, add derived
+# expressions where needed, check the outcome, then set outcome_confirmed = true.
+
+name = "crm_opportunities_draft"
+as_of = "2018-01-01"
+test_from = "2017-10-01"
+source_url = ""
+licence = ""
+outcome_confirmed = false
+drop_rows_without_created_at = false
+features_confirmed = false
+
+[[sources]]
+name = "sales_pipeline"
+file = "sales_pipeline.csv"
+
+[[sources]]
+name = "accounts"
+file = "accounts.csv"
+join_on = "account"
+
+[[sources]]
+name = "sales_teams"
+file = "sales_teams.csv"
+join_on = "sales_agent"
+
+[lead]
+lead_id = "sales_pipeline.opportunity_id"
+created_at = "sales_pipeline.engage_date"
+close_at = "sales_pipeline.close_date"
+deal_value = "sales_pipeline.close_value"
+
+[outcome]
+kind = "stage"
+column = "sales_pipeline.deal_stage"
+lost_without_close = "error"
+
+[outcome.stage_map]
+Prospecting = "New"
+Engaging = "Contacted"
+Won = "Won"
+Lost = "Lost"
+
+[review]
+lead_id = { reason = "Unique identifier for each opportunity/lead", confidence = "high" }
+created_at = { reason = "Earliest date when lead engagement began", confidence = "high" }
+close_at = { reason = "Date when deal was closed (won or lost)", confidence = "high" }
+deal_value = { reason = "Monetary value of closed deal", confidence = "high" }
+outcome = { reason = "Deal stage column maps directly to CRM pipeline stages", confidence = "high" }
+
+[[fields]]
+source = "sales_pipeline.sales_agent"
+target = "ignore"
+reason = "Sales agent name; not a lead attribute"
+confidence = "high"
+
+[[fields]]
+source = "accounts.subsidiary_of"
+target = "ignore"
+reason = "Parent company relationship; not a lead attribute"
+confidence = "high"
+
+[[fields]]
+source = "sales_teams.manager"
+target = "ignore"
+reason = "Manager name; not a lead attribute"
+confidence = "high"
+
+[[features]]
+source = "sales_pipeline.product"
+kind = "categorical"
+name = "product"
+reason = "Product offered; could predict conversion likelihood"
+confidence = "medium"
+
+[[features]]
+source = "accounts.sector"
+kind = "categorical"
+name = "sector"
+reason = "Industry sector; may predict lead quality and conversion"
+confidence = "medium"
+
+[[features]]
+source = "accounts.year_established"
+kind = "numeric"
+name = "year_established"
+reason = "Company age; could indicate stability and buying power"
+confidence = "medium"
+
+[[features]]
+source = "accounts.revenue"
+kind = "numeric"
+name = "revenue"
+reason = "Company revenue; correlates with deal size and conversion"
+confidence = "medium"
+
+[[features]]
+source = "accounts.employees"
+kind = "numeric"
+name = "employees"
+reason = "Company size; predicts budget and decision-making complexity"
+confidence = "medium"
+
+[[features]]
+source = "accounts.office_location"
+kind = "categorical"
+name = "office_location"
+reason = "Geographic location; may affect sales cycle and conversion"
+confidence = "low"
+
+[[features]]
+source = "sales_teams.regional_office"
+kind = "categorical"
+name = "regional_office"
+reason = "Sales region; may affect conversion and sales cycle"
+confidence = "low"

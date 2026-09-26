@@ -10,6 +10,10 @@ upload columns (plan 3.3): ``value_at_submit`` (the expected value through a fit
 
 The snapshot date (``as_of``) and the train/test boundary (``test_from``) are the dataset's own when it carries a
 ``dataset.json`` (a converted dataset, ADR 0020; ``emva.dataset_meta.dataset_dates``), else ``AS_OF`` / ``TEST_FROM``.
+
+With ``features=FeatureSet.GENERIC`` (Phase 10, ADR 0024) ``run`` also reads the dataset's declared extras
+(``emva.generic.read_extra_features``: ``extra_features.csv`` joined on ``lead_id``, refused when absent), fits their
+encoding on the training leads only and appends the ``x_`` design columns to the v2 design.
 """
 from __future__ import annotations
 
@@ -25,6 +29,7 @@ from emva.dataset_meta import dataset_dates
 from emva.eval.metrics import summary
 from emva.feature_spec import feature_spec
 from emva.features import FeatureSet
+from emva.generic import GenericEncoder, fit_encoder, read_extra_features
 from emva.io import clean, load
 from emva.labels import HORIZON, LabelConfig, assign_labels, split_masks
 from emva.model import fit_lr, predict, scorecard
@@ -49,7 +54,8 @@ class PipelineResult:
     the label definition and feature set used; ``model`` is the fitted formula model (its columns are
     ``design.columns``); ``deal_value`` is the fitted value model;
     ``value_transform`` the transform fitted on the training leads' values (None in legacy mode); ``as_of`` and
-    ``test_from`` the snapshot date and train/test boundary the run used (ADR 0020).
+    ``test_from`` the snapshot date and train/test boundary the run used (ADR 0020); ``extras`` the extras' encoder
+    fitted on the training leads (generic feature set only, else None).
     """
 
     X: pd.DataFrame
@@ -66,6 +72,7 @@ class PipelineResult:
     messages: list[str] = field(default_factory=list)
     as_of: pd.Timestamp = AS_OF
     test_from: str = TEST_FROM
+    extras: GenericEncoder | None = None
 
     def scores(self) -> pd.DataFrame:
         """The scores.csv frame (indexed by ``lead_id``): ``SCORE_COLUMNS``, the label config's extra columns and,
@@ -98,16 +105,32 @@ def run(data: str | Path, margin: float = 1.0, context: str | Path | None = None
     ``value_transform`` is fitted on the training leads' ``value_formula`` and gives ``value_at_submit``
     (legacy mode ignores it: its outputs stay the baseline's). ``test_from`` and ``as_of`` default to the dataset's
     dates (``emva.dataset_meta.dataset_dates``: its ``dataset.json``, else ``TEST_FROM`` / ``AS_OF``); labels,
-    maturity and ``value_at_close`` are read at ``as_of``.
+    maturity and ``value_at_close`` are read at ``as_of``. The generic feature set also joins the dataset's raw
+    extras onto ``X`` (columns ``x_<name>``) and raises ``ValueError`` when ``data`` has none, or when
+    ``extra_features.csv`` and ``historical_leads.csv`` do not hold the same leads (either direction).
     """
     meta_as_of, meta_test_from = dataset_dates(data)
     as_of = meta_as_of if as_of is None else as_of
     test_from = meta_test_from if test_from is None else test_from
     spec = feature_spec(features)
     features = spec.feature_set
-    X = build(load(data), labels, features, as_of)
+    L = load(data)
+    X = build(L, labels, features, as_of)
     tr, te = split_masks(X, test_from, labels.eligible(X, as_of))
     D = spec.design(X)
+    encoder = None
+    if spec.extras:
+        declared, E = read_extra_features(data)
+        unknown, absent = E.index.difference(L.index), L.index.difference(E.index)
+        if len(unknown):
+            raise ValueError(f"extra_features.csv has {len(unknown)} lead(s) not in historical_leads.csv, e.g. "
+                             f"{list(unknown[:5])}")
+        if len(absent):
+            raise ValueError(f"extra_features.csv lacks {len(absent)} lead(s) of historical_leads.csv, e.g. "
+                             f"{list(absent[:5])} (every lead needs a row; blank values mean missing)")
+        X = X.join(E)
+        encoder = fit_encoder(declared, X[tr])
+        D = D.join(encoder.design(X))
     lr = fit_lr(D, X.y, tr)
     X["p_formula"] = predict(lr, D)
 
@@ -164,7 +187,7 @@ def run(data: str | Path, margin: float = 1.0, context: str | Path | None = None
 
     return PipelineResult(X=X, train=tr, test=te, design=D, weights=weights, summary=pd.DataFrame(rows),
                           labels=labels, features=features, model=lr, deal_value=dv, value_transform=fitted,
-                          messages=messages, as_of=as_of, test_from=test_from)
+                          messages=messages, as_of=as_of, test_from=test_from, extras=encoder)
 
 
 def write_outputs(result: PipelineResult, out: str | Path) -> None:

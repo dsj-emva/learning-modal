@@ -24,6 +24,11 @@
   rows the converter had to reorder (``crm_times_reordered``) are a warning naming example lead ids.
 - **mapping.toml** (the confirmed mapping a converted dataset came from): optional; it must load with
   ``emva.ingest.load_mapping`` and have ``outcome_confirmed = true``. Each of the two without the other is a note.
+- **extra_features.csv** (the generic feature set's raw extras, Phase 10 (b); what ``emva.generic.read_extra_features``
+  reads): present exactly when ``dataset.json`` declares ``features`` (``emva.generic.parse_features``); columns
+  ``lead_id`` plus the declared names in declaration order; ``lead_id`` filled and unique; every ``lead_id`` in
+  ``historical_leads.csv`` and every lead there in the file; numeric extras numbers or blank. Read like the pipeline
+  reads it (only an empty cell is blank, so a text value like ``NA`` stays a category).
 
 Nothing here raises on user input: every problem becomes an ``Issue`` in the returned ``ValidationReport``.
 """
@@ -41,6 +46,7 @@ from app.storage import (
     COMPANIES_FILE,
     CRM_FILE,
     DATASET_META_FILE,
+    EXTRA_FEATURES_FILE,
     LEADS_FILE,
     MAPPING_FILE,
     METADATA_FILES,
@@ -54,6 +60,7 @@ from app.storage import (
 from emva.constants import AS_OF, DEAL_VALUE_LEVELS, ENRICHMENT_COLUMNS, MISSING, STAGE, V2_LEVELS, WEEKDAYS
 from emva.dataset_meta import parse_as_of, parse_dataset_meta
 from emva.eval.status_quo import RULE_FIELDS
+from emva.generic import ExtraFeature, ExtraKind, parse_features
 from emva.ingest.mapping import load_mapping
 from emva.scoring import FieldType, submit_time_fields
 
@@ -174,10 +181,12 @@ class _Checker:
         return parsed
 
     def numeric(self, name: str, df: pd.DataFrame, col: str) -> None:
-        """Error for non-blank cells of ``col`` that are not numbers."""
-        bad = pd.to_numeric(df[col], errors="coerce").isna() & ~_blank(df[col])
+        """Error for non-blank cells of ``col`` that are not finite numbers (``inf`` and ``1e400`` are refused)."""
+        parsed = pd.to_numeric(df[col], errors="coerce")
+        bad = (parsed.isna() | np.isinf(parsed)) & ~_blank(df[col])
         if bad.any():
-            self.error(name, col, f"{_n(bad)} value(s) are not numbers (e.g. {df[col][bad].iloc[0]!r}); "
+            self.error(name, col, f"{_n(bad)} value(s) are not numbers or not finite "
+                                  f"(e.g. {df[col][bad].iloc[0]!r}); "
                                   "leave the cell blank when unknown", bad)
 
     def levels(self, name: str, df: pd.DataFrame, col: str, allowed: tuple[str, ...], what: str) -> None:
@@ -331,22 +340,66 @@ def _check_rules(c: _Checker, content: bytes) -> dict | None:
     return rules if not [i for i in c.report.errors if i.file == f] else None
 
 
-def _check_meta(c: _Checker, content: bytes) -> pd.Timestamp | None:
-    """``dataset.json`` by the rules of ``emva.dataset_meta.parse_dataset_meta``; its ``as_of``, or None (and an
-    error) when it is unusable. CRM rows the converter moved because they were dated before the previous row of
-    their lead (``crm_times_reordered``, e.g. a win before created_at) become a warning with example lead ids."""
+def _check_meta(c: _Checker, content: bytes) -> tuple[pd.Timestamp | None, tuple[ExtraFeature, ...] | None]:
+    """``dataset.json`` by the rules of ``emva.dataset_meta.parse_dataset_meta``: ``(as_of, features)``, its ``as_of``
+    (None, and an error, when the file is unusable) and its declared extras (``emva.generic.parse_features``; None when
+    it declares none or they are malformed, which is an error). CRM rows the converter moved because they were dated
+    before the previous row of their lead (``crm_times_reordered``, e.g. a win before created_at) become a warning with
+    example lead ids."""
     try:
         meta = parse_dataset_meta(content.decode("utf-8"))
     except (UnicodeDecodeError, ValueError) as e:
         c.error(DATASET_META_FILE, None, str(e))
-        return None
+        return None, None
+    features = None
+    if "features" in meta:
+        try:
+            features = parse_features(meta["features"], DATASET_META_FILE)
+        except ValueError as e:
+            c.error(DATASET_META_FILE, "features", str(e))
     reordered = meta.get("crm_times_reordered", 0)
     if reordered:
         ids = meta.get("crm_times_reordered_ids", [])
         c.warn(CRM_FILE, "changed_at", f"{reordered} CRM event(s) were dated before the previous event of their lead "
                                        "(e.g. a win before the lead was created); the conversion moved each to 1 s "
                                        f"after it. Check the source dates, e.g. leads {ids}")
-    return parse_as_of(meta["as_of"])
+    return parse_as_of(meta["as_of"]), features
+
+
+def _check_extras(c: _Checker, content: bytes, features: tuple[ExtraFeature, ...],
+                  lead_ids: pd.Series | None) -> None:
+    """``extra_features.csv`` against the ``features`` ``dataset.json`` declares and the leads' ``lead_id``s (None
+    when the leads are unusable: the cross-check is skipped)."""
+    f = EXTRA_FEATURES_FILE
+    try:
+        E = pd.read_csv(io.BytesIO(content), dtype=str, keep_default_na=False, na_values=[""])
+    except (pd.errors.ParserError, pd.errors.EmptyDataError, UnicodeDecodeError, ValueError) as e:
+        c.error(f, None, f"not a readable CSV file ({type(e).__name__}: {str(e).splitlines()[0]})")
+        return
+    want = ["lead_id", *(x.name for x in features)]
+    if list(E.columns) != want:
+        c.error(f, None, f"columns {list(E.columns)}; expected {want} (lead_id, then the extras {DATASET_META_FILE} "
+                         "declares, in that order)")
+        return
+    blank = _blank(E.lead_id)
+    if blank.any():
+        c.error(f, "lead_id", f"{_n(blank)} row(s) have no lead_id", blank)
+    dup = E.lead_id.duplicated(keep="first") & ~blank
+    if dup.any():
+        c.error(f, "lead_id", f"{_n(dup)} duplicate lead_id value(s) (e.g. {E.lead_id[dup].iloc[0]!r}); one row per "
+                              "lead", dup)
+    for x in features:
+        if x.kind is ExtraKind.NUMERIC:
+            c.numeric(f, E, x.name)
+    if lead_ids is not None:
+        orphan = ~E.lead_id.isin(set(lead_ids)) & ~blank
+        if orphan.any():
+            c.error(f, "lead_id", f"{_n(orphan)} row(s) refer to lead_id(s) not in {LEADS_FILE} "
+                                  f"(e.g. {E.lead_id[orphan].iloc[0]!r})", orphan)
+        absent = ~lead_ids.isin(set(E.lead_id))
+        if absent.any():
+            c.error(f, "lead_id", f"{_n(absent)} lead(s) of {LEADS_FILE} have no row here (e.g. "
+                                  f"{lead_ids[absent].iloc[0]!r}); the converter writes one row per lead")
 
 
 def _check_mapping(c: _Checker, content: bytes) -> None:
@@ -378,7 +431,8 @@ def _summary(L: pd.DataFrame | None, C: pd.DataFrame | None, frames: dict[str, p
 def validate_files(files: dict[str, bytes]) -> ValidationReport:
     """Validate uploaded training files (file name -> content); never raises on user input.
 
-    ``files`` may also hold a converted dataset's ``METADATA_FILES`` (``mapping.toml``, ``dataset.json``).
+    ``files`` may also hold a converted dataset's ``METADATA_FILES`` (``mapping.toml``, ``dataset.json``) and its
+    ``extra_features.csv``; with declared extras the summary gains ``extra_features``, ``(name, kind)`` pairs.
     Unknown or ground-truth file names become errors without being parsed. Required files missing, missing
     columns, unparsable values and broken references become errors; things that train but deserve a look
     (Won rows without a value, leads dated after the snapshot, no rules file) become warnings.
@@ -396,7 +450,7 @@ def validate_files(files: dict[str, bytes]) -> ValidationReport:
             c.error(name, None, "required file is missing")
     if PEOPLE_FILE not in usable:
         c.warn(PEOPLE_FILE, None, "not provided; the model never reads it, so training is unaffected")
-    as_of = _check_meta(c, usable[DATASET_META_FILE]) if DATASET_META_FILE in usable else None
+    as_of, features = _check_meta(c, usable[DATASET_META_FILE]) if DATASET_META_FILE in usable else (None, None)
     if MAPPING_FILE in usable:
         _check_mapping(c, usable[MAPPING_FILE])
     if (MAPPING_FILE in usable) != (DATASET_META_FILE in usable):
@@ -426,11 +480,21 @@ def validate_files(files: dict[str, bytes]) -> ValidationReport:
         _check_crm(c, C, L.lead_id if L is not None else None)
     if ok.get(COMPANIES_FILE):
         _check_companies(c, frames[COMPANIES_FILE])
+    if EXTRA_FEATURES_FILE in usable and features:
+        _check_extras(c, usable[EXTRA_FEATURES_FILE], features, L.lead_id if L is not None else None)
+    elif EXTRA_FEATURES_FILE in usable:
+        c.error(EXTRA_FEATURES_FILE, None, f"provided without a {DATASET_META_FILE} that declares its features; only a "
+                                           "conversion with a mapping that declares [[features]] writes this file")
+    elif features:
+        c.error(EXTRA_FEATURES_FILE, None, f"required file is missing: {DATASET_META_FILE} declares the extra "
+                                           f"feature(s) {[x.name for x in features]}")
     if ok.get(PEOPLE_FILE):
         no_email = _blank(frames[PEOPLE_FILE].email)
         if no_email.any():
             c.warn(PEOPLE_FILE, "email", f"{_n(no_email)} row(s) have no email", no_email)
     c.report.summary = _summary(L, C, frames)
+    if features:
+        c.report.summary["extra_features"] = [(x.name, x.kind.value) for x in features]
     return c.report
 
 

@@ -1,0 +1,128 @@
+# DRAFT by claude-haiku-4-5-20251001 from column profiles of olist (no rows were sent). Review every row, add derived
+# expressions where needed, check the outcome, then set outcome_confirmed = true.
+
+name = "olist_draft"
+as_of = "2018-11-15"
+test_from = "2018-03-01"
+source_url = ""
+licence = ""
+outcome_confirmed = false
+drop_rows_without_created_at = false
+features_confirmed = false
+
+[[sources]]
+name = "olist_marketing_qualified_leads_dataset"
+file = "olist_marketing_qualified_leads_dataset.csv"
+
+[[sources]]
+name = "olist_closed_deals_dataset"
+file = "olist_closed_deals_dataset.csv"
+join_on = "mql_id"
+
+[lead]
+lead_id = "olist_marketing_qualified_leads_dataset.mql_id"
+created_at = "olist_marketing_qualified_leads_dataset.first_contact_date"
+won_at = "olist_closed_deals_dataset.won_date"
+
+[outcome]
+kind = "presence"
+column = "olist_closed_deals_dataset.won_date"
+lost_without_close = "error"
+
+[review]
+lead_id = { reason = "Unique identifier for each lead", confidence = "high" }
+created_at = { reason = "Earliest date when lead came in via marketing", confidence = "high" }
+won_at = { reason = "Date when deal was won", confidence = "high" }
+outcome = { reason = "Lead won if present in closed deals file, lost if absent", confidence = "high" }
+
+[[fields]]
+source = "olist_marketing_qualified_leads_dataset.origin"
+target = "utm_source"
+reason = "Marketing channel origin maps to utm_source"
+confidence = "high"
+
+[[fields]]
+source = "olist_closed_deals_dataset.has_company"
+target = "ignore"
+reason = "Only known after outcome, would leak label"
+confidence = "high"
+
+[[fields]]
+source = "olist_closed_deals_dataset.has_gtin"
+target = "ignore"
+reason = "Only known after outcome, would leak label"
+confidence = "high"
+
+[[fields]]
+source = "olist_closed_deals_dataset.seller_id"
+target = "ignore"
+reason = "Unique identifier per row, not a feature"
+confidence = "high"
+
+[[fields]]
+source = "olist_closed_deals_dataset.sdr_id"
+target = "ignore"
+reason = "Sales rep id, not a lead attribute"
+confidence = "high"
+
+[[fields]]
+source = "olist_closed_deals_dataset.sr_id"
+target = "ignore"
+reason = "Sales rep id, not a lead attribute"
+confidence = "high"
+
+[[features]]
+source = "olist_marketing_qualified_leads_dataset.landing_page_id"
+kind = "categorical"
+name = "landing_page_id"
+reason = "Landing page indicates lead source and intent at arrival"
+confidence = "medium"
+
+[[features]]
+source = "olist_closed_deals_dataset.business_segment"
+kind = "categorical"
+name = "business_segment"
+reason = "Business segment describes company at time of lead"
+confidence = "medium"
+
+[[features]]
+source = "olist_closed_deals_dataset.lead_type"
+kind = "categorical"
+name = "lead_type"
+reason = "Lead type categorizes lead source and size at arrival"
+confidence = "high"
+
+[[features]]
+source = "olist_closed_deals_dataset.lead_behaviour_profile"
+kind = "categorical"
+name = "lead_behaviour_profile"
+reason = "Behavioral profile predicts lead quality and conversion"
+confidence = "medium"
+
+[[features]]
+source = "olist_closed_deals_dataset.business_type"
+kind = "categorical"
+name = "business_type"
+reason = "Business type describes company structure at arrival"
+confidence = "medium"
+
+[[features]]
+source = "olist_closed_deals_dataset.declared_product_catalog_size"
+kind = "numeric"
+name = "declared_product_catalog_size"
+reason = "Catalog size indicates company scale at lead time"
+confidence = "medium"
+
+[[features]]
+source = "olist_closed_deals_dataset.declared_monthly_revenue"
+kind = "numeric"
+name = "declared_monthly_revenue"
+reason = "Revenue indicates company size and deal potential"
+confidence = "medium"
+
+[[features]]
+source = "olist_closed_deals_dataset.average_stock"
+kind = "categorical"
+name = "average_stock"
+reason = "Stock levels indicate operational scale at arrival"
+confidence = "low"

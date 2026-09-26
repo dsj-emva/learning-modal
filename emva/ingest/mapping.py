@@ -14,6 +14,8 @@ TOML schema (every key below; unknown keys are refused so typos fail loudly)::
     licence = "CC BY 4.0"
     outcome_confirmed = false              # true only after a person reviewed the outcome mapping
     drop_rows_without_created_at = false   # true: rows with a blank created_at are dropped (counted), else refused
+    features_confirmed = false             # with [[features]] only: true once a person checked that every feature
+                                           # column is known at submit time (leakage guard); convert refuses false
 
     [[sources]]                            # 1-3 files; the first is the primary (one row per lead)
     name = "b"                             # no dots; columns are referenced as "<source>.<column>"
@@ -56,6 +58,13 @@ TOML schema (every key below; unknown keys are refused so typos fail loudly)::
     paid_search = { utm_source = "google", utm_medium = "cpc" }
     direct_traffic = {}                    # a listed value that sets nothing
 
+    [[features]]                           # optional (Phase 10, ADR 0024): an extra model column for the generic
+    source = "b.lead_time"                 # feature set; an expression (a column or an op over columns)
+    kind = "numeric"                       # "numeric" (quantile bins) | "categorical" (frequent levels + other)
+    name = "lead_time"                     # lower-case slug, unique: raw column x_<name>, design x_<name>=<level>
+    reason = "..."                         # optional
+    confidence = "high"                    # optional
+
 Expressions: a string is a column reference ``"<source>.<column>"``; an inline table ``{ op = ..., args = [...] }``
 applies one of ``OPS`` to its arguments (each itself an expression):
 
@@ -66,6 +75,9 @@ applies one of ``OPS`` to its arguments (each itself an expression):
 Targets (``TARGETS``) are the ``historical_leads.csv`` columns other than ``lead_id``, ``created_at`` and ``answers``
 (which the converter builds), plus ``answers.<key>`` for each of ``emva.constants.ANSWER_KEYS``. Companies and people
 columns are not mapped (the converter writes those files header-only). A target set by two field rows is refused.
+
+``[[features]]`` rows are read only by the generic feature set (``emva.generic``); the converter writes their raw
+values to ``extra_features.csv``. A mapping without them reads, converts and dumps exactly as in Phase 9.
 """
 from __future__ import annotations
 
@@ -79,6 +91,7 @@ from pathlib import PurePath
 from emva.constants import ANSWER_KEYS, STAGE
 from emva.dataset_meta import check_test_from, parse_as_of
 from emva.eval.evaluation_only import is_evaluation_only
+from emva.generic import ExtraFeature, ExtraKind
 
 # historical_leads.csv header, in file order (the v1 format; the converter writes exactly these columns).
 LEAD_COLUMNS: tuple[str, ...] = (
@@ -267,6 +280,33 @@ class FieldMap:
 
 
 @dataclass(frozen=True)
+class FeatureMap:
+    """One extra model column for the generic feature set (Phase 10): ``source`` (an expression), ``kind``
+    (``emva.generic.ExtraKind``), ``name`` (a lower-case slug; design columns ``x_<name>=<level>``) and the draft's or
+    reviewer's ``review``."""
+
+    source: Expr
+    kind: str
+    name: str
+    review: Review = Review()
+
+    def __post_init__(self) -> None:
+        """Refuse an unknown kind or a name that is not a slug (``emva.generic.ExtraFeature`` rules)."""
+        self.extra()
+
+    def extra(self) -> ExtraFeature:
+        """This row as the ``ExtraFeature`` that ``dataset.json`` declares (``source``: the column reference, or an
+        expression's TOML text)."""
+        try:
+            kind = ExtraKind(self.kind)
+        except ValueError as e:
+            raise ValueError(f"feature {self.name!r}: kind {self.kind!r}; allowed: {[k.value for k in ExtraKind]}") \
+                from e
+        return ExtraFeature(self.name, kind, self.source.column if self.source.op == COLUMN_OP
+                            else _expr_toml(self.source))
+
+
+@dataclass(frozen=True)
 class DatasetMapping:
     """A complete mapping (module docstring). Constructing one validates it (``ValueError`` on anything unknown or
     inconsistent); ``outcome_confirmed`` is checked by ``emva.ingest.convert``, not here, so drafts can be built."""
@@ -283,9 +323,11 @@ class DatasetMapping:
     outcome_confirmed: bool = False
     drop_rows_without_created_at: bool = False
     review: Mapping[str, Review] = field(default_factory=dict)
+    features: tuple[FeatureMap, ...] = ()
+    features_confirmed: bool = False
 
     def __post_init__(self) -> None:
-        """Validate names, sources and joins, column references, targets, dates and review keys."""
+        """Validate names, sources and joins, column references, targets, feature names, dates and review keys."""
         if not _SLUG.match(self.name):
             raise ValueError(f"mapping name {self.name!r} must be letters, digits, '_' or '-'")
         if not 1 <= len(self.sources) <= MAX_SOURCES:
@@ -307,6 +349,9 @@ class DatasetMapping:
                 if t in seen:
                     raise ValueError(f"target {t!r} is set by both {seen[t]!r} and {f.source!r}")
                 seen[t] = f.source
+        names_ = [f.name for f in self.features]
+        if len(set(names_)) != len(names_):
+            raise ValueError(f"feature names must be unique, got {names_}")
         as_of = parse_as_of(self.as_of)
         check_test_from(self.test_from)
         if parse_as_of(self.test_from) > as_of:
@@ -316,22 +361,25 @@ class DatasetMapping:
             raise ValueError(f"review has unknown key(s) {unknown}; allowed: {list(REVIEW_KEYS)}")
 
     def column_refs(self) -> list[str]:
-        """Every column the mapping reads (lead expressions, outcome, fields), in order, duplicates kept."""
+        """Every column the mapping reads (lead expressions, outcome, fields, features), in order, duplicates kept."""
         exprs = [getattr(self.lead, r) for r in LEAD_ROLES]
         refs = [c for e in exprs if e is not None for c in e.columns()]
-        return refs + [self.outcome.column] + [f.source for f in self.fields]
+        return (refs + [self.outcome.column] + [f.source for f in self.fields]
+                + [c for f in self.features for c in f.source.columns()])
 
     def source_columns(self, submit_time_only: bool = True) -> dict[str, list[str]]:
         """Source file -> the raw column names the mapping reads from it, in first-use order.
 
         ``submit_time_only`` (the default) keeps what a new lead has when it arrives: the ``lead_id`` and
-        ``created_at`` expressions and every field row that is not ``ignore`` (``emva.ingest.convert.convert_leads``
-        reads exactly these; the first two are optional there). False adds the outcome, the other CRM times, the
-        deal value and ignored fields: everything ``convert`` reads. Join columns are included for joined files.
+        ``created_at`` expressions, every field row that is not ``ignore`` and every ``[[features]]`` source
+        (``emva.ingest.convert.convert_leads`` reads exactly these; the first two are optional there). False adds the
+        outcome, the other CRM times, the deal value and ignored fields: everything ``convert`` reads. Join columns
+        are included for joined files.
         """
         if submit_time_only:
             exprs = [e for e in (self.lead.lead_id, self.lead.created_at) if e is not None]
-            refs = [c for e in exprs for c in e.columns()] + [f.source for f in self.fields if f.target != IGNORE]
+            refs = ([c for e in exprs for c in e.columns()] + [f.source for f in self.fields if f.target != IGNORE]
+                    + [c for f in self.features for c in f.source.columns()])
         else:
             refs = self.column_refs()
         by_name = {s.name: s for s in self.sources}
@@ -357,7 +405,7 @@ class DatasetMapping:
 # --- TOML -> DatasetMapping ------------------------------------------------------------------------------------------
 
 _TOP_KEYS = {"name", "as_of", "test_from", "source_url", "licence", "outcome_confirmed", "drop_rows_without_created_at",
-             "sources", "lead", "outcome", "review", "fields"}
+             "sources", "lead", "outcome", "review", "fields", "features", "features_confirmed"}
 _REQUIRED_TOP = ("name", "as_of", "test_from", "sources", "lead", "outcome")
 
 
@@ -407,7 +455,8 @@ def load_mapping(text: str, require_confirmed: bool = False) -> DatasetMapping:
     """Parse and validate mapping TOML ``text`` (schema in the module docstring).
 
     Raises ``ValueError`` for invalid TOML, unknown keys, a missing ``created_at``, unknown target
-    columns, and (``require_confirmed=True``, as ``python -m emva.ingest convert`` loads) ``outcome_confirmed = false``.
+    columns, and (``require_confirmed=True``, as ``python -m emva.ingest convert`` loads) ``outcome_confirmed = false``
+    or ``[[features]]`` with ``features_confirmed = false``.
     Drafts load with the default so they can be reviewed and saved.
     """
     try:
@@ -447,6 +496,15 @@ def load_mapping(text: str, require_confirmed: bool = False) -> DatasetMapping:
         if vm is not None:
             vm = {k: _str_map(v, f"{where}.value_map.{k}") for k, v in _str_map_of_tables(vm, where).items()}
         fields_.append(FieldMap(f["source"], f.get("target"), vm, Review(f.get("reason", ""), f.get("confidence"))))
+    features = []
+    for i, f in enumerate(doc.get("features", [])):
+        where = f"[[features]] {i + 1}"
+        _check_keys(f, {"source", "kind", "name", "reason", "confidence"}, where)
+        missing_ = [k for k in ("source", "kind", "name") if k not in f]
+        if missing_:
+            raise ValueError(f"{where} needs {missing_}")
+        features.append(FeatureMap(_expr(f["source"], f"{where}.source"), f["kind"], f["name"],
+                                   Review(f.get("reason", ""), f.get("confidence"))))
     review = doc.get("review", {})
     m = DatasetMapping(
         name=doc["name"], sources=tuple(sources),
@@ -456,7 +514,8 @@ def load_mapping(text: str, require_confirmed: bool = False) -> DatasetMapping:
         outcome_confirmed=_bool(doc.get("outcome_confirmed", False), "outcome_confirmed"),
         drop_rows_without_created_at=_bool(doc.get("drop_rows_without_created_at", False),
                                            "drop_rows_without_created_at"),
-        review={k: _review(v, f"[review].{k}") for k, v in review.items()})
+        review={k: _review(v, f"[review].{k}") for k, v in review.items()}, features=tuple(features),
+        features_confirmed=_bool(doc.get("features_confirmed", False), "features_confirmed"))
     if require_confirmed:
         check_confirmed(m)
     return m
@@ -477,10 +536,15 @@ def _bool(v: object, name: str) -> bool:
 
 
 def check_confirmed(m: DatasetMapping) -> None:
-    """Raise ``ValueError`` unless a person confirmed the outcome mapping (``outcome_confirmed = true``)."""
+    """Raise ``ValueError`` unless a person confirmed the outcome mapping (``outcome_confirmed = true``) and, when the
+    mapping declares ``[[features]]``, that every one is known at submit time (``features_confirmed = true``)."""
     if not m.outcome_confirmed:
         raise ValueError(f"mapping {m.name!r} is a draft: outcome_confirmed is false. Review the [outcome] and "
                          "[lead] sections, then set outcome_confirmed = true before converting.")
+    if m.features and not m.features_confirmed:
+        raise ValueError(f"mapping {m.name!r} declares [[features]] but features_confirmed is false. Check that every "
+                         "feature column is known when the lead is submitted (never after: label leakage), then set "
+                         "features_confirmed = true before converting.")
 
 
 # --- DatasetMapping -> TOML ------------------------------------------------------------------------------------------
@@ -528,6 +592,8 @@ def dump_mapping(m: DatasetMapping, header: str = "") -> str:
             f"source_url = {_s(m.source_url)}", f"licence = {_s(m.licence)}",
             f"outcome_confirmed = {str(m.outcome_confirmed).lower()}",
             f"drop_rows_without_created_at = {str(m.drop_rows_without_created_at).lower()}"]
+    if m.features or m.features_confirmed:
+        out.append(f"features_confirmed = {str(m.features_confirmed).lower()}")
     for s in m.sources:
         out += ["", "[[sources]]", f"name = {_s(s.name)}", f"file = {_s(s.file)}"]
         if s.join_on is not None:
@@ -554,10 +620,15 @@ def dump_mapping(m: DatasetMapping, header: str = "") -> str:
             out.append(f"confidence = {_s(f.review.confidence)}")
         if f.value_map is not None:
             out += ["[fields.value_map]"] + [f"{_k(k)} = {_inline(v)}" for k, v in f.value_map.items()]
+    for f in m.features:
+        out += ["", "[[features]]", f"source = {_expr_toml(f.source)}", f"kind = {_s(f.kind)}", f"name = {_s(f.name)}"]
+        if f.review.reason:
+            out.append(f"reason = {_s(f.review.reason)}")
+        if f.review.confidence:
+            out.append(f"confidence = {_s(f.review.confidence)}")
     return "\n".join(out) + "\n"
 
 
-__all__ = ["ANSWER_PREFIX", "CONFIDENCES", "DatasetMapping", "Expr", "FieldMap", "IGNORE", "LEAD_COLUMNS",
+__all__ = ["ANSWER_PREFIX", "CONFIDENCES", "DatasetMapping", "Expr", "FeatureMap", "FieldMap", "IGNORE", "LEAD_COLUMNS",
            "LEAD_ROLES", "LeadColumns", "MAX_SOURCES", "OPS", "OUTCOME_KINDS", "Outcome", "Review", "STAGES", "Source",
-           "TARGETS",
-           "check_confirmed", "dump_mapping", "load_mapping"]
+           "TARGETS", "check_confirmed", "dump_mapping", "load_mapping"]

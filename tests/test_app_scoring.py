@@ -9,6 +9,7 @@ import pandas as pd
 import pytest
 
 from app import results, scoring
+from emva.features import FeatureSet
 from emva.io import read_leads
 from emva.persist import load_bundle
 from emva.scoring import UnknownLevelError, lead_from_form, points_breakdown, score_leads
@@ -177,10 +178,103 @@ def test_joined_file_gets_the_primary_join_value() -> None:
 
     m = load_mapping((REPO / "mappings" / "crm_opportunities.toml").read_text(encoding="utf-8"))
     fields = scoring.source_fields(m)
-    assert [(f.file, f.column) for f in fields] == [("sales_pipeline.csv", "opportunity_id"),
-                                                    ("sales_pipeline.csv", "engage_date"),
-                                                    ("sales_pipeline.csv", "account"),
-                                                    ("accounts.csv", "office_location")]
-    values = {f.key: v for f, v in zip(fields, ["", "2017-03-01", "Acme", "United States"])}
+    # the Phase 10 [[features]] columns are submit-time inputs too (extras of the generic feature set)
+    assert [(f.file, f.column) for f in fields] == [
+        ("sales_pipeline.csv", "opportunity_id"), ("sales_pipeline.csv", "engage_date"),
+        ("sales_pipeline.csv", "account"), ("sales_pipeline.csv", "product"), ("sales_pipeline.csv", "sales_agent"),
+        ("accounts.csv", "office_location"), ("accounts.csv", "sector"), ("accounts.csv", "revenue"),
+        ("accounts.csv", "employees"), ("accounts.csv", "year_established"), ("sales_teams.csv", "regional_office"),
+        ("sales_teams.csv", "manager")]
+    values = {f.key: v for f, v in zip(fields, ["", "2017-03-01", "Acme", "GTX Pro", "Agent One", "United States",
+                                                "retail", "100", "50", "1999", "East", "Manager North"])}
     frames = scoring.frames_from_source_form(m, values)
     assert frames["accounts.csv"].account.iloc[0] == "Acme" == frames["sales_pipeline.csv"].account.iloc[0]
+
+
+# --- the generic feature set (Phase 10 (b)): extras in the source format --------------------------------------------
+
+@pytest.fixture(scope="module")
+def generic(app_generic):
+    """``(bundle, dataset dir, mapping, scores.csv)`` of the run trained with the generic feature set."""
+    root, run = app_generic
+    return load_bundle(Path(run.out_dir) / "model.joblib"), Path(run.dataset_path), \
+        scoring.run_mapping(root, run.dataset), results.load_scores(run.out_dir)
+
+
+def test_source_fields_offer_a_generic_bundles_levels(generic, converted) -> None:
+    bundle, _, mapping, _ = generic
+    assert scoring.extra_names(bundle) == ["landing_page"] and scoring.extra_names(converted[0]) == []
+    page = next(f for f in scoring.source_fields(mapping, bundle) if f.column == "landing_page_id")
+    kept = [lvl for lvl in bundle.extras.extras[0].levels if lvl not in ("other", "missing")]
+    assert page.options == (*kept, "other") and not page.numeric
+    assert "utm_content" in page.feeds and "extra feature landing_page (categorical)" in page.feeds
+    plain = next(f for f in scoring.source_fields(mapping, converted[0]) if f.column == "landing_page_id")
+    assert plain.options is None  # a v2 bundle does not use the extra: free text, as before
+    origin = next(f for f in scoring.source_fields(mapping, bundle) if f.column == "origin")
+    assert origin.options is not None and "paid_search" in origin.options  # a value map keeps its keys
+
+
+def test_numeric_extra_is_a_number_input(generic) -> None:
+    from dataclasses import replace
+
+    from emva.generic import ExtraFeature, ExtraKind, GenericEncoder, fit_encoder
+
+    bundle, _, mapping, _ = generic
+    numeric = fit_encoder((ExtraFeature("landing_page", ExtraKind.NUMERIC),),
+                          pd.DataFrame({"x_landing_page": ["1", "2", "3", "4", "5", "6"]}))
+    assert isinstance(numeric, GenericEncoder)
+    page = next(f for f in scoring.source_fields(mapping, replace(bundle, extras=numeric))
+                if f.column == "landing_page_id")
+    assert page.numeric and page.options is None
+    assert scoring.number_text(29.0) == "29" and scoring.number_text(2.5) == "2.5" and scoring.number_text(None) is None
+
+
+def test_source_upload_carries_the_extras_and_matches_the_batch_run(generic) -> None:
+    bundle, data, mapping, scores = generic
+    raw = pd.read_csv(io.BytesIO(_mql_csv()), dtype=str)
+    copy0 = raw.assign(mql_id=raw.mql_id + "-0")  # the dataset's leads are the fixture's rows with -<k> ids
+    frames = scoring.frames_from_source_uploads(mapping, {"x.csv": copy0.to_csv(index=False).encode()})
+    res = scoring.score_source(bundle, mapping, frames, data)
+    assert "x_landing_page" in res.leads  # convert_leads adds the extra; the upload needed nothing else
+    batch = scores.p_formula.reindex(res.table().lead_id)
+    got = res.table().set_index("lead_id").p
+    ok = batch.notna()  # bots and duplicates were dropped from the batch run
+    assert ok.sum() > 30 and all(_ulp_close(a, b) for a, b in zip(got[ok.values], batch[ok]))
+    blank = copy0.assign(landing_page_id="")
+    res_blank = scoring.score_source(bundle, mapping, scoring.frames_from_source_uploads(
+        mapping, {"x.csv": blank.to_csv(index=False).encode()}), data)
+    assert (res_blank.table().p != res.table().p).any()  # the extra moves the score
+
+
+def test_emva_form_on_a_generic_run_scores_extras_as_missing(generic) -> None:
+    bundle, data, _, _ = generic
+    # the form's default session is typed text although the converted training data had none (schema float64): the
+    # Phase 10 fix round's Phase 9 fix keeps it text
+    got = scoring.score_form(bundle, scoring.defaults_for(data), data)
+    x = got.points[got.points.feature.str.startswith("x_")]
+    ref = bundle.extras.extras[0].reference
+    assert 0 < got.p < 1 and (x.level == "missing").all() and (ref == "missing" or len(x) == 1)
+
+
+def test_extras_never_missing_in_training_are_warned_about(generic) -> None:
+    """A blank extra that no training lead had missing has a zero weight on ``missing``: it scores as the reference
+    level, and the page warns per extra (EMVA form: always; source format: when the extra is blank on a lead)."""
+    from dataclasses import replace
+
+    from emva.generic import ExtraFeature, ExtraKind, fit_encoder
+
+    bundle, data, mapping, _ = generic
+    e = bundle.extras.extras[0]
+    assert scoring.missing_unseen(bundle) == ({} if e.train_counts["missing"] else {"landing_page": e.reference})
+    feature = (ExtraFeature("landing_page", ExtraKind.CATEGORICAL),)
+    seen = fit_encoder(feature, pd.DataFrame({"x_landing_page": ["a"] * 200 + [None] * 10}))
+    never = fit_encoder(feature, pd.DataFrame({"x_landing_page": ["a"] * 200 + ["b"] * 190}))
+    assert scoring.missing_unseen(replace(bundle, extras=seen)) == {}
+    assert scoring.missing_unseen(replace(bundle, extras=never)) == {"landing_page": "a"}
+    no_extras = replace(bundle, feature_set=FeatureSet.V2, extras=None)
+    assert scoring.missing_unseen(no_extras) == {}
+    leads = pd.DataFrame({"lead_id": ["n1", "n2"], "x_landing_page": ["b", None]})
+    result = scoring.SourceScores(leads, pd.DataFrame(index=leads.lead_id))
+    assert scoring.blank_unseen(replace(bundle, extras=never), result) == {"landing_page": "a"}
+    assert scoring.blank_unseen(replace(bundle, extras=never), scoring.SourceScores(leads.head(1), result.scores)) == {}
+    assert scoring.blank_unseen(no_extras, result) == {}

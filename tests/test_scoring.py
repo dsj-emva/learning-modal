@@ -28,7 +28,9 @@ from emva.scoring import (
 
 from conftest import DATA_V1, DATA_V2
 
-CASES = [(d, fs) for d in (DATA_V1, DATA_V2) for fs in FeatureSet]
+# generic needs a converted dataset's extras (data/v1, data/v2 have none): tests/test_generic_features.py
+FIXED_SETS = [fs for fs in FeatureSet if fs is not FeatureSet.GENERIC]
+CASES = [(d, fs) for d in (DATA_V1, DATA_V2) for fs in FIXED_SETS]
 SCORE_COLUMNS = ["p_formula", "deal_value_hat", "value_at_submit"]
 # Scores of the same lead from batches of different sizes differ in the last bits: sklearn's predict_proba and
 # Ridge.predict are BLAS matrix products (Accelerate here) whose kernel, and so summation order, depends on the
@@ -173,7 +175,7 @@ def test_bots_and_duplicates_are_flagged_within_the_batch_not_dropped(trained):
     assert got.p_formula.notna().all()
 
 
-@pytest.mark.parametrize("fs", list(FeatureSet))
+@pytest.mark.parametrize("fs", FIXED_SETS)
 def test_unknown_level_raises_listing_the_allowed_levels(trained, fs):
     result, bundle = trained[DATA_V1, fs]
     raw = _raw(DATA_V1, result.X.index[:2].tolist())

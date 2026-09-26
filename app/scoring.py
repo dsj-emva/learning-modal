@@ -12,6 +12,15 @@ Source format (Phase 9): when the run's dataset was converted with a mapping (``
 ``frames_from_source_uploads`` build raw frames from a form or uploaded CSVs, and ``score_source`` converts them
 with ``emva.ingest.convert_leads`` (the same field rules as the dataset's conversion) and scores them with the same
 ``score_leads`` / ``points_breakdown`` as the form.
+
+Extras (Phase 10, generic feature set): the mapping's ``[[features]]`` columns are submit-time source columns, so the
+source form lists them and a CSV upload carries them; ``convert_leads`` turns them into ``x_<name>`` columns, which a
+generic bundle encodes (a v2 bundle ignores them). For a generic bundle the form offers a categorical extra's training
+levels (``ModelBundle.extras``: kept levels, then ``other`` for any other value) and a number input for a numeric
+one (``number_text`` writes it as the text a CSV cell would hold). The EMVA form has no inputs for extras: a form
+lead has every extra ``missing`` (``extra_names`` lets the page say so). An extra that no training lead had missing
+has a zero weight on ``missing``, so a blank scores as its reference level (``missing_unseen``; ``blank_unseen`` for
+source-format leads with a blank extra): the page warns per extra.
 """
 from __future__ import annotations
 
@@ -23,9 +32,11 @@ import pandas as pd
 
 from app.results import feature_label
 from app.storage import get_dataset, read_mapping
+from emva.constants import MISSING
 from emva.features import SESSION_INPUTS
+from emva.generic import EXTRA_PREFIX, OTHER, ExtraKind
 from emva.ingest.convert import convert_leads, frames_from_bytes
-from emva.ingest.mapping import IGNORE, DatasetMapping, load_mapping
+from emva.ingest.mapping import COLUMN_OP, IGNORE, DatasetMapping, load_mapping
 from emva.persist import ModelBundle
 from emva.scoring import FieldSpec, is_blank, lead_from_form, points_breakdown, score_leads, submit_time_fields
 
@@ -187,13 +198,16 @@ def run_mapping(root: str | Path, dataset: str) -> DatasetMapping | None:
 
 @dataclass(frozen=True)
 class SourceField:
-    """One raw column a new lead in the source format carries: its ``file`` and ``column``, the value-map keys as
-    ``options`` (None = free text) and ``feeds``, what the mapping makes of it (for the form's help text)."""
+    """One raw column a new lead in the source format carries: its ``file`` and ``column``, the allowed ``options``
+    (None = free input; a value map's keys, or a generic bundle's training levels of a categorical extra ending with
+    ``other``), ``feeds``, what the mapping makes of it (for the form's help text), and ``numeric`` (a numeric extra:
+    a number input)."""
 
     file: str
     column: str
     options: tuple[str, ...] | None
     feeds: str
+    numeric: bool = False
 
     @property
     def key(self) -> str:
@@ -201,14 +215,44 @@ class SourceField:
         return f"{self.file}:{self.column}"
 
 
-def _feeds(mapping: DatasetMapping) -> dict[tuple[str, str], tuple[str, tuple[str, ...] | None]]:
-    """(file, column) -> (what it feeds, value-map keys or None) for every submit-time column of ``mapping``."""
-    by_name = {s.name: s for s in mapping.sources}
-    out: dict[tuple[str, str], tuple[str, tuple[str, ...] | None]] = {}
+def extra_names(bundle: ModelBundle) -> list[str]:
+    """The declared names of ``bundle``'s extras (empty for a bundle without the generic feature set)."""
+    return [] if bundle.extras is None else [e.feature.name for e in bundle.extras.extras]
 
-    def add(ref: str, feeds: str, options: tuple[str, ...] | None = None) -> None:
+
+def missing_unseen(bundle: ModelBundle) -> dict[str, str]:
+    """Name -> reference level of each extra of ``bundle`` that no training lead had missing (``train_counts``): its
+    ``missing`` column never took a value in training, so its weight is 0 and a blank scores as the reference level.
+    Empty for a bundle without extras."""
+    if bundle.extras is None:
+        return {}
+    return {e.feature.name: e.reference for e in bundle.extras.extras if e.train_counts.get(MISSING, 0) == 0}
+
+
+def blank_unseen(bundle: ModelBundle, result: SourceScores) -> dict[str, str]:
+    """``missing_unseen`` restricted to the extras that are blank (level ``missing``) on at least one lead of
+    ``result`` (source-format leads)."""
+    unseen = missing_unseen(bundle)
+    if not unseen:
+        return {}
+    levels = bundle.extras.levels(result.leads)
+    return {n: ref for n, ref in unseen.items() if levels[f"{EXTRA_PREFIX}{n}"].eq(MISSING).any()}
+
+
+def _feeds(mapping: DatasetMapping) -> dict[tuple[str, str], tuple[str, tuple[str, ...] | None]]:
+    """(file, column) -> (what it feeds, value-map keys or None) for every submit-time column of ``mapping``; a column
+    feeding several things (a field and an extra feature) lists each, separated by ``; ``."""
+    by_name = {s.name: s for s in mapping.sources}
+    feeds: dict[tuple[str, str], list[str]] = {}
+    options: dict[tuple[str, str], tuple[str, ...] | None] = {}
+
+    def add(ref: str, what: str, opts: tuple[str, ...] | None = None) -> None:
         name, column = ref.split(".", 1)
-        out.setdefault((by_name[name].file, column), (feeds, options))
+        key = (by_name[name].file, column)
+        feeds.setdefault(key, []).append(what)
+        options.setdefault(key, opts)
+        if opts is not None:
+            options[key] = opts
 
     for role in ("lead_id", "created_at"):
         e = getattr(mapping.lead, role)
@@ -217,18 +261,41 @@ def _feeds(mapping: DatasetMapping) -> dict[tuple[str, str], tuple[str, tuple[st
     for f in mapping.fields:
         if f.target == IGNORE:
             continue
-        options = tuple(f.value_map) if f.value_map is not None else None
-        add(f.source, ", ".join(f.targets()) or "nothing (every listed value sets nothing)", options)
+        opts = tuple(f.value_map) if f.value_map is not None else None
+        add(f.source, ", ".join(f.targets()) or "nothing (every listed value sets nothing)", opts)
+    for fm in mapping.features:
+        for c in fm.source.columns():
+            add(c, f"extra feature {fm.name} ({fm.kind})")
+    return {k: ("; ".join(v), options[k]) for k, v in feeds.items()}
+
+
+def _extra_inputs(mapping: DatasetMapping, bundle: ModelBundle | None) -> dict[tuple[str, str], tuple[str, ...] | None]:
+    """(file, column) -> the input of a plain-column extra ``bundle`` uses: its training levels then ``OTHER`` for a
+    categorical extra, None (a number input) for a numeric one. Extras the bundle does not use get no entry."""
+    fitted = {} if bundle is None or bundle.extras is None else {e.feature.name: e for e in bundle.extras.extras}
+    by_name = {s.name: s for s in mapping.sources}
+    out: dict[tuple[str, str], tuple[str, ...] | None] = {}
+    for fm in mapping.features:
+        e = fitted.get(fm.name)
+        if e is None or fm.source.op != COLUMN_OP:
+            continue
+        name, column = fm.source.column.split(".", 1)
+        numeric = e.feature.kind is ExtraKind.NUMERIC
+        out[(by_name[name].file, column)] = None if numeric else \
+            (*(lvl for lvl in e.levels if lvl not in (OTHER, MISSING)), OTHER)
     return out
 
 
-def source_fields(mapping: DatasetMapping) -> list[SourceField]:
+def source_fields(mapping: DatasetMapping, bundle: ModelBundle | None = None) -> list[SourceField]:
     """The raw columns a new lead needs, per file in ``DatasetMapping.source_columns(submit_time_only=True)`` order.
 
     A joined file's join column is not listed (the form copies the primary file's value into it); a column with a
-    value map offers its keys, since any other value is refused by the conversion.
+    value map offers its keys, since any other value is refused by the conversion. With a generic ``bundle``, a
+    plain-column extra it uses is a number input (numeric) or offers its training levels (categorical, unless a value
+    map already fixes the options).
     """
     feeds = _feeds(mapping)
+    extras = _extra_inputs(mapping, bundle)
     joins = {s.file: s.join_on for s in mapping.sources[1:]}
     primary = mapping.sources[0].file
     out = []
@@ -237,8 +304,19 @@ def source_fields(mapping: DatasetMapping) -> list[SourceField]:
             if joins.get(file) == c:
                 continue
             what, options = feeds.get((file, c), ("join key of a joined file" if file == primary else "", None))
-            out.append(SourceField(file, c, options, what))
+            numeric = (file, c) in extras and extras[(file, c)] is None and options is None
+            if options is None and extras.get((file, c)) is not None:
+                options = extras[(file, c)]
+            out.append(SourceField(file, c, options, what, numeric))
     return out
+
+
+def number_text(value: float | int | None) -> str | None:
+    """A number input's value as the text a CSV cell would hold (``29`` for 29.0; None stays blank)."""
+    if value is None:
+        return None
+    v = float(value)
+    return str(int(v)) if v.is_integer() else repr(v)
 
 
 def frames_from_source_form(mapping: DatasetMapping, values: dict[str, object]) -> dict[str, pd.DataFrame]:
@@ -343,6 +421,6 @@ def describe_transform(bundle: ModelBundle) -> str:
 
 
 __all__ = ["DEFAULTS", "FormField", "LeadScore", "SECTIONS", "SourceField", "SourceScores", "blank_session_fields",
-           "clean_values", "defaults_for", "describe_transform", "form_sections", "frames_from_source_form",
-           "frames_from_source_uploads", "run_mapping", "score_form", "score_source", "source_fields",
-           "source_lead_score", "values_from_lead"]
+           "clean_values", "defaults_for", "describe_transform", "extra_names", "form_sections",
+           "frames_from_source_form", "frames_from_source_uploads", "number_text", "run_mapping", "score_form",
+           "score_source", "source_fields", "source_lead_score", "values_from_lead"]

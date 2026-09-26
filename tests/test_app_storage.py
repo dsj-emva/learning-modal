@@ -8,6 +8,7 @@ import pytest
 
 from app import storage
 from app.storage import StorageError
+from emva.generic import EXTRA_FEATURES_FILE
 
 SAMPLE = Path(__file__).resolve().parents[1] / "data" / "v1"
 
@@ -36,7 +37,8 @@ def test_save_and_list_datasets(tmp_path: Path) -> None:
 def test_sample_dataset_is_read_only_and_counts_rows() -> None:
     s = storage.sample_dataset()
     assert s.read_only and s.n_leads == 10000 and s.has_rules
-    assert set(s.rows) == set(storage.TRAINING_FILES)
+    assert set(s.rows) == set(storage.TRAINING_FILES) - {storage.EXTRA_FEATURES_FILE}  # no extras in the sample
+    assert not s.has_extras
 
 
 def test_save_dataset_refuses_bad_input(tmp_path: Path) -> None:
@@ -153,6 +155,18 @@ def test_save_dataset_keeps_metadata_files(tmp_path: Path) -> None:
     plain = storage.save_dataset(tmp_path, "plain", _files(*storage.REQUIRED_FILES))
     assert not plain.has_mapping and not plain.converted
     assert not storage.sample_dataset().converted and not storage.sample_dataset().has_mapping
+
+
+def test_extra_features_is_a_training_file_kept_with_the_dataset(tmp_path: Path) -> None:
+    """Phase 10 (b): the generic feature set's extras are training data, counted with the other training files."""
+    assert storage.EXTRA_FEATURES_FILE == EXTRA_FEATURES_FILE and storage.EXTRA_FEATURES_FILE in storage.TRAINING_FILES
+    assert storage.EXTRA_FEATURES_FILE not in storage.METADATA_FILES
+    files = {**_files(*storage.REQUIRED_FILES, storage.EXTRA_FEATURES_FILE), storage.MAPPING_FILE: MAPPING,
+             storage.DATASET_META_FILE: DATES}
+    ds = storage.save_dataset(tmp_path, "with-extras", files)
+    assert ds.has_extras and ds.rows[storage.EXTRA_FEATURES_FILE] == 2
+    assert storage.get_dataset(tmp_path, "with-extras").has_extras
+    assert not storage.save_dataset(tmp_path, "plain", _files(*storage.REQUIRED_FILES)).has_extras
 
 
 def test_metadata_names_accepted_only_when_allowed() -> None:

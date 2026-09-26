@@ -2,10 +2,14 @@
 
 The model sees only ``emva.ingest.profile`` profiles (names, types, share missing, distinct counts, min / max of dates
 and numbers, redacted examples of low-cardinality columns), never rows. It assigns each column a target from a
-closed enum (a schema column, a lead role such as ``lead.created_at``, ``value_map`` or ``ignore``) with a reason and a
-high / medium / low confidence, and proposes the outcome column and its stage map or won / lost values. It never
-converts rows or fills values, and it drafts no derived expressions (a person adds those while reviewing). The result
-always has ``outcome_confirmed = False``; ``emva.ingest.convert`` refuses it until a person sets it to true.
+closed enum (a schema column, a lead role such as ``lead.created_at``, ``value_map``, ``feature`` or ``ignore``) with a
+reason and a high / medium / low confidence, and proposes the outcome column and its stage map or won / lost values.
+``feature`` (Phase 10, ADR 0024) proposes the column as an extra of the generic feature set, with ``feature_kind``
+numeric or categorical (``none`` for every other target); its name is the column name as a slug (``feature_name``;
+prefixed with the source name when two drafted columns share it, and given a numeric suffix ``_2``, ``_3``, ... when
+the name is still taken: ``_feature_names``). It never converts rows or fills values, and it drafts no
+derived expressions (a person adds those while reviewing). The result always has ``outcome_confirmed = False`` and
+``features_confirmed = False``; ``emva.ingest.convert`` refuses it until a person sets them to true.
 
 ``as_of`` and ``test_from`` are not asked of the model: pass them, or they are computed from the profile of the
 column drafted as ``lead.created_at`` (``as_of`` = the day after the latest date among the drafted date columns,
@@ -34,6 +38,7 @@ import pandas as pd
 from emva.context.agent import MAX_ATTEMPTS, MODEL_ID, is_transport_error
 from emva.context.cache import ReplyCache, cache_key
 from emva.context.contract import STATUS_OK, STATUS_PARSE_ERROR, ContractError
+from emva.generic import ExtraKind
 from emva.ingest.mapping import (
     CONFIDENCES,
     IGNORE,
@@ -43,6 +48,7 @@ from emva.ingest.mapping import (
     TARGETS,
     DatasetMapping,
     Expr,
+    FeatureMap,
     FieldMap,
     LeadColumns,
     Outcome,
@@ -53,35 +59,51 @@ from emva.ingest.profile import ColumnProfile
 
 log = logging.getLogger(__name__)
 
-PROMPT_VERSION = "mapping-draft-v1"
+PROMPT_VERSION = "mapping-draft-v4"
 MAX_TOKENS = 8000
 # The cache key's second slot (the context agent's brief hash): drafts have no brief.
 DRAFT_BRIEF_HASH = "no-brief"
 ROLE_PREFIX = "lead."
 VALUE_MAP = "value_map"
-DRAFT_TARGETS: tuple[str, ...] = (*(ROLE_PREFIX + r for r in LEAD_ROLES), *TARGETS, VALUE_MAP, IGNORE)
+FEATURE = "feature"
+DRAFT_TARGETS: tuple[str, ...] = (*(ROLE_PREFIX + r for r in LEAD_ROLES), *TARGETS, VALUE_MAP, FEATURE, IGNORE)
+# ``feature_kind`` of a column drafted as anything but ``feature``.
+NO_KIND = "none"
+FEATURE_KINDS: tuple[str, ...] = (*(k.value for k in ExtraKind), NO_KIND)
 # Placeholder dates used only to validate a reply's content before the real dates are known.
 _CHECK_DATES = ("2000-01-02", "2000-01-01")
 TEST_SHARE_OF_SPAN: float = 0.8
 
 SYSTEM_PROMPT = """You map the columns of a data source (one to three CSV files, described by column profiles; you \
 never see rows) onto the lead schema of a B2B lead-scoring pipeline. Each lead is one row of the primary file; other \
-files are joined to it on a shared column.
+files are joined to it on a shared column. The primary file is the one with a row for every lead that came in, \
+including leads that were never won; a file that only holds won or closed deals is never primary: join it to the \
+leads file. Columns of such a file are only known after the outcome (only won leads have them), so they are never \
+features: its date of winning or closing and its deal amount are lead roles or the outcome, everything else is ignore.
 
 For every profiled column choose exactly one target:
 - lead.lead_id (unique id of the lead), lead.created_at (when the lead came in: required), lead.contacted_at (when \
 it was first worked), lead.won_at (when it was won; optional), lead.close_at (when it was closed: lost, or won when \
-there is no won_at column), lead.deal_value (amount of a won deal);
+there is no won_at column), lead.deal_value (amount of a won deal). lead.created_at is required and is a single \
+date column: when no column records the lead's arrival itself, use the earliest date known when the lead came in, \
+such as the date it was first engaged or contacted (a column has one target: give it lead.created_at, and a \
+person may add it as lead.contacted_at too), with confidence low and the reason saying so. Never \
+use a date only known after the outcome (a close, cancellation or status date) as lead.created_at;
 - a schema column (form and tracking fields; answers.<key> are form answers) when the column means the same thing;
 - value_map when the column's values translate into one or more schema columns (list every source value you see, \
 each with the target and value it sets; categorical schema columns only accept their listed options);
-- ignore for anything else, including every column that is only known after the outcome (it would leak the label).
-Give a reason (at most 25 words) and a confidence: high, medium or low.
+- feature when no schema column fits but the column describes the lead AT THE MOMENT IT CAME IN and could predict \
+the outcome (e.g. product, industry, company size, lead source, booking attributes); set feature_kind to numeric \
+(a number whose size matters) or categorical (a label, code or id-like category); a person confirms it later;
+- ignore for anything else, including every column that is only known after the outcome (it would leak the label) \
+and free text, ids unique per row, emails, phone numbers and names of the lead.
+For every target other than feature, set feature_kind to none. Give a reason (at most 25 words) and a confidence: \
+high, medium or low.
 
 Then name the outcome: kind stage (a column of CRM stages: map every value to New, Contacted, Qualified, Demo booked, \
 Proposal, Won or Lost), won_flag (a column whose values mean won or lost: list both), or presence (won when the \
-column is filled, lost when blank). List the files with the primary first (join_on empty) and the join column for \
-the others. Use only the files and columns in the profiles."""
+column is filled, lost when blank). Name the primary file in primary_file and list every other file in joins with \
+the column it shares with the primary file. Use only the files and columns in the profiles."""
 
 
 def _object(properties: dict[str, Any]) -> dict[str, Any]:
@@ -92,10 +114,12 @@ def _object(properties: dict[str, Any]) -> dict[str, Any]:
 _CONFIDENCE = {"type": "string", "enum": list(CONFIDENCES)}
 _STRINGS = {"type": "array", "items": {"type": "string"}}
 RESPONSE_SCHEMA: dict[str, Any] = _object({
-    "sources": {"type": "array", "items": _object({"file": {"type": "string"}, "join_on": {"type": "string"}})},
+    "primary_file": {"type": "string"},
+    "joins": {"type": "array", "items": _object({"file": {"type": "string"}, "join_on": {"type": "string"}})},
     "columns": {"type": "array", "items": _object({
         "file": {"type": "string"}, "column": {"type": "string"},
         "target": {"type": "string", "enum": list(DRAFT_TARGETS)},
+        "feature_kind": {"type": "string", "enum": list(FEATURE_KINDS)},
         "value_map": {"type": "array", "items": _object({
             "source_value": {"type": "string"}, "target": {"type": "string", "enum": list(TARGETS)},
             "target_value": {"type": "string"}})},
@@ -135,6 +159,33 @@ def source_name(file: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", PurePath(file).stem.lower()).strip("_") or "source"
 
 
+def feature_name(column: str) -> str:
+    """A feature name from a column name: lower-cased, runs of other characters turned into ``_`` (``x`` prefixed
+    when the result would not start with a letter or digit)."""
+    slug = re.sub(r"[^a-z0-9]+", "_", column.lower()).strip("_")
+    return slug if slug and slug[0].isalnum() else f"x{slug}"
+
+
+def _feature_names(drafted: list[tuple[str, str]], names: dict[str, str]) -> dict[tuple[str, str], str]:
+    """The name of every ``(file, column)`` drafted as a feature, in reply order (module docstring): the column's slug;
+    the source name, ``_`` and the slug when that slug is drafted more than once; then, while a name is still taken
+    (two columns of one file with the same slug, or a prefixed name equal to another column's plain slug), the later
+    column gets the first free numeric suffix ``_2``, ``_3``, ... ``ContractError`` when a column is drafted twice as
+    a feature (``names`` maps file to source name)."""
+    if len(set(drafted)) != len(drafted):
+        raise ContractError(f"a column is drafted as a feature more than once: {sorted(drafted)}")
+    slugs = [feature_name(column) for _, column in drafted]
+    wanted = [slug if slugs.count(slug) == 1 else feature_name(f"{names[file]}_{column}")
+              for (file, column), slug in zip(drafted, slugs)]
+    out: dict[tuple[str, str], str] = {}
+    for key, name in zip(drafted, wanted):
+        final, k = name, 2
+        while final in out.values() or (final != name and final in wanted):
+            final, k = f"{name}_{k}", k + 1
+        out[key] = final
+    return out
+
+
 def _ref(file: str, column: str, names: dict[str, str], columns: dict[str, set[str]]) -> str:
     """``<source>.<column>`` for a column the profiles list; ``ContractError`` otherwise."""
     if file not in names:
@@ -153,23 +204,31 @@ def _build(reply: dict[str, Any], profiles: list[ColumnProfile], name: str, as_o
     names = {f: source_name(f) for f in columns}
     if len(set(names.values())) != len(names):
         raise ContractError(f"file names give clashing source names: {names}")
-    primary = [s for s in reply["sources"] if not s["join_on"]]
-    if len(primary) != 1:
-        raise ContractError(f"expected exactly one primary source (empty join_on), got {len(primary)}")
-    ordered = primary + [s for s in reply["sources"] if s["join_on"]]
-    sources = []
-    for s in ordered:
-        if s["join_on"]:
-            _ref(s["file"], s["join_on"], names, columns)
-        sources.append(Source(names[_known(s["file"], names)], s["file"], s["join_on"] or None))
+    primary = _known(reply["primary_file"], names)
+    joined = [j["file"] for j in reply["joins"]]
+    if primary in joined or len(set(joined)) != len(joined):
+        raise ContractError(f"each file is primary or joined once: primary {primary!r}, joins {joined}")
+    sources = [Source(names[primary], primary, None)]
+    for j in reply["joins"]:
+        _ref(j["file"], j["join_on"], names, columns)
+        sources.append(Source(names[j["file"]], j["file"], j["join_on"]))
     roles: dict[str, Expr] = {}
     review: dict[str, Review] = {}
     fields = []
+    features = []
+    feature_names = _feature_names([(c["file"], c["column"]) for c in reply["columns"] if c["target"] == FEATURE],
+                                   names)
     for c in reply["columns"]:
         ref = _ref(c["file"], c["column"], names, columns)
         note = Review(c["reason"], c["confidence"])
         target = c["target"]
-        if target.startswith(ROLE_PREFIX):
+        if (target == FEATURE) != (c["feature_kind"] != NO_KIND):
+            raise ContractError(f"{ref}: feature_kind {c['feature_kind']!r} with target {target!r} (a feature needs "
+                                f"numeric or categorical, any other target {NO_KIND!r})")
+        if target == FEATURE:
+            features.append(FeatureMap(Expr.col(ref), c["feature_kind"], feature_names[(c["file"], c["column"])],
+                                       note))
+        elif target.startswith(ROLE_PREFIX):
             role = target[len(ROLE_PREFIX):]
             if role in roles:
                 raise ContractError(f"two columns drafted as {target}")
@@ -192,7 +251,8 @@ def _build(reply: dict[str, Any], profiles: list[ColumnProfile], name: str, as_o
                       lost_values=tuple(o["lost_values"]) if o["kind"] == "won_flag" else ())
     review["outcome"] = Review(o["reason"], o["confidence"])
     return DatasetMapping(name=name, sources=tuple(sources), lead=LeadColumns(**roles), outcome=outcome, as_of=as_of,
-                          test_from=test_from, fields=tuple(fields), outcome_confirmed=False, review=review)
+                          test_from=test_from, fields=tuple(fields), outcome_confirmed=False, review=review,
+                          features=tuple(features), features_confirmed=False)
 
 
 def _known(file: str, names: dict[str, str]) -> str:
@@ -206,7 +266,8 @@ def check_reply(obj: object, profiles: list[ColumnProfile]) -> dict[str, Any]:
     """``obj`` if it is a reply the profiles support (it builds a valid draft mapping); ``ContractError`` otherwise.
 
     The server enforces the schema's shape and enums; this adds everything the schema cannot say (files and columns
-    exist, one primary source, one column per role, created_at present, targets not repeated).
+    exist, the primary file not also joined and no file joined twice, one column per role, created_at present,
+    targets not repeated).
     """
     if not isinstance(obj, dict):
         raise ContractError(f"reply is {type(obj).__name__}, not a JSON object")
@@ -321,6 +382,6 @@ def draft_mapping(profiles: list[ColumnProfile], client: anthropic.Anthropic | N
     return _build(entry["reply"], profiles, name, as_of, test_from)
 
 
-__all__ = ["DRAFT_TARGETS", "MAX_TOKENS", "PROMPT_VERSION", "RESPONSE_SCHEMA", "SYSTEM_PROMPT", "check_reply",
-           "default_dates", "draft_key", "draft_mapping", "is_cached", "parse_reply", "profiles_hash",
-           "prompt_fingerprint", "render_profiles", "source_name"]
+__all__ = ["DRAFT_TARGETS", "FEATURE", "FEATURE_KINDS", "MAX_TOKENS", "NO_KIND", "PROMPT_VERSION", "RESPONSE_SCHEMA",
+           "SYSTEM_PROMPT", "check_reply", "default_dates", "draft_key", "draft_mapping", "feature_name", "is_cached",
+           "parse_reply", "profiles_hash", "prompt_fingerprint", "render_profiles", "source_name"]

@@ -89,7 +89,7 @@ In a worktree there is no `.venv`: pass the main checkout's interpreter, quoted,
 | `--include-ghosted` | horizon: count leads still New at H as 0 instead of excluding them |
 | `--stalled-as-lost` | horizon: count stalled open deals as 0 instead of censoring them |
 | `--value-cap-percentile P`, `--no-value-cap`, `--value-compression {none,log,sqrt}`, `--value-floor GBP`, `--no-value-floor`, `--value-tiers N` | horizon only (Phase 3): the transform from `value_formula` to `value_at_submit`; default cap p97 + log + floor £25 (ADR 0012). Horizon `scores.csv` also carries `value_at_submit(_ts)`, `value_at_close(_ts)`, `value_at_close_status` |
-| `--feature-set {legacy,v2}` | `v2` (default, Phase 2): `session_missing` / `enrichment_missing` indicators, name enrichment, boilerplate similarity, fixed 39-column design from `V2_LEVELS` (ADR 0009), residual sd estimated. `legacy`: baseline features; with `--label-mode legacy` byte-identical to `baseline/` |
+| `--feature-set {legacy,v2,generic}` | `v2` (default, Phase 2): `session_missing` / `enrichment_missing` indicators, name enrichment, boilerplate similarity, fixed 39-column design from `V2_LEVELS` (ADR 0009), residual sd estimated. `legacy`: baseline features; with `--label-mode legacy` byte-identical to `baseline/`. `generic` (Phase 10, ADR 0024): v2 plus the `x_` columns of a converted dataset's declared extras (`extra_features.csv`, encoding fitted on training leads; refused without it); the report adds "Generic vs v2" |
 
 The report also takes `--strict` (exit 1 when the candidate design fails the collinearity check;
 `python -m emva.eval.collinearity` is always strict).
@@ -124,7 +124,7 @@ A dataset directory with `dataset.json` uses its own `as_of` / `test_from` in th
 without it the constants apply, so data/v1 and data/v2 are unchanged.
 
 **LLM access (ADR 0010).** `.env` at the repo root (gitignored, never committed, never printed) holds
-`ANTHROPIC_API_KEY` and `ANTHROPIC_WORKSPACE_ID`. The key is not workspace-scoped, so every client must
+`ANTHROPIC_API_KEY` (or, where a host strips that name, `EMVA_ANTHROPIC_API_KEY`; `emva.env.ENV_ALIASES`) and `ANTHROPIC_WORKSPACE_ID`. The key is not workspace-scoped, so every client must
 send the `anthropic-workspace-id` header. Model for all LLM calls: `claude-haiku-4-5-20251001`.
 Responses are cached on disk and the caches are committed; never fabricate LLM output.
 
@@ -152,6 +152,7 @@ emva/io.py           load CSVs, normalise CRM stages, join enrichment, won_at/fi
 emva/labels.py       LabelMode/LabelConfig, legacy label, label_source, won_within_h, horizon_label, maturity, split
 emva/features.py     FeatureSet; legacy and v2 bucketed features (indicators, name enrichment, boilerplate text)
 emva/feature_spec.py FeatureSpec per feature set (levels, featuriser, design, fixed residual sd), like LabelConfig
+emva/generic.py      generic feature set (Phase 10): declared extras (extra_features.csv), train-only encoder, ADR 0024
 emva/boilerplate.py  boilerplate snippets + token-set Jaccard detector (v2 text=copy_paste)
 emva/design.py       legacy data-driven dummies; v2 fixed_design from V2_LEVELS (unknown level raises)
 emva/model.py        L2 logistic regression, predict, scorecard (weights.csv)
@@ -166,7 +167,7 @@ emva/ingest/         Phase 9 converter: mapping.py (TOML schema), profile.py (re
 emva/eval/           bootstrap, metrics, regression, status_quo, report, label_study, ground_truth_reference,
                      collinearity, feature_selection, phase2_study, value_report (value transforms, click-ID coverage),
                      context_harness; Phase 4: hardening (entry point), rolling, subsampling, ceiling (reads
-                     ground truth), calibration_decay, regularisation, interactions
+                     ground truth), calibration_decay, regularisation, interactions; Phase 10: generic_report
 app/                 Keel, the hosted internal tool (Phase 8; docs/ARCHITECTURE.md section 8, reports/app.md):
                      storage, validation, training + job, results, scoring, ingest (Map & convert, Phase 9), auth (pure)
                      and main/ui/views/theme (Streamlit)
@@ -214,6 +215,7 @@ single leads through `emva.scoring` and computes its charts with `emva.eval`; it
 | 7 production readiness doc | merged (fa9bc4d) | `phase7-production-doc` | `reports/production.md`, ADR 0017 (Proposed) |
 | 8 hosted app (Keel) | merged (c3da2b0) | `app-ui` | `reports/app.md`, ADR 0018/0019 (Proposed) |
 | 9 dataset converter + per-dataset dates + Keel Map & convert | merged (be2f674) | `claude/epic-edison-onl83z` | `reports/phase9.md`, ADRs 0020-0023 (Proposed) |
+| 10 (a) generic feature set, (b) Keel support | on branch `phase10-generic-features`, not merged | `phase10-generic-features` | `reports/phase10.md`, ADR 0024 (Proposed) |
 
 ## Do not
 

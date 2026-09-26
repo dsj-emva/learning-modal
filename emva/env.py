@@ -5,6 +5,9 @@ printed or logged. The ``.env`` search walks up from a start directory and stops
 (the first directory holding both ``emva/`` and ``.git``); it never looks above it. When that root is a
 linked git worktree (``.git`` is a file, as under ``.claude/worktrees/``), the main checkout's root, where
 the gitignored ``.env`` lives, is checked last.
+
+Some hosts reserve or strip ``ANTHROPIC_API_KEY`` (the Claude Code cloud environment does), so a missing name
+falls back to its ``EMVA_``-prefixed alias in ``ENV_ALIASES``, looked up the same way.
 """
 from __future__ import annotations
 
@@ -12,6 +15,8 @@ import os
 from pathlib import Path
 
 PACKAGE_DIR = Path(__file__).resolve().parent
+# Setting name -> fallback name read when the setting is missing from both the environment and ``.env``.
+ENV_ALIASES: dict[str, str] = {"ANTHROPIC_API_KEY": "EMVA_ANTHROPIC_API_KEY"}
 
 
 def repo_root(start: str | Path) -> Path | None:
@@ -58,7 +63,16 @@ def find_dotenv(start: str | Path = PACKAGE_DIR) -> Path | None:
 
 def load_env_var(name: str, start: str | Path = PACKAGE_DIR) -> str | None:
     """``name`` from the environment, else from ``find_dotenv(start)`` (``NAME=value`` lines, optional
-    ``export`` and quotes), else None. Empty values count as unset."""
+    ``export`` and quotes), else its ``ENV_ALIASES`` fallback looked up the same way, else None. Empty values
+    count as unset."""
+    value = _lookup(name, start)
+    if value is None and name in ENV_ALIASES:
+        value = _lookup(ENV_ALIASES[name], start)
+    return value
+
+
+def _lookup(name: str, start: str | Path) -> str | None:
+    """``name`` from the environment, else from ``find_dotenv(start)``, else None (no alias fallback)."""
     value = os.environ.get(name)
     if value:
         return value

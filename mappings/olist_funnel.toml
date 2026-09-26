@@ -25,6 +25,12 @@
 # means paid search in this schema; display could be any network); direct_traffic, unknown, other,
 # other_publicities -> nothing (organic_direct). landing_page_id -> utm_content (an identifier, not read by the model).
 #
+# Features (Phase 10, generic feature set, ADR 0024; features_confirmed = true after a review BY HAND, no API key):
+# landing_page_id only (categorical: the form the MQL signed up on, known at sign-up; pages with fewer than 30
+# training MQLs fall into other). origin is not declared: it already feeds the channel feature through the value map
+# above, and encoding it twice would duplicate those columns. first_contact_date weekday or month would need a new
+# date operation; none is added. Every closed-deal column stays excluded (exists only for won MQLs).
+#
 # Dates: first_contact_date 2017-06-14 .. 2018-05-31, won_date to 2018-11-14 18:04. as_of = 2018-11-15 (the day after
 # the last deal). Every MQL is mature at H = 120. test_from = 2018-03-01: the last ~22% of the MQL date span (March to
 # May 2018; MQL volume grows in 2018, so this is ~48% of the leads). Frozen here (ground rule 4).
@@ -36,6 +42,7 @@ source_url = "https://www.kaggle.com/datasets/olistbr/marketing-funnel-olist"
 licence = "CC BY-NC-SA 4.0"
 outcome_confirmed = true
 drop_rows_without_created_at = false
+features_confirmed = true
 
 [[sources]]
 name = "mql"
@@ -85,7 +92,7 @@ other_publicities = {}
 [[fields]]
 source = "mql.landing_page_id"
 target = "utm_content"
-reason = "Landing page identifier; carried for the record, not read by the model."
+reason = "Landing page identifier; carried for the record (the generic feature set reads it as an extra)."
 confidence = "medium"
 
 [[fields]]
@@ -111,3 +118,10 @@ source = "deal.business_type"
 target = "ignore"
 reason = "Exists only for won MQLs (label leakage)."
 confidence = "high"
+
+[[features]]
+source = "mql.landing_page_id"
+kind = "categorical"
+name = "landing_page"
+reason = "Landing page the MQL signed up on; rare pages fall into other."
+confidence = "medium"

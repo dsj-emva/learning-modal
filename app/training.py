@@ -18,12 +18,13 @@ from pathlib import Path
 
 import pandas as pd
 
-from app.storage import REPO_ROOT, RULES_FILE, Run, get_run, is_converted, update_run, utc_now
+from app.storage import REPO_ROOT, RULES_FILE, Dataset, Run, get_run, is_converted, update_run, utc_now
 from emva.constants import LABEL_SOURCES
 from emva.dataset_meta import dataset_dates
 from emva.eval.bootstrap import N_RESAMPLES
 from emva.eval.report import FROZEN_HORIZON, frozen_test_labels
 from emva.features import FeatureSet
+from emva.generic import read_extra_features
 from emva.io import load
 from emva.labels import LabelConfig, LabelMode, label_source, split_masks
 from emva.persist import BUNDLE_FILE
@@ -38,7 +39,8 @@ SUMMARY_COLUMNS: tuple[str, ...] = ("auc", "brier", "top20_wins", "top20_revenue
 @dataclass(frozen=True)
 class TrainingConfig:
     """The CLI options the app exposes: ``label_mode`` (``horizon`` default, ``legacy`` reproduces the frozen
-    POC's labels) and ``feature_set`` (``v2`` default, ``legacy`` the POC's features)."""
+    POC's labels) and ``feature_set`` (``v2`` default, ``legacy`` the POC's features, ``generic`` v2 plus a converted
+    dataset's declared extras; offered only for a dataset with ``extra_features.csv``, ``feature_set_options``)."""
 
     label_mode: str = LabelMode.HORIZON.value
     feature_set: str = FeatureSet.V2.value
@@ -75,12 +77,18 @@ def report_command(dataset: str | Path, config: TrainingConfig, python: str = sy
     return [python, "-m", "emva.eval.report", "--data", str(dataset), *config.cli_args(), *extra]
 
 
+def feature_set_options(dataset: Dataset) -> list[str]:
+    """The feature sets the training panel offers for ``dataset``, default first: ``v2``, then ``generic`` when the
+    dataset carries ``extra_features.csv`` (``Dataset.has_extras``), then ``legacy``."""
+    return [FeatureSet.V2.value, *([FeatureSet.GENERIC.value] if dataset.has_extras else []), FeatureSet.LEGACY.value]
+
+
 @dataclass(frozen=True)
 class TrainingSummary:
     """What a training run on a dataset would use (``pre_training_summary``): raw ``leads``, ``scored`` leads after
     bot/duplicate removal, the run's own ``train`` / ``test`` sizes and wins, the standard report's frozen
-    ``mature_test`` set and wins, ``label_counts`` (per ``label_source``: leads, wins, losses, unlabelled) and the
-    label definition's name."""
+    ``mature_test`` set and wins, ``label_counts`` (per ``label_source``: leads, wins, losses, unlabelled), the
+    label definition's name and, for the generic feature set, the declared ``extras`` as ``(name, kind)`` pairs."""
 
     leads: int
     scored: int
@@ -92,6 +100,7 @@ class TrainingSummary:
     mature_test_wins: int
     label_counts: dict[str, dict[str, int]]
     labels: str
+    extras: tuple[tuple[str, str], ...] = ()
 
     def label_counts_frame(self) -> pd.DataFrame:
         """``label_counts`` as a table, one row per ``label_source``."""
@@ -105,9 +114,15 @@ def pre_training_summary(dataset_path: str | Path, config: TrainingConfig) -> Tr
     exactly as ``emva.pipeline.run``; the mature test set is ``emva.eval.report.frozen_test_labels``. Label counts
     are per ``label_source`` under the config's label. Labels are read at the dataset's ``as_of`` and split at its
     ``test_from`` (``emva.dataset_meta.dataset_dates``: a converted dataset's own, else the constants; ADR 0020).
-    Raises what ``emva.io.load``, ``dataset_dates`` and the label code raise on malformed data (validate first).
+    With the generic feature set the dataset's extras are read as the pipeline reads them
+    (``emva.generic.read_extra_features``), so a dataset without them fails here rather than in the job.
+    Raises what ``emva.io.load``, ``dataset_dates``, ``read_extra_features`` and the label code raise on malformed data
+    (validate first).
     """
     as_of, test_from = dataset_dates(dataset_path)
+    extras = ()
+    if FeatureSet(config.feature_set) is FeatureSet.GENERIC:
+        extras = tuple((f.name, f.kind.value) for f in read_extra_features(dataset_path)[0])
     L = load(dataset_path)
     labels = config.labels
     X = build(L, labels, FeatureSet(config.feature_set), as_of)
@@ -123,7 +138,7 @@ def pre_training_summary(dataset_path: str | Path, config: TrainingConfig) -> Tr
                            train_wins=int((X.y[train] == 1).sum()), test=int(test.sum()),
                            test_wins=int((X.y[test] == 1).sum()), mature_test=len(y_mature),
                            mature_test_wins=int((y_mature == 1).sum()), label_counts=counts,
-                           labels=labels.describe())
+                           labels=labels.describe(), extras=extras)
 
 
 # Environment variables the job and ``python -m emva`` may see; everything else (APP_PASSWORD, ANTHROPIC_*, cloud
@@ -203,6 +218,6 @@ def report_available(dataset_path: str | Path) -> bool:
     return rules_available(dataset_path) or is_converted(dataset_path)
 
 
-__all__ = ["CHILD_ENV_KEYS", "RUN_OUTPUTS", "TrainingConfig", "TrainingSummary", "child_env", "finish_run",
-           "parse_summary", "pre_training_summary", "report_available", "report_command", "rules_available",
-           "start_training", "training_command"]
+__all__ = ["CHILD_ENV_KEYS", "RUN_OUTPUTS", "TrainingConfig", "TrainingSummary", "child_env", "feature_set_options",
+           "finish_run", "parse_summary", "pre_training_summary", "report_available", "report_command",
+           "rules_available", "start_training", "training_command"]
