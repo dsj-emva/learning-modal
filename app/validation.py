@@ -181,10 +181,12 @@ class _Checker:
         return parsed
 
     def numeric(self, name: str, df: pd.DataFrame, col: str) -> None:
-        """Error for non-blank cells of ``col`` that are not numbers."""
-        bad = pd.to_numeric(df[col], errors="coerce").isna() & ~_blank(df[col])
+        """Error for non-blank cells of ``col`` that are not finite numbers (``inf`` and ``1e400`` are refused)."""
+        parsed = pd.to_numeric(df[col], errors="coerce")
+        bad = (parsed.isna() | np.isinf(parsed)) & ~_blank(df[col])
         if bad.any():
-            self.error(name, col, f"{_n(bad)} value(s) are not numbers (e.g. {df[col][bad].iloc[0]!r}); "
+            self.error(name, col, f"{_n(bad)} value(s) are not numbers or not finite "
+                                  f"(e.g. {df[col][bad].iloc[0]!r}); "
                                   "leave the cell blank when unknown", bad)
 
     def levels(self, name: str, df: pd.DataFrame, col: str, allowed: tuple[str, ...], what: str) -> None:

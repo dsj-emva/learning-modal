@@ -317,14 +317,20 @@ def _check_target(target: str, s: pd.Series) -> pd.Series:
 def extra_values(raw: pd.DataFrame, mapping: DatasetMapping) -> pd.DataFrame:
     """One column per declared ``[[features]]`` row (named by its ``name``, declaration order) over the joined rows
     ``raw``: numeric features as floats, categorical ones as their source values. Raises ``ValueError`` for a missing
-    column, a non-number in a numeric feature or a date-valued expression."""
+    column, a non-number or a non-finite number (``inf``, ``1e400``) in a numeric feature or a date-valued
+    expression."""
     out: dict[str, pd.Series] = {}
     for f in mapping.features:
         v = evaluate(f.source, raw, f"feature {f.name}")
         if isinstance(v.dtype, pd.DatetimeTZDtype) or pd.api.types.is_datetime64_any_dtype(v.dtype):
             raise ValueError(f"feature {f.name!r}: its source is a date expression; a feature is a number or a "
                              "category")
-        out[f.name] = _numbers(v, f"feature {f.name}") if ExtraKind(f.kind) is ExtraKind.NUMERIC else v
+        if ExtraKind(f.kind) is ExtraKind.NUMERIC:
+            v = _numbers(v, f"feature {f.name}")
+            if np.isinf(v).any():
+                raise ValueError(f"feature {f.name}: {int(np.isinf(v).sum())} value(s) are not finite numbers, e.g. "
+                                 f"{_examples(v[np.isinf(v)])}")
+        out[f.name] = v
     return pd.DataFrame(out, index=raw.index, columns=[f.name for f in mapping.features])
 
 

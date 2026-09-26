@@ -107,7 +107,7 @@ def run(data: str | Path, margin: float = 1.0, context: str | Path | None = None
     dates (``emva.dataset_meta.dataset_dates``: its ``dataset.json``, else ``TEST_FROM`` / ``AS_OF``); labels,
     maturity and ``value_at_close`` are read at ``as_of``. The generic feature set also joins the dataset's raw
     extras onto ``X`` (columns ``x_<name>``) and raises ``ValueError`` when ``data`` has none, or when
-    ``extra_features.csv`` names a lead that ``historical_leads.csv`` does not have.
+    ``extra_features.csv`` and ``historical_leads.csv`` do not hold the same leads (either direction).
     """
     meta_as_of, meta_test_from = dataset_dates(data)
     as_of = meta_as_of if as_of is None else as_of
@@ -121,10 +121,13 @@ def run(data: str | Path, margin: float = 1.0, context: str | Path | None = None
     encoder = None
     if spec.extras:
         declared, E = read_extra_features(data)
-        unknown = E.index.difference(L.index)
+        unknown, absent = E.index.difference(L.index), L.index.difference(E.index)
         if len(unknown):
             raise ValueError(f"extra_features.csv has {len(unknown)} lead(s) not in historical_leads.csv, e.g. "
                              f"{list(unknown[:5])}")
+        if len(absent):
+            raise ValueError(f"extra_features.csv lacks {len(absent)} lead(s) of historical_leads.csv, e.g. "
+                             f"{list(absent[:5])} (every lead needs a row; blank values mean missing)")
         X = X.join(E)
         encoder = fit_encoder(declared, X[tr])
         D = D.join(encoder.design(X))

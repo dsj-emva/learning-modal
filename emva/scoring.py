@@ -22,8 +22,10 @@ Rulings:
   is blank, i.e. ``missing``). They are encoded with the bundle's frozen ``GenericEncoder``: an unseen categorical
   value is ``other`` (a defined level, so it is not refused, amending ADR 0009 for extras only), a number outside the
   training range falls into the edge bin, and a non-number in a numeric extra raises ``ValueError``. Like the
-  ``historical_leads.csv`` columns the models do not read, ``x_`` columns a bundle does not use are accepted and not
-  read (a v2 bundle scores ``convert_leads`` output of a mapping that declares features).
+  ``historical_leads.csv`` columns the models do not read, ``x_`` columns are accepted and not read by a bundle
+  without extras (a v2 bundle scores ``convert_leads`` output of a mapping that declares features); a generic bundle
+  refuses an ``x_`` column it does not declare (most likely a misspelt extra, which would otherwise score as
+  ``missing`` without a word).
 - **Bots and duplicates are flagged, not dropped** (``is_bot``, ``is_duplicate``), and still scored. The
   duplicate check sees only the batch passed in: a lead scored alone is never a duplicate, even if its email is
   in the training history. In the batch run such leads were dropped before scoring, so they have no batch score.
@@ -250,6 +252,10 @@ def _as_training_schema(bundle: ModelBundle, leads: pd.DataFrame) -> pd.DataFram
     unknown = sorted(c for c in set(L.columns) - set(schema.columns) if not str(c).startswith(EXTRA_PREFIX))
     if unknown:
         raise ValueError(f"unknown columns {unknown}; leads take historical_leads.csv columns and x_<name> extras only")
+    if bundle.extras is not None:
+        undeclared = sorted(c for c in set(L.columns) - set(schema.columns) - set(extras))
+        if undeclared:
+            raise ValueError(f"unknown extra columns {undeclared} (misspelt?); this model's extras are {list(extras)}")
     if "email" not in L or L.email.isna().any():
         raise ValueError("every lead needs an email")
     blank = pd.Series(None, index=L.index, dtype=object)

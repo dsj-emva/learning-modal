@@ -86,12 +86,13 @@ def _text(values: pd.Series) -> pd.Series:
 
 
 def numeric_values(values: pd.Series, what: str) -> pd.Series:
-    """``values`` as floats (blanks NaN); ``ValueError`` naming ``what`` when a non-blank value is not a number."""
+    """``values`` as floats (blanks NaN); ``ValueError`` naming ``what`` when a non-blank value is not a finite number
+    (``inf``, ``-inf`` and an overflow such as ``1e400`` are refused: they have no quantile bin)."""
     text = _text(values)
     parsed = pd.to_numeric(text, errors="coerce").astype(float)
-    bad = parsed.isna() & text.notna()
+    bad = (parsed.isna() | np.isinf(parsed)) & text.notna()
     if bad.any():
-        raise ValueError(f"extra feature {what!r} is numeric but has non-numbers, e.g. "
+        raise ValueError(f"extra feature {what!r} is numeric but has values that are not finite numbers, e.g. "
                          f"{sorted(set(text[bad]))[:5]}")
     return parsed
 

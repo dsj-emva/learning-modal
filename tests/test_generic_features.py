@@ -207,8 +207,13 @@ def test_numeric_encoding_edges_missing_and_out_of_range() -> None:
     assert e.train_counts[MISSING] == 2 and e.train_counts["<=20"] == 20 and e.train_counts[">80"] == 20
     got = enc.levels(_frame(n=["-1000", "20", "20.01", "1e9", None])).x_n.tolist()
     assert got == ["<=20", "<=20", "(20, 40]", ">80", MISSING]
-    with pytest.raises(ValueError, match="non-numbers.*'lots'"):
+    with pytest.raises(ValueError, match="not finite numbers.*'lots'"):
         enc.levels(_frame(n=["lots"]))
+    for v in ("inf", "-inf", "1e400"):  # no quantile bin for a non-finite number: refused at scoring
+        with pytest.raises(ValueError, match=f"not finite numbers.*'{v}'"):
+            enc.levels(_frame(n=["3", v]))
+    with pytest.raises(ValueError, match="not finite numbers.*'inf'"):
+        fit_encoder((ExtraFeature("n", NUM),), _frame(n=["1", "inf"]))
 
 
 def test_all_missing_numeric_column() -> None:
@@ -293,6 +298,13 @@ def test_a_date_expression_is_not_a_feature(frames, mapping) -> None:
         convert(frames, dated)
 
 
+def test_a_non_finite_number_in_a_numeric_feature_is_refused_at_conversion(frames, mapping) -> None:
+    leads = frames["leads.csv"].copy()
+    leads.loc[[3, 5], "seats"] = ["inf", "1e400"]
+    with pytest.raises(ValueError, match="feature seats: 2 value\\(s\\) are not finite numbers"):
+        convert({**frames, "leads.csv": leads}, mapping)
+
+
 def test_mapping_without_features_writes_no_extra_file() -> None:
     from test_ingest import MAPPING as PHASE9, fixture_frames
 
@@ -354,11 +366,17 @@ def test_read_extra_features_refuses_malformed_files(dataset, tmp_path) -> None:
     E.rename(columns={"tier": "grade"}).to_csv(tmp_path / EXTRA_FEATURES_FILE, index=False)
     with pytest.raises(ValueError, match="expected \\['lead_id', 'tier'"):
         read_extra_features(tmp_path)
+    E.assign(seats=E.seats.where(E.index > 0, "1e400")).to_csv(tmp_path / EXTRA_FEATURES_FILE, index=False)
+    with pytest.raises(ValueError, match="'seats' is numeric but has values that are not finite numbers.*1e400"):
+        read_extra_features(tmp_path)
     pd.concat([E, E.head(1)]).to_csv(tmp_path / EXTRA_FEATURES_FILE, index=False)
     with pytest.raises(ValueError, match="unique"):
         read_extra_features(tmp_path)
     E.assign(lead_id=E.lead_id.where(E.index > 0, "nobody")).to_csv(tmp_path / EXTRA_FEATURES_FILE, index=False)
     with pytest.raises(ValueError, match="not in historical_leads.csv.*nobody"):
+        run(tmp_path, features=FeatureSet.GENERIC)
+    E.iloc[len(E) // 2:].to_csv(tmp_path / EXTRA_FEATURES_FILE, index=False)  # half the leads have no row
+    with pytest.raises(ValueError, match=f"lacks {len(E) // 2} lead\\(s\\) of historical_leads.csv.*{E.lead_id[0]}"):
         run(tmp_path, features=FeatureSet.GENERIC)
 
 
@@ -398,6 +416,9 @@ def test_unseen_value_at_scoring_is_other_and_absent_extras_are_missing(bundle, 
     # a lead without its extra columns (e.g. from the EMVA form) scores with every extra missing
     bare = score_leads(bundle, leads.drop(columns=["x_tier", "x_seats", "x_sector"]), dataset)
     assert np.isfinite(bare.p_formula).all()
+    # a generic bundle refuses an x_ column it does not declare (a misspelt extra would silently be missing)
+    with pytest.raises(ValueError, match="unknown extra columns \\['x_teir'\\].*x_tier"):
+        score_leads(bundle, leads.rename(columns={"x_tier": "x_teir"}), dataset)
     # the fixed-schema columns still refuse an unknown level (ADR 0009)
     with pytest.raises(ValueError, match="form_variant"):
         score_leads(bundle, leads.assign(form_variant="Z"), dataset)

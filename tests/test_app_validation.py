@@ -269,6 +269,8 @@ def test_numeric_extras_must_be_numbers(converted: dict[str, bytes]) -> None:
     assert r.ok, r.errors  # numbers or blank
     r = validate_files(numeric)  # the landing page ids are hex strings
     _find(r, "extra_features.csv", "landing_page", "are not numbers")
+    r = validate_files(_extras(numeric, lambda E: E.assign(landing_page=["inf", "1e400", *["3.5"] * (len(E) - 2)])))
+    _find(r, "extra_features.csv", "landing_page", "2 value(s) are not numbers or not finite")
 
 
 def test_extras_and_their_declaration_come_together(converted: dict[str, bytes]) -> None:
