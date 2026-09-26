@@ -3,8 +3,9 @@
 Started by ``app.training.start_training`` with stdout/stderr on the run's ``train.log``. Marks the run
 ``running``, runs ``python -m emva`` (output to the log), then, if training succeeded and the dataset has
 status-quo rules or is a converted dataset (``app.training.report_available``), ``python -m emva.eval.report``
-with the same options into ``report.txt`` (its stderr to the log), and finally records the outcome with ``app.training.finish_run``. The report is supplementary: if it
-fails the run still succeeds, with the failure in the log.
+with the same options into ``report.txt`` (its stderr to the log), and finally records the outcome with
+``app.training.finish_run``. The report is supplementary: if it fails the run still succeeds, with the failure in
+the log.
 """
 from __future__ import annotations
 

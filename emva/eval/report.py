@@ -264,7 +264,8 @@ def label_sections(X: pd.DataFrame, legacy_y: pd.Series, test_a: TestSet, test_b
     pre = X.created_at < test_from
     mature = is_mature(X, FROZEN_HORIZON.horizon_days, as_of)
     sizes = pd.DataFrame([
-        {"definition": "legacy", "train (wins)": f"{int((legacy_y.notna() & pre).sum())} ({int((legacy_y[pre] == 1).sum())})",
+        {"definition": "legacy",
+         "train (wins)": f"{int((legacy_y.notna() & pre).sum())} ({int((legacy_y[pre] == 1).sum())})",
          "test (wins)": f"{len(test_a.ids)} ({int(test_a.y.sum())})"},
         {"definition": FROZEN_HORIZON.describe(),
          "train (wins)": f"{int((X.y.notna() & mature & pre).sum())} ({int((X.y[mature & pre] == 1).sum())})",
@@ -279,7 +280,8 @@ def label_sections(X: pd.DataFrame, legacy_y: pd.Series, test_a: TestSet, test_b
         "stalled leads censored (the default training and test label).", "",
         md_table(pd.DataFrame(rows)), "",
         f"Mature = created_at + {FROZEN_HORIZON.horizon_days} days <= {as_of.isoformat()}: the latest mature lead was "
-        f"created {last.isoformat()}. Train = created before {test_from} (all mature); test = created on or after {test_from}.",
+        f"created {last.isoformat()}. Train = created before {test_from} (all mature); test = created on or after "
+        f"{test_from}.",
         "",
         md_table(sizes), "",
         f"Candidate trained with: `{candidate_labels.describe()}`.", "",

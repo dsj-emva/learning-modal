@@ -99,7 +99,8 @@ TARGETS: tuple[str, ...] = (*(c for c in LEAD_COLUMNS if c not in BUILT_COLUMNS)
 # Canonical CRM stages (``emva.constants.STAGE`` values), in funnel order.
 STAGES: tuple[str, ...] = ("New", "Contacted", "Qualified", "Demo booked", "Proposal", "Won", "Lost")
 if set(STAGES) != set(STAGE.values()):
-    raise RuntimeError(f"mapping.STAGES {sorted(STAGES)} differ from emva.constants.STAGE {sorted(set(STAGE.values()))}")
+    raise RuntimeError(f"mapping.STAGES {sorted(STAGES)} differ from emva.constants.STAGE values "
+                       f"{sorted(set(STAGE.values()))}")
 OPEN_OR_NEW: tuple[str, ...] = tuple(s for s in STAGES if s not in ("Won", "Lost"))
 
 # A mapping reads 1 to this many source files (the first is the primary one).

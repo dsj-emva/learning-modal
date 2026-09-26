@@ -509,6 +509,6 @@ def coverage(files: dict[str, bytes], mapped_targets: list[str]) -> list[dict[st
     return rows
 
 
-__all__ = ["COMPANIES_COLUMNS", "CRM_COLUMNS", "DERIVED_COUNTS", "FEATURE_INPUTS", "PEOPLE_COLUMNS", "PLACEHOLDER_DOMAIN",
-           "convert",
-           "convert_leads", "coverage", "evaluate", "frames_from_bytes", "join_sources"]
+__all__ = ["COMPANIES_COLUMNS", "CRM_COLUMNS", "DERIVED_COUNTS", "FEATURE_INPUTS", "PEOPLE_COLUMNS",
+           "PLACEHOLDER_DOMAIN", "convert", "convert_leads", "coverage", "evaluate", "frames_from_bytes",
+           "join_sources"]
