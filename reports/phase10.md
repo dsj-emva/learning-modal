@@ -1257,8 +1257,9 @@ fresh scratch directory, so its draft cache started empty), driven with Playwrig
 
 ![Keel: the live Olist draft, served from the cache on the second press](phase10/08-live-draft.png)
 
-Keel's profile text is not byte-identical to the CLI's (profile hash `4db35578...` vs `84e17110...`: the upload
-path profiles the uploaded frames), so Keel made its own request and got a somewhat different reply. It has the
+Keel's profile text is not byte-identical to the CLI's because the files come in a different order (checked: profile
+hash `4db35578...` with the primary first, as Keel passes them; `732fe148...` in the CLI's sorted-glob order, which
+puts `olist_closed_deals_dataset.csv` first and may have helped v2 pick it as primary), so Keel made its own request and got a somewhat different reply. It has the
 same sources, `lead_id`, `created_at`, outcome and 8 extras (the same won-only closed-deal columns, D25 applies), but
 it leaves `won_at` unmapped and marks `declared_monthly_revenue` `ignore` at low confidence, so its derived `as_of`
 is 2018-06-01 instead of 2018-11-15. Temperature 0 on a slightly different input is no guarantee of the same draft,
@@ -1327,6 +1328,9 @@ extras on the EMVA form (D17, D26); the other items under "Open items".
   cherry-picked onto `main` ahead of this branch.
 - The hotel collinearity failure (`distribution_channel=GDS` ~ `agent=195`) and the horizon label's mechanical tie
   to `lead_time` are properties of that dataset under R28; neither is fixed here (no tuning after the numbers).
+- The draft CLI profiles `--raw` files in sorted order, Keel primary first: the same source gives two prompts and
+  two cache entries (see "Live draft check", Keel). Harmless, but a `--primary` flag or a fixed order would make
+  them one.
 - A date-part operation (weekday / month of a date) would allow Olist sign-up timing as an extra; not added.
 - Live API draft run: done (see "Live draft check"). Follow-ups it found: a draft cannot express a derived
   `created_at` (hotel), won-only columns are still proposed as extras (Olist), and `lost_without_close` /
