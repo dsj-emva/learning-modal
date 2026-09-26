@@ -2,8 +2,8 @@
 
 - Status: Proposed
 - Date: 2026-09-26
-- Source: Phase 10 (a), `reports/phase10.md` "Orchestrator decisions" D1-D10 (decisions 1-8), and Phase 10 (b), D15-D22
-  (decisions 9-14, proposed at part b); `emva/generic.py`,
+- Source: Phase 10 (a), `reports/phase10.md` "Orchestrator decisions" D1-D10 (decisions 1-8), Phase 10 (b), D15-D22
+  (decisions 9-14, proposed at part b), and the Phase 10 fix round, D23-D33 (decisions 15-18); `emva/generic.py`,
   `emva/feature_spec.py`, `emva/pipeline.py`, `emva/persist.py`, `emva/scoring.py`, `emva/ingest/`,
   `emva/eval/generic_report.py`, `emva/eval/report.py`, `mappings/*.toml`, `app/` (part b); branch
   `phase10-generic-features`.
@@ -78,7 +78,25 @@ formula design so that coefficients stay comparable across customers. The user d
     for a customer run). Long scorecards show the 25 strongest signals plus an expander.
 14. **(b) Scoring.** The source format carries the extras (a form lists them, with a generic bundle's training levels
     plus `other` for a categorical extra and a number input for a numeric one; a CSV upload has them as columns). The
-    EMVA form has no inputs for extras and says that a generic run scores them as `missing` there.
+    EMVA form has no inputs for extras and says that a lead scored there has every extra blank: `missing`, or the
+    reference level wherever the model never saw a missing value (no training lead had it missing, so the L2 weight
+    of `missing` is 0); Keel warns per such extra, on the form and for a blank extra in the source format (fix round).
+
+15. **(fix round) Missingness screen.** The leakage screen (report and Keel) also shows, per extra, the share of
+    cleaned leads with the extra missing among closed leads (`label_source` won / crm_lost) and among open ones
+    (open / stalled / ghosted), at the run's `as_of` whatever the label mode, and flags "missingness tracks outcome
+    status — check for leakage" at an absolute difference >= `GENERIC_MISSINGNESS_FLAG = 0.5`. A flag only, never a
+    drop; the threshold was fixed before the Kaggle results were recomputed. It exists because censored horizon
+    labels hide from the AUC screen a column that is blank only while a deal is open (the CRM `account`).
+16. **(fix round) Bundle consistency.** `load_bundle` refuses a bundle unless (feature set is generic) == (extras is
+    not None). A generic bundle refuses `x_` columns it does not declare (a misspelt extra); a bundle without extras
+    still accepts and ignores them (Phase 10 D12).
+17. **(fix round) Refuse malformed extras loudly.** `extra_features.csv` must hold exactly the leads of
+    `historical_leads.csv` in the pipeline as in `app.validation`; numeric extras refuse non-finite values (`inf`,
+    `-inf`, `1e400`) when read, converted, validated and scored.
+18. **(fix round) Draft names never clash.** A drafted feature's name is its column's slug, prefixed with the source
+    name when that slug is drafted twice, then given the first free suffix `_2`, `_3`, ... (reply order) while it is
+    still taken; the same column drafted twice as a feature is a `ContractError`.
 
 ## Consequences
 
@@ -91,5 +109,7 @@ formula design so that coefficients stay comparable across customers. The user d
 - The extras' columns differ per dataset and per run, so their coefficients are not comparable across customers.
 - Keel runs the comparison in the server process: two pipeline fits and a bootstrap per run and test set (cached),
   seconds on Olist, longer on a dataset the size of the hotel bookings.
+- The missingness screen flags, on the three public datasets, exactly the five CRM account extras (0.000 missing
+  among closed leads vs 0.685 among open ones); Olist and hotel have no open leads.
 - Open: date-part operations (weekday, month of a date) are not in the mapping's op set; the EMVA form has no inputs
-  for extras.
+  for extras; the CRM account missingness is disclosed, not fixed (post hoc).

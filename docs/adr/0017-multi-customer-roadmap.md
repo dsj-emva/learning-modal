@@ -1,6 +1,6 @@
 # 0017. Per-customer LR on the fixed schema first; a hierarchical model is the multi-customer path; the LLM stays a feature
 
-- Status: Proposed
+- Status: Proposed (decision 2, no customer-specific columns, amended by ADR 0024)
 - Date: 2026-09-25
 - Source: Phase 7, `reports/production.md` sections 7 and 8; branch `phase7-production-doc`
 

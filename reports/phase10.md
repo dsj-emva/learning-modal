@@ -46,7 +46,7 @@ Fixed before the run:
 | `emva/ingest/mapping.py` | `[[features]]` rows (`FeatureMap`: expression source, kind, name, reason, confidence) and `features_confirmed`; `check_confirmed` refuses unconfirmed features; features are submit-time columns in `source_columns` |
 | `emva/ingest/convert.py` | `extra_values`; `convert` writes `extra_features.csv` and `dataset.json` `features` only when the mapping declares features; `convert_leads` adds the `x_` columns |
 | `emva/ingest/draft.py` | Reply schema: target `feature` plus `feature_kind` (`numeric` / `categorical` / `none`); `PROMPT_VERSION` `mapping-draft-v2`; drafted features always unconfirmed |
-| `emva/eval/generic_report.py`, `emva/eval/report.py` | "Generic vs v2" section: a v2 model on the same rows and split, paired AUC difference on both test sets, the criterion's verdict, the leakage screen |
+| `emva/eval/generic_report.py`, `emva/eval/report.py` | "Generic vs v2" section: a v2 model on the same rows and split, paired AUC difference on both test sets, the criterion's verdict, the leakage screen and (fix round, D25) the missingness screen |
 | `mappings/*.toml` | Declared extras: Olist 1, CRM 9 (third source `sales_teams.csv`), hotel 23; `features_confirmed = true` after a review by hand |
 | `app/storage.py`, `app/ingest.py` | Part (a): minimal pass-through so the app tests keep passing (see decision D11); part (b): the Keel support below |
 
@@ -84,7 +84,7 @@ D1-D10 were given with the task; they are recorded here and in ADR 0024 (Propose
 
 Decisions taken during the work (for the orchestrator's review):
 
-- **D11 (app, minimal):** once the committed Olist mapping declares a feature, the app's `app_converted` fixture and
+- **D11 (app, minimal; superseded in part b by D16, D19):** once the committed Olist mapping declares a feature, the app's `app_converted` fixture and
   Map & convert produce `extra_features.csv`, which `app.storage` refused as an unknown file, and the mapping form
   dropped `[[features]]` on its round trip. Minimal compatible change: `app/storage.py` lists `extra_features.csv`
   among `METADATA_FILES` (stored as given, not validated) and `app/ingest.MappingForm` carries `features` /
@@ -93,13 +93,14 @@ Decisions taken during the work (for the orchestrator's review):
   CRM source fields) were updated for the new contract.
 - **D12 (scoring):** `x_` columns a bundle does not use are accepted and not read (like the `historical_leads.csv`
   columns the models do not read), so a v2 run still scores the `convert_leads` output of a mapping with features.
-  Any other unknown column is still refused.
+  Any other unknown column is still refused. (Narrowed in the fix round by D30: a generic bundle refuses an `x_`
+  column it does not declare.)
 - **D13 (bins):** numeric edges use numpy's `inverted_cdf` quantiles (every edge an observed value; with the linear
   default a 0/5 column got a spurious edge at 1.0000000000000142), and an edge equal to the training maximum is moved
   to the largest value below it, so a skewed 0/1 column keeps two bins. Decided on unit fixtures before any Kaggle
   run.
 - **D14 (draft names):** a drafted feature's name is its column name as a slug, prefixed with the source name when
-  two files share the column.
+  two files share the column. (Completed in the fix round by D32: a name still taken gets a numeric suffix.)
 
 Decisions taken in part (b) (Keel), proposed for the orchestrator's review and recorded in ADR 0024 (decisions 9-14):
 
@@ -146,6 +147,42 @@ Decisions taken in part (b) (Keel), proposed for the orchestrator's review and r
   options; a numeric extra is a number input written as CSV text (`29`, `2.5`). With a v2 bundle the extras' columns
   stay free text (the bundle ignores them).
 
+Rulings of the fix round (two-axis review, below), recorded in ADR 0024 (decisions 15-18) where they change a rule:
+
+- **D23 CRM missingness is disclosed, not fixed.** `account` is blank only on open deals, so the five account extras'
+  `missing` means "not closed yet" (spec review S1). The mapping's feature list is not changed (post hoc); the
+  mapping header, "Reading the results" and "Open items" say so, the (a) explanation is corrected, and new open leads
+  with no account score as the reference level.
+- **D24 Mapping header caveats.** Hotel `country` (PRT cancels at 57% vs 24%; the reviewer's reading of the
+  check-in correction, not verified against the paper) and the CRM header no longer calls `product` ignored while it
+  is a declared extra (header text only; feature lists unchanged).
+- **D25 Missingness screen.** The leakage screen (report and Keel) gains, per extra, the share of cleaned leads with
+  the extra missing among closed leads (`label_source` won / crm_lost) and among open ones (open / stalled /
+  ghosted), computed at `as_of` whatever the label mode, and flags "missingness tracks outcome status — check for
+  leakage" at an absolute difference >= `GENERIC_MISSINGNESS_FLAG = 0.5` (`emva/constants.py`). A flag only, never a
+  drop; the threshold was fixed before the Kaggle reports were recomputed and is not tuned. The pre-registered
+  verdicts are unchanged.
+- **D26 EMVA form on a generic run** (amends D17's wording): the note says a lead scored there has every extra blank,
+  scored as missing or as the reference level wherever the model never saw a missing value; one warning per extra
+  whose training `missing` count is 0 (`app.scoring.missing_unseen`), and the same warning in the source format for
+  an extra left blank (`blank_unseen`). With no training lead missing, the L2 weight of `missing` is exactly 0.
+- **D27 Phase 9 bug fixed** (was an open item): `emva.scoring._as_training_schema` keeps `FieldType.STR` column
+  fields as object when the bundle's lead schema typed them numeric (blank on every training lead), so the EMVA form
+  scores on any converted run. Own commit (a210dc3) so it can be cherry-picked onto `main`.
+- **D28** `emva.pipeline.run` refuses `extra_features.csv` unless it holds exactly the leads of
+  `historical_leads.csv` (both directions; it already refused unknown leads), like `app.validation`.
+- **D29** `load_bundle` refuses a bundle unless (feature set is generic) == (extras is not None).
+- **D30** A generic bundle refuses `x_` columns it does not declare (a misspelt extra would silently score as
+  missing); bundles without extras keep D12's tolerance.
+- **D31** Numeric extras refuse non-finite values (`inf`, `-inf`, overflows such as `1e400`) when reading
+  `extra_features.csv`, converting, validating an upload and scoring.
+- **D32 Draft name clashes:** deterministic disambiguation rather than an error (a draft cannot be edited before it
+  is saved): the D14 prefix, then, while a name is still taken, the first free suffix `_2`, `_3`, ... in reply order;
+  the same column drafted twice as a feature is a `ContractError`.
+- **D33 Docs and nits:** the Verification note on the red commits, the CLAUDE.md repo map (`emva/generic.py`,
+  `generic_report`), ADRs 0009 and 0017 marked "amended by ADR 0024", the D11 note, the hotel footnote, and the code
+  nits listed under "Review".
+
 ## Results (on public data)
 
 Converted with the committed mappings, trained with `python -m emva --feature-set generic` (pipeline defaults: H =
@@ -154,11 +191,19 @@ Converted with the committed mappings, trained with `python -m emva --feature-se
 exports, not simulated, and not B2B enquiries in the hotel case). **Nothing was tuned** after the criterion was
 committed: bins, minimum counts, feature lists, H and dates are as registered.
 
-| dataset | extras | `x_` columns | (b) horizon: generic − v2 [95% CI] | (a) legacy: generic − v2 [95% CI] | collinearity (generic) | leakage flags | criterion |
-|---|---|---|---|---|---|---|---|
-| olist_funnel | 1 | 24 | +0.094 [+0.064, +0.123] | +0.086 [+0.057, +0.114] | PASS (max 0.716) | none | **PASS** |
-| crm_opportunities | 9 | 89 | +0.016 [−0.015, +0.044] | −0.062 [−0.080, −0.044] | PASS (max 0.744) | none | **FAIL** |
-| hotel_bookings | 23 | 302 | +0.430 [+0.427, +0.433] | +0.301 [+0.296, +0.306] | **FAIL** (0.969, `x_distribution_channel=GDS` ~ `x_agent=195`) | none (highest: lead_time 0.888) | **FAIL** |
+| dataset | extras | `x_` columns | (b) horizon: generic − v2 [95% CI] | (a) legacy: generic − v2 [95% CI] | collinearity (generic) | leakage flags (AUC) | missingness flags (fix round) | criterion |
+|---|---|---|---|---|---|---|---|---|
+| olist_funnel | 1 | 24 | +0.094 [+0.064, +0.123] | +0.086 [+0.057, +0.114] | PASS (max 0.716) | none | none (no open leads) | **PASS** |
+| crm_opportunities | 9 | 89 | +0.016 [−0.015, +0.044] | −0.062 [−0.080, −0.044] | PASS (max 0.744) | none | **5**: the account extras (missing 0.000 closed vs 0.685 open) | **FAIL** |
+| hotel_bookings[^hotel] | 23 | 302 | +0.430 [+0.427, +0.433] | +0.301 [+0.296, +0.306] | **FAIL** (0.969, `x_distribution_channel=GDS` ~ `x_agent=195`) | none (highest: lead_time 0.888) | none (no open leads) | **FAIL** |
+
+[^hotel]: The hotel AUCs are mostly a label artefact, not foresight: a kept booking is Won at its arrival (R28) and
+arrival = booking date + `lead_time`, so with H = 120 a booking made more than 120 days ahead can never be won
+within H. `lead_time` nearly fixes the horizon label (see "Reading the results").
+
+The missingness screen (D25) was added in the fix round, with its threshold fixed before these reports were
+recomputed; it flags only. Recomputing the three generic runs and reports changed nothing but that table: every
+`scores.csv` is byte-identical, and every AUC, CI, collinearity verdict and PASS / FAIL above is as before.
 
 | dataset | test set | v2 AUC | generic AUC [95% CI] | generic Brier | generic top-20% wins |
 |---|---|---|---|---|---|
@@ -177,10 +222,20 @@ committed: bins, minimum counts, feature lists, H and dates are as registered.
   landing page is 0.714, below the leakage flag. Licence: **CC BY-NC-SA 4.0, non-commercial**: these numbers are for
   this evaluation only, not for commercial use or marketing.
 - **crm_opportunities: FAIL.** Nine extras (89 columns) carry almost no signal: every single-feature training AUC is
-  0.507 to 0.538. On the horizon test set the gain is +0.016 with a CI that includes 0; on the legacy test set the
-  generic model is worse than a constant score (AUC 0.438): the extras separate wins from losses slightly in
-  training and slightly the other way on the legacy test set's labels, which count stalled Engaging deals as lost.
-  The CRM data (a fictitious company, Apache 2.0) look close to random with respect to these attributes.
+  0.507 to 0.538. On the horizon test set the gain is +0.016 with a CI that includes 0. On the legacy test set the
+  generic model is worse than a constant score (AUC 0.438), and the reason is missingness, not the extras' values
+  (corrected in the fix round; the part (a) text said the extras separated wins "slightly the other way"). In the
+  raw `sales_pipeline.csv`, `account` is blank only on open deals (1,088 Engaging + 337 Prospecting; no Won or Lost
+  deal lacks one), so the five account extras' `missing` means "not closed yet". Under the horizon labels no
+  labelled training lead lacks an account: the `missing` columns have weight 0 and a no-account lead scores as the
+  account extras' reference levels (sector retail, revenue <=497.11, employees <=1165, office_location United
+  States, year_established <=1987), which happen to score above average. The legacy test set counts stalled Engaging
+  deals as lost, so its 525 no-account leads are all lost, yet they get the higher mean p (0.678 vs 0.627): AUC
+  0.438 with them, 0.522 without. A model trained with legacy labels learns it directly (each account extra's
+  `missing` −33 points, test AUC 0.637; the AUC screen's 0.64 is not flagged, the missingness screen is). The feature
+  list is not changed (that would be post hoc); the caveat is in the mapping header. **New open leads with no account
+  score as the reference level** of the five account extras under the default horizon labels. The CRM data (a
+  fictitious company, Apache 2.0) otherwise look close to random with respect to these attributes.
 - **hotel_bookings: FAIL** (on the collinearity half of the criterion). The AUC gain is large (+0.430, CI [+0.427,
   +0.433]), but the generic design has one pair above the 0.95 limit: `x_distribution_channel=GDS` and `x_agent=195`
   (|corr| 0.969: nearly every GDS booking comes through agent 195). The criterion is not relaxed. **Warning on the
@@ -190,9 +245,18 @@ committed: bins, minimum counts, feature lists, H and dates are as registered.
   (single-feature training AUC 0.888, just under the 0.90 flag; weights −280 points for `>216` days and −183 for
   `(115, 216]`). On the legacy test set, whose label is "not cancelled" without a horizon, the generic AUC is 0.801,
   and `deposit_type=Non Refund` (−120 points) is the next strongest signal: a known quirk of this dataset (almost
-  every non-refundable booking in it was cancelled). These are bookings, not enquiries.
+  every non-refundable booking in it was cancelled). These are bookings, not enquiries. **`country` caveat** (fix
+  round; the feature list is unchanged): PRT bookings (41% of all) cancel at 57% against 24% for every other
+  country. The reviewer's reading, not verified against the dataset paper: nationality is reportedly entered as the
+  home country at booking and corrected at check-in, so `country` may partly encode the outcome.
 - **Leakage screen:** no extra on any dataset exceeds 0.90. The screen is a coarse guard: hotel `lead_time`
   (0.888) is mechanically tied to the horizon label as explained above without being post-outcome data.
+- **Missingness screen** (fix round, D25; share of cleaned leads with the extra missing, closed vs open leads,
+  flagged at a difference >= 0.50): CRM flags the five account extras (sector, revenue, employees, office_location,
+  year_established: 0.000 closed vs 0.685 open, i.e. 1,088 of 1,589 open deals); every other CRM extra is 0.000 /
+  0.000. Olist and hotel have no open leads (every lead is won or lost), so the open share is n/a and nothing can be
+  flagged; hotel `company` is missing on 94% of bookings and `agent` on 14%, alike for every outcome the screen can
+  see.
 
 ### Source-format scoring of new leads (on public data)
 
@@ -454,11 +518,11 @@ Generic design collinearity: PASS: max |corr| = 0.716 between channel=meta and x
 
 ###### Leakage screen
 
-Single-feature training AUC of each extra's encoded levels (each level scored by its training win rate), folded as |AUC − 0.5| + 0.5. Above 0.90: flagged "check for leakage" (a flag only; nothing is dropped).
+Single-feature training AUC of each extra's encoded levels (each level scored by its training win rate), folded as |AUC − 0.5| + 0.5. Above 0.90: flagged "check for leakage" (a flag only; nothing is dropped). Missingness screen: the share of cleaned leads with the extra missing among closed leads (label source won / crm_lost) and among open ones (open / stalled / ghosted), at as_of whatever the label mode; a difference of at least 0.50: flagged "missingness tracks outcome status — check for leakage" (a flag only).
 
-| extra | kind | levels | design columns | training AUC | flag |
-|---|---|---|---|---|---|
-| landing_page | categorical | 25 | 24 | 0.714 |  |
+| extra | kind | levels | design columns | training AUC | flag | missing: closed | missing: open | missingness flag |
+|---|---|---|---|---|---|---|---|---|
+| landing_page | categorical | 25 | 24 | 0.714 |  | 0.000 | n/a |  |
 
 Flagged: none.
 
@@ -699,21 +763,21 @@ Generic design collinearity: PASS: max |corr| = 0.744 between x_revenue=>3922.42
 
 ###### Leakage screen
 
-Single-feature training AUC of each extra's encoded levels (each level scored by its training win rate), folded as |AUC − 0.5| + 0.5. Above 0.90: flagged "check for leakage" (a flag only; nothing is dropped).
+Single-feature training AUC of each extra's encoded levels (each level scored by its training win rate), folded as |AUC − 0.5| + 0.5. Above 0.90: flagged "check for leakage" (a flag only; nothing is dropped). Missingness screen: the share of cleaned leads with the extra missing among closed leads (label source won / crm_lost) and among open ones (open / stalled / ghosted), at as_of whatever the label mode; a difference of at least 0.50: flagged "missingness tracks outcome status — check for leakage" (a flag only).
 
-| extra | kind | levels | design columns | training AUC | flag |
-|---|---|---|---|---|---|
-| product | categorical | 8 | 7 | 0.518 |  |
-| sales_agent | categorical | 32 | 31 | 0.538 |  |
-| sector | categorical | 12 | 11 | 0.516 |  |
-| revenue | numeric | 6 | 5 | 0.519 |  |
-| employees | numeric | 6 | 5 | 0.520 |  |
-| office_location | categorical | 15 | 14 | 0.513 |  |
-| year_established | numeric | 6 | 5 | 0.519 |  |
-| regional_office | categorical | 5 | 4 | 0.507 |  |
-| manager | categorical | 8 | 7 | 0.510 |  |
+| extra | kind | levels | design columns | training AUC | flag | missing: closed | missing: open | missingness flag |
+|---|---|---|---|---|---|---|---|---|
+| product | categorical | 8 | 7 | 0.518 |  | 0.000 | 0.000 |  |
+| sales_agent | categorical | 32 | 31 | 0.538 |  | 0.000 | 0.000 |  |
+| sector | categorical | 12 | 11 | 0.516 |  | 0.000 | 0.685 | missingness tracks outcome status — check for leakage |
+| revenue | numeric | 6 | 5 | 0.519 |  | 0.000 | 0.685 | missingness tracks outcome status — check for leakage |
+| employees | numeric | 6 | 5 | 0.520 |  | 0.000 | 0.685 | missingness tracks outcome status — check for leakage |
+| office_location | categorical | 15 | 14 | 0.513 |  | 0.000 | 0.685 | missingness tracks outcome status — check for leakage |
+| year_established | numeric | 6 | 5 | 0.519 |  | 0.000 | 0.685 | missingness tracks outcome status — check for leakage |
+| regional_office | categorical | 5 | 4 | 0.507 |  | 0.000 | 0.000 |  |
+| manager | categorical | 8 | 7 | 0.510 |  | 0.000 | 0.000 |  |
 
-Flagged: none.
+Flagged: sector, revenue, employees, office_location, year_established.
 
 ##### Baseline script output
 
@@ -961,33 +1025,33 @@ Generic design collinearity: FAIL (1 pairs with |corr| > 0.95): max |corr| = 0.9
 
 ###### Leakage screen
 
-Single-feature training AUC of each extra's encoded levels (each level scored by its training win rate), folded as |AUC − 0.5| + 0.5. Above 0.90: flagged "check for leakage" (a flag only; nothing is dropped).
+Single-feature training AUC of each extra's encoded levels (each level scored by its training win rate), folded as |AUC − 0.5| + 0.5. Above 0.90: flagged "check for leakage" (a flag only; nothing is dropped). Missingness screen: the share of cleaned leads with the extra missing among closed leads (label source won / crm_lost) and among open ones (open / stalled / ghosted), at as_of whatever the label mode; a difference of at least 0.50: flagged "missingness tracks outcome status — check for leakage" (a flag only).
 
-| extra | kind | levels | design columns | training AUC | flag |
-|---|---|---|---|---|---|
-| hotel | categorical | 4 | 3 | 0.538 |  |
-| lead_time | numeric | 6 | 5 | 0.888 |  |
-| arrival_month | categorical | 14 | 13 | 0.613 |  |
-| weekend_nights | numeric | 5 | 4 | 0.541 |  |
-| week_nights | numeric | 5 | 4 | 0.597 |  |
-| adults | numeric | 3 | 2 | 0.504 |  |
-| children | numeric | 3 | 2 | 0.504 |  |
-| babies | numeric | 3 | 2 | 0.503 |  |
-| meal | categorical | 7 | 6 | 0.539 |  |
-| country | categorical | 61 | 60 | 0.628 |  |
-| market_segment | categorical | 9 | 8 | 0.683 |  |
-| distribution_channel | categorical | 6 | 5 | 0.580 |  |
-| repeated_guest | categorical | 4 | 3 | 0.517 |  |
-| previous_cancellations | numeric | 3 | 2 | 0.556 |  |
-| previous_bookings_kept | numeric | 3 | 2 | 0.521 |  |
-| reserved_room_type | categorical | 10 | 9 | 0.535 |  |
-| deposit_type | categorical | 5 | 4 | 0.624 |  |
-| agent | categorical | 129 | 128 | 0.716 |  |
-| company | categorical | 26 | 25 | 0.541 |  |
-| customer_type | categorical | 6 | 5 | 0.530 |  |
-| adr | numeric | 6 | 5 | 0.556 |  |
-| parking_spaces | numeric | 3 | 2 | 0.546 |  |
-| special_requests | numeric | 4 | 3 | 0.585 |  |
+| extra | kind | levels | design columns | training AUC | flag | missing: closed | missing: open | missingness flag |
+|---|---|---|---|---|---|---|---|---|
+| hotel | categorical | 4 | 3 | 0.538 |  | 0.000 | n/a |  |
+| lead_time | numeric | 6 | 5 | 0.888 |  | 0.000 | n/a |  |
+| arrival_month | categorical | 14 | 13 | 0.613 |  | 0.000 | n/a |  |
+| weekend_nights | numeric | 5 | 4 | 0.541 |  | 0.000 | n/a |  |
+| week_nights | numeric | 5 | 4 | 0.597 |  | 0.000 | n/a |  |
+| adults | numeric | 3 | 2 | 0.504 |  | 0.000 | n/a |  |
+| children | numeric | 3 | 2 | 0.504 |  | 0.000 | n/a |  |
+| babies | numeric | 3 | 2 | 0.503 |  | 0.000 | n/a |  |
+| meal | categorical | 7 | 6 | 0.539 |  | 0.000 | n/a |  |
+| country | categorical | 61 | 60 | 0.628 |  | 0.004 | n/a |  |
+| market_segment | categorical | 9 | 8 | 0.683 |  | 0.000 | n/a |  |
+| distribution_channel | categorical | 6 | 5 | 0.580 |  | 0.000 | n/a |  |
+| repeated_guest | categorical | 4 | 3 | 0.517 |  | 0.000 | n/a |  |
+| previous_cancellations | numeric | 3 | 2 | 0.556 |  | 0.000 | n/a |  |
+| previous_bookings_kept | numeric | 3 | 2 | 0.521 |  | 0.000 | n/a |  |
+| reserved_room_type | categorical | 10 | 9 | 0.535 |  | 0.000 | n/a |  |
+| deposit_type | categorical | 5 | 4 | 0.624 |  | 0.000 | n/a |  |
+| agent | categorical | 129 | 128 | 0.716 |  | 0.137 | n/a |  |
+| company | categorical | 26 | 25 | 0.541 |  | 0.943 | n/a |  |
+| customer_type | categorical | 6 | 5 | 0.530 |  | 0.000 | n/a |  |
+| adr | numeric | 6 | 5 | 0.556 |  | 0.000 | n/a |  |
+| parking_spaces | numeric | 3 | 2 | 0.546 |  | 0.000 | n/a |  |
+| special_requests | numeric | 4 | 3 | 0.585 |  | 0.000 | n/a |  |
 
 Flagged: none.
 
@@ -1036,17 +1100,53 @@ Screenshots, taken with Playwright against a local Keel (`streamlit run app/main
   the source's currency (BRL) although the card formats them as £, and Olist's values are inflated by the outlier
   noted in Phase 9.
 
-Found in passing, not fixed here (out of scope, Phase 9 behaviour): on any run trained on a converted dataset the EMVA
-form fails with its default session values ("Check the form."), because columns blank on every training lead are
-typed float in the bundle's lead schema and the default landing URL cannot be coerced; the form works with the
-session fields blank. See "Open items".
+Found in passing in part (b) (Phase 9 behaviour) and fixed in the fix round (D27, commit a210dc3): on any run
+trained on a converted dataset the EMVA form failed with its default session values ("Check the form."), because
+columns blank on every training lead are typed float in the bundle's lead schema and the default landing URL could
+not be coerced.
+
+## Review
+
+Two-axis review of parts (a) and (b), then one fix round (rulings D23-D33 above).
+
+**Spec axis** (does it do what the plan item and rulings say?):
+
+| finding | fix round |
+|---|---|
+| S1 CRM `account` blank only on open deals: the account extras' `missing` means "not closed yet"; the (a) explanation was wrong; Keel's legacy + generic training learns it (−33 points), the AUC screen does not see it | disclosed (D23: mapping header, "Reading the results", Open items; feature list unchanged); missingness screen added to the report and Keel (D25) and recomputed on the three datasets: it flags exactly the five CRM account extras |
+| S2 EMVA form note "every extra set to missing" was misleading where the model never saw a missing value | reworded, per-extra warnings on both lead formats (D26) |
+| S3 Phase 9 bug: the EMVA form fails on every run trained on a converted dataset | fixed in its own commit a210dc3 (D27), regression test on a converted fixture |
+| N1 hotel `country` (PRT cancels at 57% vs 24%) | caveat in the mapping header and above (D24) |
+| N2 CRM header called `product` ignored while it is a declared extra | header text fixed (D24) |
+| N3 drafted feature names could still clash | numeric suffix (D32) |
+| N4 a misspelt `x_` column scored as missing without a word | refused by a generic bundle (D30) |
+| N5 the pipeline accepted leads missing from `extra_features.csv` | refused (D28) |
+| N6 `inf` / `1e400` accepted as numeric extras | refused everywhere (D31) |
+
+**Standards axis** (does it follow CLAUDE.md and the repo conventions?):
+
+| finding | fix round |
+|---|---|
+| S1 the report named only 66af85c as not green | corrected under "Verification" |
+| S2 the pipeline's one-directional lead check (= spec N5) | D28 |
+| S3 `load_bundle` accepted extras without the generic feature set and vice versa | D29 |
+| S4 CLAUDE.md repo map missed `emva/generic.py` and `generic_report` | added (the two lines authorised) |
+| nits: `app/storage.py` repeated `EXTRA_FEATURES_FILE`; dead `rows = []` and a redundant `else: continue` in `app/ingest.py`; a stranded `__all__` entry in `emva/ingest/mapping.py`; `"horizon"` literal in `app/views/results.py`; `fit_encoder`'s unused `min_count` / `bins` parameters; the `FittedExtra` docstring's reference-first claim (false for an all-missing numeric); long lines in `emva/generic.py`, `emva/ingest/mapping.py`, `emva/persist.py`; ADR 0009 / 0017 status lines; `docs/ARCHITECTURE.md` section 2; the hotel footnote; the D11 note | all fixed (the docstring now states the real order; levels unchanged, so designs and bundles are unchanged) |
+
+**Stays open:** the CRM missingness itself (disclosed, not fixed: changing the feature list now would be post hoc);
+extras on the EMVA form (D17, D26); the other items under "Open items".
 
 ## Verification
 
-- Tests: **804 passed, 1 skipped** (`make test`, then compileall) (780 passed + 1 skipped after part (a); 751 passed
-  + 1 skipped at the start of the phase). Part (b) commit 66af85c (extras validation) is not green on its own:
-  `tests/test_ingest.py::test_committed_mapping_converts_its_fixture` validated the converted files without
-  `dataset.json`, which the new rule needs next to `extra_features.csv`; the test is fixed in 8aa73e4.
+- Tests: **811 passed, 1 skipped** after the fix round (`make test`, then compileall) (804 passed + 1 skipped at the
+  end of part (b); 780 passed + 1 skipped after part (a); 751 passed + 1 skipped at the start of the phase). Commits
+  66af85c, ec3b8cf and 20621dc are not green on their own
+  (`tests/test_ingest.py::test_committed_mapping_converts_its_fixture` validated the converted files without
+  `dataset.json`, which the new rule needs next to `extra_features.csv`); fixed in 8aa73e4. Every fix-round commit
+  ran its affected test files green before it was made.
+- Fix round: the three Kaggle generic runs and reports were recomputed (`runs/<name>-generic/`): `scores.csv`
+  byte-identical to before, and the reports differ only in the leakage screen's new missingness columns, text and
+  "Flagged" line (CRM); the embedded reports above are the recomputed ones.
 - `make baseline`: PASS. AUC 0.814, Brier 0.1006, top-20% wins 0.571, revenue 0.795, weights and scores
   byte-identical between the baseline and emva runs (on simulated data).
 - `python -m emva.eval.report --data data/v1` and `--data data/v2`: byte-identical to the reports saved before the
@@ -1057,11 +1157,15 @@ session fields blank. See "Open items".
 
 ## Open items
 
-- **Keel, EMVA form on converted runs** (found in part b, Phase 9 behaviour): the default session values fail on a
-  run trained on a converted dataset (all-blank training columns are typed float in the bundle's lead schema).
-  Either coerce text fields by their declared `FieldSpec` type or prefill a converted run's form with blank session
-  fields; needs its own task and a check that `score_leads` still matches the batch run.
-- **Keel, extras on the EMVA form:** not offered (D17); revisit if customers score generic runs by form.
+- **CRM `account` missingness** (D23): the five account extras' `missing` means "not closed yet" (blank only on open
+  deals). Disclosed, not fixed: the feature list stays as registered. Under horizon labels a no-account lead scores
+  as the reference levels; a legacy-label generic model on this dataset learns "missing = lost" (the missingness
+  screen flags it). A future mapping revision could drop the account extras or derive a "has account" flag, as a new
+  pre-registered run.
+- **Keel, extras on the EMVA form:** not offered (D17, D26: blank extras are explained and warned about); revisit if
+  customers score generic runs by form.
+- The EMVA-form failure on converted runs (Phase 9 bug) is fixed (D27, a210dc3) and is no longer open; it could be
+  cherry-picked onto `main` ahead of this branch.
 - The hotel collinearity failure (`distribution_channel=GDS` ~ `agent=195`) and the horizon label's mechanical tie
   to `lead_time` are properties of that dataset under R28; neither is fixed here (no tuning after the numbers).
 - A date-part operation (weekday / month of a date) would allow Olist sign-up timing as an extra; not added.

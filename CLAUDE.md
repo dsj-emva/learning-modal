@@ -152,6 +152,7 @@ emva/io.py           load CSVs, normalise CRM stages, join enrichment, won_at/fi
 emva/labels.py       LabelMode/LabelConfig, legacy label, label_source, won_within_h, horizon_label, maturity, split
 emva/features.py     FeatureSet; legacy and v2 bucketed features (indicators, name enrichment, boilerplate text)
 emva/feature_spec.py FeatureSpec per feature set (levels, featuriser, design, fixed residual sd), like LabelConfig
+emva/generic.py      generic feature set (Phase 10): declared extras (extra_features.csv), train-only encoder, ADR 0024
 emva/boilerplate.py  boilerplate snippets + token-set Jaccard detector (v2 text=copy_paste)
 emva/design.py       legacy data-driven dummies; v2 fixed_design from V2_LEVELS (unknown level raises)
 emva/model.py        L2 logistic regression, predict, scorecard (weights.csv)
@@ -166,7 +167,7 @@ emva/ingest/         Phase 9 converter: mapping.py (TOML schema), profile.py (re
 emva/eval/           bootstrap, metrics, regression, status_quo, report, label_study, ground_truth_reference,
                      collinearity, feature_selection, phase2_study, value_report (value transforms, click-ID coverage),
                      context_harness; Phase 4: hardening (entry point), rolling, subsampling, ceiling (reads
-                     ground truth), calibration_decay, regularisation, interactions
+                     ground truth), calibration_decay, regularisation, interactions; Phase 10: generic_report
 app/                 Keel, the hosted internal tool (Phase 8; docs/ARCHITECTURE.md section 8, reports/app.md):
                      storage, validation, training + job, results, scoring, ingest (Map & convert, Phase 9), auth (pure)
                      and main/ui/views/theme (Streamlit)

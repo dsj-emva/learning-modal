@@ -1,6 +1,6 @@
 # 0009. Fixed design schema: missingness as explicit indicators, no data-dependent column pruning
 
-- Status: Accepted, implemented (merged with Phase 2)
+- Status: Accepted, implemented (merged with Phase 2; unknown levels of declared extras amended by ADR 0024)
 - Date: 2026-09-25
 - Source: orchestrator rulings on Phase 2, branch `phase2-features`: indicator encoding (commit 4e1b763),
   fixed level lists (09199d0), report `--strict` (4c1b0fd); `reports/phase2.md`, "Orchestrator decisions"

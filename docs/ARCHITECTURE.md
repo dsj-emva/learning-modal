@@ -75,6 +75,9 @@ avoid a pipeline ↔ report import cycle. Nothing in `emva/` outside `eval/` imp
   boilerplate detection by token-set Jaccard ≥ 0.6 (`emva/boilerplate.py`), `c_budget`, `c_timeline`,
   `ip_type`, `edits_1_4` dropped (plan 2.6), residual sd estimated from training residuals. The design is
   `fixed_design` over the declared `V2_LEVELS`: always the same 39 columns.
+- `generic` (Phase 10, ADR 0024): the v2 design plus the `x_<name>=<level>` columns of a converted dataset's
+  declared extras (`extra_features.csv`), encoded on the training leads only and frozen in the bundle. Needs a
+  dataset whose `dataset.json` declares `features`; see section 10.
 - `--label-mode legacy --feature-set legacy` must stay byte-identical to `baseline/`; `make baseline`
   runs exactly that.
 
@@ -243,7 +246,7 @@ flowchart LR
 | `app/validation.py` | `validate_files` -> `ValidationReport(errors, warnings, summary)` of `Issue(file, column, message, rows)`; required columns derived from `emva.scoring.submit_time_fields` and what `emva.io` / `emva.eval.status_quo` read; a converted dataset's `dataset.json` (`emva.dataset_meta.parse_dataset_meta`, its `as_of` for the snapshot warning, a warning naming the leads whose CRM times were reordered) and `mapping.toml` (a confirmed mapping); Phase 10 (b): `extra_features.csv` against `dataset.json` `features` (columns, unique `lead_id`, the same leads both ways, numeric extras numeric) and the summary's `extra_features`; never raises on user input |
 | `app/training.py`, `app/job.py` | `TrainingConfig` (label mode, feature set), the CLI and report argv, `pre_training_summary`, `start_training` (spawns the job, output to `train.log`), `finish_run` (parses the printed summary); a vanished job becomes `failed` in `app.storage.list_runs` (`job_alive`). The job runs the CLI, then the report when the dataset has rules or is converted (`report_available`), then records the outcome itself, so a run completes with no browser open. Dates come from `emva.dataset_meta.dataset_dates` (ADR 0020); Phase 10 (b): `feature_set_options` (generic only with `extra_features.csv`), `TrainingSummary.extras` |
 | `app/results.py` | Results-page frames from `scores.csv` / `weights.csv` (round-trip float parsing) + the dataset: `evaluate` (frozen mature or legacy test set; the report's baseline, model and status-quo `ScoredModel`s), `standard_table` (`emva.eval.report.headline_frame` / `paired_frame`), `calibration`, `auc_month` (bootstrap CI per month), `scorecard` (plain feature names), `value_distribution`, `training_base_rate`. `baseline_scores` returns no scores and a reason on a converted dataset or a failed script; `kpi_reference` picks status quo, else baseline, else nothing (ADR 0022); Phase 10 (b): `generic_comparison` / `GenericSection` (v2 and generic retrained on the same leads, `emva.eval.generic_report.compare` on the selected test set, collinearity, leakage screen; refused when the retrain does not reproduce `scores.csv`), `scorecard(run_dir, extras)` names `x_` columns and their references. Nothing is scraped from `report.txt` |
-| `app/scoring.py` | Form sections, labels and defaults over `submit_time_fields` (session fields default to a typical visit, because a blank one sets `session_missing`), `values_from_lead`, `score_form`, `describe_transform`; source format for a converted dataset's run: `run_mapping` (via `app.storage.read_mapping`), `source_fields`, `frames_from_source_form` / `_uploads`, `score_source` (`emva.ingest.convert_leads` then `score_leads`), `source_lead_score`; Phase 10 (b): `source_fields(mapping, bundle)` gives a generic bundle's extras their training levels (+ `other`) or a number input (`number_text`), `extra_names` (the EMVA form's "scored as missing" note) |
+| `app/scoring.py` | Form sections, labels and defaults over `submit_time_fields` (session fields default to a typical visit, because a blank one sets `session_missing`), `values_from_lead`, `score_form`, `describe_transform`; source format for a converted dataset's run: `run_mapping` (via `app.storage.read_mapping`), `source_fields`, `frames_from_source_form` / `_uploads`, `score_source` (`emva.ingest.convert_leads` then `score_leads`), `source_lead_score`; Phase 10 (b): `source_fields(mapping, bundle)` gives a generic bundle's extras their training levels (+ `other`) or a number input (`number_text`), `extra_names` (the EMVA form's note on blank extras), `missing_unseen` / `blank_unseen` (fix round: the per-extra warning when a blank extra scores as its reference level) |
 | `app/auth.py` | `expected_password` (`APP_PASSWORD`; unset or blank = refuse), `check_password` (`hmac.compare_digest`) |
 | `app/main.py`, `app/ui.py`, `app/views/` | Entrypoint (gate, sidebar, `st.navigation`), cached loaders (`st.cache_data` for evaluation frames and, Phase 10 (b), `generic_section`; `st.cache_resource` for bundles), the three pages |
 | `app/theme.py`, `app/components.py`, `app/charts.py`, `.streamlit/config.toml` | Identity: palette, fonts, the one stylesheet; escaped HTML components (KPI cards, pills, file cards, result card, tables); the shared Plotly template |
@@ -303,7 +306,7 @@ flowchart LR
     FIT --> D["design = v2 39 columns + x_<name>=<level>"]
     FIT --> B["ModelBundle.extras (format 2)"]
     B --> SC["emva.scoring: unseen category -> other,<br/>out-of-range number -> edge bin"]
-    D --> REP["emva.eval.report: Generic vs v2<br/>(eval/generic_report: paired AUC, criterion, leakage screen)"]
+    D --> REP["emva.eval.report: Generic vs v2<br/>(eval/generic_report: paired AUC, criterion,<br/>leakage and missingness screen)"]
 ```
 
 | module | owns |
@@ -311,14 +314,14 @@ flowchart LR
 | `emva/generic.py` | `ExtraFeature`, `ExtraKind`, `FittedExtra` / `GenericEncoder` (`levels`, `design`, `columns`), `fit_encoder`, `numeric_edges`, `bin_labels`, `read_extra_features`, `EXTRA_FEATURES_FILE`, `EXTRA_PREFIX` (`x_`), `OTHER` |
 | `emva/feature_spec.py` | `GENERIC_SPEC` (v2 spec with `extras = True`) |
 | `emva/pipeline.py` | joins the extras, fits the encoder on the train mask, `PipelineResult.extras` |
-| `emva/persist.py` | `ModelBundle.extras`, `FORMAT_VERSION = 2`; (b) `READABLE_FORMATS = {1, 2}`: a format-1 bundle loads with `extras = None` |
-| `emva/scoring.py` | reads `x_<name>` columns with a generic bundle (absent = missing); ignores `x_` columns a bundle does not use |
+| `emva/persist.py` | `ModelBundle.extras`, `FORMAT_VERSION = 2`; (b) `READABLE_FORMATS = {1, 2}`: a format-1 bundle loads with `extras = None`; (fix round) refused unless extras are set exactly for the generic feature set |
+| `emva/scoring.py` | reads `x_<name>` columns with a generic bundle (absent = missing); a bundle without extras ignores `x_` columns, a generic one refuses an `x_` column it does not declare (fix round); a text field stays text in a column blank on every training lead (Phase 9 fix) |
 | `emva/ingest/mapping.py` | `FeatureMap`, `[[features]]` / `features_confirmed` in the TOML schema, `check_confirmed` |
 | `emva/ingest/convert.py` | `extra_values`, `extra_features.csv`, `dataset.json` `features`, `x_` columns in `convert_leads` |
 | `emva/ingest/draft.py` | target `feature` + `feature_kind` in the reply schema (`mapping-draft-v2`), `feature_name`; drafts never confirm features |
-| `emva/eval/generic_report.py` | `compare` (paired AUC generic − v2 per test set, the Phase 10 criterion), `leakage_screen` (folded single-feature training AUC, flag > 0.90) |
+| `emva/eval/generic_report.py` | `compare` (paired AUC generic − v2 per test set, the Phase 10 criterion), `leakage_screen` (folded single-feature training AUC, flag > 0.90; fix round: the missingness screen, share missing among closed vs open leads by `label_source`, flag at a difference >= `GENERIC_MISSINGNESS_FLAG` = 0.5), `flagged` |
 | `app/storage.py`, `app/validation.py` | (b) `extra_features.csv` a training file, validated against `dataset.json` `features` and the leads |
 | `app/ingest.py`, `app/views/upload.py` | (b) extras in the review table, the "Extra features are known when the lead is submitted" confirmation, the coverage card's extras, `generic` offered only with extras |
 | `app/training.py` | (b) `feature_set_options`, the extras in the pre-training summary |
-| `app/results.py`, `app/views/results.py` | (b) "Generic vs v2" (`generic_comparison`: `generic_report.compare`, collinearity, leakage screen) and the scorecard's `x_` rows |
-| `app/scoring.py`, `app/views/score.py` | (b) source-format inputs for extras; EMVA form: extras scored as `missing`, with a note |
+| `app/results.py`, `app/views/results.py` | (b) "Generic vs v2" (`generic_comparison`: `generic_report.compare`, collinearity, leakage and missingness screen) and the scorecard's `x_` rows |
+| `app/scoring.py`, `app/views/score.py` | (b) source-format inputs for extras; EMVA form: extras blank, with a note; (fix round) `missing_unseen` / `blank_unseen`: a warning per blank extra that no training lead had missing (it scores as the reference level) |
