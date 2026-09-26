@@ -1,0 +1,236 @@
+# DRAFT by claude-haiku-4-5-20251001 from column profiles of hotel_bookings (no rows were sent). Review every row, add derived
+# expressions where needed, check the outcome, then set outcome_confirmed = true.
+
+name = "hotel_bookings_draft"
+as_of = "2017-09-15"
+test_from = "2017-02-01"
+source_url = ""
+licence = ""
+outcome_confirmed = false
+drop_rows_without_created_at = false
+features_confirmed = false
+
+[[sources]]
+name = "hotel_bookings"
+file = "hotel_bookings.csv"
+
+[lead]
+created_at = "hotel_bookings.reservation_status_date"
+
+[outcome]
+kind = "won_flag"
+column = "hotel_bookings.is_canceled"
+lost_without_close = "error"
+won_values = ["0"]
+lost_values = ["1"]
+
+[review]
+created_at = { reason = "Earliest date known for booking creation", confidence = "low" }
+outcome = { reason = "0=completed booking (won), 1=canceled (lost)", confidence = "high" }
+
+[[fields]]
+source = "hotel_bookings.is_canceled"
+target = "ignore"
+reason = "Outcome variable, not a feature"
+confidence = "high"
+
+[[fields]]
+source = "hotel_bookings.arrival_date_year"
+target = "ignore"
+reason = "Part of arrival date, use with month and day"
+confidence = "high"
+
+[[fields]]
+source = "hotel_bookings.arrival_date_month"
+target = "ignore"
+reason = "Part of arrival date, use with year and day"
+confidence = "high"
+
+[[fields]]
+source = "hotel_bookings.arrival_date_week_number"
+target = "ignore"
+reason = "Derived from arrival date components"
+confidence = "high"
+
+[[fields]]
+source = "hotel_bookings.arrival_date_day_of_month"
+target = "ignore"
+reason = "Part of arrival date, use with year and month"
+confidence = "high"
+
+[[fields]]
+source = "hotel_bookings.assigned_room_type"
+target = "ignore"
+reason = "Only known after arrival, leaks outcome"
+confidence = "high"
+
+[[fields]]
+source = "hotel_bookings.booking_changes"
+target = "ignore"
+reason = "Changes occur after booking, leaks outcome"
+confidence = "high"
+
+[[fields]]
+source = "hotel_bookings.agent"
+target = "ignore"
+reason = "Agent ID, not predictive feature"
+confidence = "high"
+
+[[fields]]
+source = "hotel_bookings.company"
+target = "ignore"
+reason = "Company ID, not predictive feature"
+confidence = "high"
+
+[[fields]]
+source = "hotel_bookings.reservation_status"
+target = "ignore"
+reason = "Outcome variable, not a feature"
+confidence = "high"
+
+[[features]]
+source = "hotel_bookings.hotel"
+kind = "categorical"
+name = "hotel"
+reason = "Hotel type describes the booking at creation time"
+confidence = "high"
+
+[[features]]
+source = "hotel_bookings.lead_time"
+kind = "numeric"
+name = "lead_time"
+reason = "Days between booking and arrival, known at creation"
+confidence = "high"
+
+[[features]]
+source = "hotel_bookings.stays_in_weekend_nights"
+kind = "numeric"
+name = "stays_in_weekend_nights"
+reason = "Booking attribute known at creation time"
+confidence = "high"
+
+[[features]]
+source = "hotel_bookings.stays_in_week_nights"
+kind = "numeric"
+name = "stays_in_week_nights"
+reason = "Booking attribute known at creation time"
+confidence = "high"
+
+[[features]]
+source = "hotel_bookings.adults"
+kind = "numeric"
+name = "adults"
+reason = "Party size known at booking creation"
+confidence = "high"
+
+[[features]]
+source = "hotel_bookings.children"
+kind = "numeric"
+name = "children"
+reason = "Party composition known at booking creation"
+confidence = "high"
+
+[[features]]
+source = "hotel_bookings.babies"
+kind = "numeric"
+name = "babies"
+reason = "Party composition known at booking creation"
+confidence = "high"
+
+[[features]]
+source = "hotel_bookings.meal"
+kind = "categorical"
+name = "meal"
+reason = "Meal plan chosen at booking creation"
+confidence = "high"
+
+[[features]]
+source = "hotel_bookings.country"
+kind = "categorical"
+name = "country"
+reason = "Guest origin known at booking creation"
+confidence = "high"
+
+[[features]]
+source = "hotel_bookings.market_segment"
+kind = "categorical"
+name = "market_segment"
+reason = "Booking channel/segment known at creation"
+confidence = "high"
+
+[[features]]
+source = "hotel_bookings.distribution_channel"
+kind = "categorical"
+name = "distribution_channel"
+reason = "Distribution method known at booking creation"
+confidence = "high"
+
+[[features]]
+source = "hotel_bookings.is_repeated_guest"
+kind = "categorical"
+name = "is_repeated_guest"
+reason = "Repeat status known at booking creation"
+confidence = "high"
+
+[[features]]
+source = "hotel_bookings.previous_cancellations"
+kind = "numeric"
+name = "previous_cancellations"
+reason = "Guest history known at booking creation"
+confidence = "high"
+
+[[features]]
+source = "hotel_bookings.previous_bookings_not_canceled"
+kind = "numeric"
+name = "previous_bookings_not_canceled"
+reason = "Guest history known at booking creation"
+confidence = "high"
+
+[[features]]
+source = "hotel_bookings.reserved_room_type"
+kind = "categorical"
+name = "reserved_room_type"
+reason = "Room type reserved at booking creation"
+confidence = "high"
+
+[[features]]
+source = "hotel_bookings.deposit_type"
+kind = "categorical"
+name = "deposit_type"
+reason = "Deposit terms set at booking creation"
+confidence = "high"
+
+[[features]]
+source = "hotel_bookings.days_in_waiting_list"
+kind = "numeric"
+name = "days_in_waiting_list"
+reason = "Waiting period known at booking creation"
+confidence = "high"
+
+[[features]]
+source = "hotel_bookings.customer_type"
+kind = "categorical"
+name = "customer_type"
+reason = "Customer classification known at creation"
+confidence = "high"
+
+[[features]]
+source = "hotel_bookings.adr"
+kind = "numeric"
+name = "adr"
+reason = "Average daily rate set at booking creation"
+confidence = "high"
+
+[[features]]
+source = "hotel_bookings.required_car_parking_spaces"
+kind = "numeric"
+name = "required_car_parking_spaces"
+reason = "Parking request known at booking creation"
+confidence = "high"
+
+[[features]]
+source = "hotel_bookings.total_of_special_requests"
+kind = "numeric"
+name = "total_of_special_requests"
+reason = "Special requests made at booking creation"
+confidence = "high"

@@ -1,0 +1,1420 @@
+{
+ "entries": {
+  "295b1fc0397dcf17a9737d3f0231f71ec8e9304e562a8fc932cb882e16c9a515": {
+   "brief_hash": "no-brief",
+   "card_hash": "2d4321644c1a6a62",
+   "error": "",
+   "model_id": "claude-haiku-4-5-20251001",
+   "prompt_fingerprint": "dde4d3b908867064",
+   "prompt_version": "mapping-draft-v3",
+   "raw": null,
+   "reply": {
+    "columns": [
+     {
+      "column": "opportunity_id",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "sales_pipeline.csv",
+      "reason": "Unique identifier for each opportunity/lead",
+      "target": "lead.lead_id",
+      "value_map": []
+     },
+     {
+      "column": "engage_date",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "sales_pipeline.csv",
+      "reason": "Earliest date when lead engagement began",
+      "target": "lead.created_at",
+      "value_map": []
+     },
+     {
+      "column": "close_date",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "sales_pipeline.csv",
+      "reason": "Date when deal was closed (won or lost)",
+      "target": "lead.close_at",
+      "value_map": []
+     },
+     {
+      "column": "close_value",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "sales_pipeline.csv",
+      "reason": "Monetary value of closed deal",
+      "target": "lead.deal_value",
+      "value_map": []
+     },
+     {
+      "column": "product",
+      "confidence": "medium",
+      "feature_kind": "categorical",
+      "file": "sales_pipeline.csv",
+      "reason": "Product offered; could predict conversion",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "sales_agent",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "sales_pipeline.csv",
+      "reason": "Sales agent name; not a lead attribute",
+      "target": "ignore",
+      "value_map": []
+     },
+     {
+      "column": "account",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "accounts.csv",
+      "reason": "Company name associated with the lead",
+      "target": "company_name",
+      "value_map": []
+     },
+     {
+      "column": "sector",
+      "confidence": "medium",
+      "feature_kind": "categorical",
+      "file": "accounts.csv",
+      "reason": "Industry sector; could predict outcome",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "year_established",
+      "confidence": "medium",
+      "feature_kind": "numeric",
+      "file": "accounts.csv",
+      "reason": "Company age; could indicate stability",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "revenue",
+      "confidence": "medium",
+      "feature_kind": "numeric",
+      "file": "accounts.csv",
+      "reason": "Company revenue; could predict deal size",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "employees",
+      "confidence": "medium",
+      "feature_kind": "numeric",
+      "file": "accounts.csv",
+      "reason": "Company size; could predict conversion",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "office_location",
+      "confidence": "medium",
+      "feature_kind": "categorical",
+      "file": "accounts.csv",
+      "reason": "Geographic location; could affect sales cycle",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "subsidiary_of",
+      "confidence": "low",
+      "feature_kind": "none",
+      "file": "accounts.csv",
+      "reason": "Parent company; mostly missing, not predictive",
+      "target": "ignore",
+      "value_map": []
+     },
+     {
+      "column": "manager",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "sales_teams.csv",
+      "reason": "Manager name; not a lead attribute",
+      "target": "ignore",
+      "value_map": []
+     },
+     {
+      "column": "regional_office",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "sales_teams.csv",
+      "reason": "Sales team region; not a lead attribute",
+      "target": "ignore",
+      "value_map": []
+     }
+    ],
+    "outcome": {
+     "column": "deal_stage",
+     "confidence": "high",
+     "file": "sales_pipeline.csv",
+     "kind": "stage",
+     "lost_values": [
+      "Lost"
+     ],
+     "reason": "Deal stage indicates lead outcome status",
+     "stage_map": [
+      {
+       "stage": "New",
+       "value": "Prospecting"
+      },
+      {
+       "stage": "Contacted",
+       "value": "Engaging"
+      },
+      {
+       "stage": "Won",
+       "value": "Won"
+      },
+      {
+       "stage": "Lost",
+       "value": "Lost"
+      }
+     ],
+     "won_values": [
+      "Won"
+     ]
+    },
+    "sources": [
+     {
+      "file": "sales_pipeline.csv",
+      "join_on": ""
+     },
+     {
+      "file": "accounts.csv",
+      "join_on": "account"
+     },
+     {
+      "file": "sales_teams.csv",
+      "join_on": "sales_agent"
+     }
+    ]
+   },
+   "status": "ok"
+  },
+  "4f27f2d7d5db12b697fb6d80dd0d934224c5511a121d939ed344881aefc64200": {
+   "brief_hash": "no-brief",
+   "card_hash": "84e171103e61ecd6",
+   "error": "",
+   "model_id": "claude-haiku-4-5-20251001",
+   "prompt_fingerprint": "dde4d3b908867064",
+   "prompt_version": "mapping-draft-v3",
+   "raw": null,
+   "reply": {
+    "columns": [
+     {
+      "column": "hotel",
+      "confidence": "high",
+      "feature_kind": "categorical",
+      "file": "hotel_bookings.csv",
+      "reason": "Hotel type at time of booking; predicts cancellation",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "lead_time",
+      "confidence": "high",
+      "feature_kind": "numeric",
+      "file": "hotel_bookings.csv",
+      "reason": "Days between booking and arrival; predicts cancellation",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "arrival_date_year",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "hotel_bookings.csv",
+      "reason": "Derived from arrival date; use arrival_date components",
+      "target": "ignore",
+      "value_map": []
+     },
+     {
+      "column": "arrival_date_month",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "hotel_bookings.csv",
+      "reason": "Derived from arrival date; use arrival_date components",
+      "target": "ignore",
+      "value_map": []
+     },
+     {
+      "column": "arrival_date_week_number",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "hotel_bookings.csv",
+      "reason": "Derived from arrival date; use arrival_date components",
+      "target": "ignore",
+      "value_map": []
+     },
+     {
+      "column": "arrival_date_day_of_month",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "hotel_bookings.csv",
+      "reason": "Derived from arrival date; use arrival_date components",
+      "target": "ignore",
+      "value_map": []
+     },
+     {
+      "column": "stays_in_weekend_nights",
+      "confidence": "high",
+      "feature_kind": "numeric",
+      "file": "hotel_bookings.csv",
+      "reason": "Stay duration component; predicts cancellation behavior",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "stays_in_week_nights",
+      "confidence": "high",
+      "feature_kind": "numeric",
+      "file": "hotel_bookings.csv",
+      "reason": "Stay duration component; predicts cancellation behavior",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "adults",
+      "confidence": "high",
+      "feature_kind": "numeric",
+      "file": "hotel_bookings.csv",
+      "reason": "Party size; predicts cancellation likelihood",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "children",
+      "confidence": "high",
+      "feature_kind": "numeric",
+      "file": "hotel_bookings.csv",
+      "reason": "Party composition; predicts cancellation behavior",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "babies",
+      "confidence": "high",
+      "feature_kind": "numeric",
+      "file": "hotel_bookings.csv",
+      "reason": "Party composition; predicts cancellation behavior",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "meal",
+      "confidence": "high",
+      "feature_kind": "categorical",
+      "file": "hotel_bookings.csv",
+      "reason": "Meal plan type; predicts cancellation likelihood",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "country",
+      "confidence": "high",
+      "feature_kind": "categorical",
+      "file": "hotel_bookings.csv",
+      "reason": "Guest origin; predicts cancellation by geography",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "market_segment",
+      "confidence": "high",
+      "feature_kind": "categorical",
+      "file": "hotel_bookings.csv",
+      "reason": "Booking source segment; predicts cancellation",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "distribution_channel",
+      "confidence": "high",
+      "feature_kind": "categorical",
+      "file": "hotel_bookings.csv",
+      "reason": "Booking channel; predicts cancellation behavior",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "is_repeated_guest",
+      "confidence": "high",
+      "feature_kind": "categorical",
+      "file": "hotel_bookings.csv",
+      "reason": "Repeat customer status; predicts cancellation",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "previous_cancellations",
+      "confidence": "high",
+      "feature_kind": "numeric",
+      "file": "hotel_bookings.csv",
+      "reason": "Historical cancellation count; predicts future cancellation",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "previous_bookings_not_canceled",
+      "confidence": "high",
+      "feature_kind": "numeric",
+      "file": "hotel_bookings.csv",
+      "reason": "Historical completion count; predicts cancellation",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "reserved_room_type",
+      "confidence": "high",
+      "feature_kind": "categorical",
+      "file": "hotel_bookings.csv",
+      "reason": "Room type requested; predicts cancellation",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "assigned_room_type",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "hotel_bookings.csv",
+      "reason": "Known only after check-in; leaks outcome",
+      "target": "ignore",
+      "value_map": []
+     },
+     {
+      "column": "booking_changes",
+      "confidence": "high",
+      "feature_kind": "numeric",
+      "file": "hotel_bookings.csv",
+      "reason": "Booking modifications; predicts cancellation",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "deposit_type",
+      "confidence": "high",
+      "feature_kind": "categorical",
+      "file": "hotel_bookings.csv",
+      "reason": "Deposit requirement; predicts cancellation",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "agent",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "hotel_bookings.csv",
+      "reason": "Agent ID; unique identifier, not predictive",
+      "target": "ignore",
+      "value_map": []
+     },
+     {
+      "column": "company",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "hotel_bookings.csv",
+      "reason": "Company ID; mostly missing, not predictive",
+      "target": "ignore",
+      "value_map": []
+     },
+     {
+      "column": "days_in_waiting_list",
+      "confidence": "high",
+      "feature_kind": "numeric",
+      "file": "hotel_bookings.csv",
+      "reason": "Waiting period before confirmation; predicts cancellation",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "customer_type",
+      "confidence": "high",
+      "feature_kind": "categorical",
+      "file": "hotel_bookings.csv",
+      "reason": "Customer classification; predicts cancellation",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "adr",
+      "confidence": "high",
+      "feature_kind": "numeric",
+      "file": "hotel_bookings.csv",
+      "reason": "Average daily rate; predicts cancellation behavior",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "required_car_parking_spaces",
+      "confidence": "high",
+      "feature_kind": "numeric",
+      "file": "hotel_bookings.csv",
+      "reason": "Parking requirement; predicts cancellation",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "total_of_special_requests",
+      "confidence": "high",
+      "feature_kind": "numeric",
+      "file": "hotel_bookings.csv",
+      "reason": "Special requests count; predicts cancellation",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "reservation_status",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "hotel_bookings.csv",
+      "reason": "Outcome variable; cannot be a feature",
+      "target": "ignore",
+      "value_map": []
+     },
+     {
+      "column": "reservation_status_date",
+      "confidence": "medium",
+      "feature_kind": "none",
+      "file": "hotel_bookings.csv",
+      "reason": "Earliest date known for booking; when it was finalized",
+      "target": "lead.created_at",
+      "value_map": []
+     }
+    ],
+    "outcome": {
+     "column": "is_canceled",
+     "confidence": "high",
+     "file": "hotel_bookings.csv",
+     "kind": "won_flag",
+     "lost_values": [
+      "1"
+     ],
+     "reason": "0=completed booking (won), 1=canceled (lost)",
+     "stage_map": [],
+     "won_values": [
+      "0"
+     ]
+    },
+    "sources": [
+     {
+      "file": "hotel_bookings.csv",
+      "join_on": ""
+     }
+    ]
+   },
+   "status": "ok"
+  },
+  "6edbded41cd69b6c927a32465bc8d3b89ad10d3f0bc96a62da4f248c170847c5": {
+   "brief_hash": "no-brief",
+   "card_hash": "84e171103e61ecd6",
+   "error": "",
+   "model_id": "claude-haiku-4-5-20251001",
+   "prompt_fingerprint": "dceae432c8626c23",
+   "prompt_version": "mapping-draft-v4",
+   "raw": null,
+   "reply": {
+    "columns": [
+     {
+      "column": "hotel",
+      "confidence": "high",
+      "feature_kind": "categorical",
+      "file": "hotel_bookings.csv",
+      "reason": "Hotel type describes the booking at creation time",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "is_canceled",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "hotel_bookings.csv",
+      "reason": "Outcome variable, not a feature",
+      "target": "ignore",
+      "value_map": []
+     },
+     {
+      "column": "lead_time",
+      "confidence": "high",
+      "feature_kind": "numeric",
+      "file": "hotel_bookings.csv",
+      "reason": "Days between booking and arrival, known at creation",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "arrival_date_year",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "hotel_bookings.csv",
+      "reason": "Part of arrival date, use with month and day",
+      "target": "ignore",
+      "value_map": []
+     },
+     {
+      "column": "arrival_date_month",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "hotel_bookings.csv",
+      "reason": "Part of arrival date, use with year and day",
+      "target": "ignore",
+      "value_map": []
+     },
+     {
+      "column": "arrival_date_week_number",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "hotel_bookings.csv",
+      "reason": "Derived from arrival date components",
+      "target": "ignore",
+      "value_map": []
+     },
+     {
+      "column": "arrival_date_day_of_month",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "hotel_bookings.csv",
+      "reason": "Part of arrival date, use with year and month",
+      "target": "ignore",
+      "value_map": []
+     },
+     {
+      "column": "stays_in_weekend_nights",
+      "confidence": "high",
+      "feature_kind": "numeric",
+      "file": "hotel_bookings.csv",
+      "reason": "Booking attribute known at creation time",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "stays_in_week_nights",
+      "confidence": "high",
+      "feature_kind": "numeric",
+      "file": "hotel_bookings.csv",
+      "reason": "Booking attribute known at creation time",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "adults",
+      "confidence": "high",
+      "feature_kind": "numeric",
+      "file": "hotel_bookings.csv",
+      "reason": "Party size known at booking creation",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "children",
+      "confidence": "high",
+      "feature_kind": "numeric",
+      "file": "hotel_bookings.csv",
+      "reason": "Party composition known at booking creation",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "babies",
+      "confidence": "high",
+      "feature_kind": "numeric",
+      "file": "hotel_bookings.csv",
+      "reason": "Party composition known at booking creation",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "meal",
+      "confidence": "high",
+      "feature_kind": "categorical",
+      "file": "hotel_bookings.csv",
+      "reason": "Meal plan chosen at booking creation",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "country",
+      "confidence": "high",
+      "feature_kind": "categorical",
+      "file": "hotel_bookings.csv",
+      "reason": "Guest origin known at booking creation",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "market_segment",
+      "confidence": "high",
+      "feature_kind": "categorical",
+      "file": "hotel_bookings.csv",
+      "reason": "Booking channel/segment known at creation",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "distribution_channel",
+      "confidence": "high",
+      "feature_kind": "categorical",
+      "file": "hotel_bookings.csv",
+      "reason": "Distribution method known at booking creation",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "is_repeated_guest",
+      "confidence": "high",
+      "feature_kind": "categorical",
+      "file": "hotel_bookings.csv",
+      "reason": "Repeat status known at booking creation",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "previous_cancellations",
+      "confidence": "high",
+      "feature_kind": "numeric",
+      "file": "hotel_bookings.csv",
+      "reason": "Guest history known at booking creation",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "previous_bookings_not_canceled",
+      "confidence": "high",
+      "feature_kind": "numeric",
+      "file": "hotel_bookings.csv",
+      "reason": "Guest history known at booking creation",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "reserved_room_type",
+      "confidence": "high",
+      "feature_kind": "categorical",
+      "file": "hotel_bookings.csv",
+      "reason": "Room type reserved at booking creation",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "assigned_room_type",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "hotel_bookings.csv",
+      "reason": "Only known after arrival, leaks outcome",
+      "target": "ignore",
+      "value_map": []
+     },
+     {
+      "column": "booking_changes",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "hotel_bookings.csv",
+      "reason": "Changes occur after booking, leaks outcome",
+      "target": "ignore",
+      "value_map": []
+     },
+     {
+      "column": "deposit_type",
+      "confidence": "high",
+      "feature_kind": "categorical",
+      "file": "hotel_bookings.csv",
+      "reason": "Deposit terms set at booking creation",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "agent",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "hotel_bookings.csv",
+      "reason": "Agent ID, not predictive feature",
+      "target": "ignore",
+      "value_map": []
+     },
+     {
+      "column": "company",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "hotel_bookings.csv",
+      "reason": "Company ID, not predictive feature",
+      "target": "ignore",
+      "value_map": []
+     },
+     {
+      "column": "days_in_waiting_list",
+      "confidence": "high",
+      "feature_kind": "numeric",
+      "file": "hotel_bookings.csv",
+      "reason": "Waiting period known at booking creation",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "customer_type",
+      "confidence": "high",
+      "feature_kind": "categorical",
+      "file": "hotel_bookings.csv",
+      "reason": "Customer classification known at creation",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "adr",
+      "confidence": "high",
+      "feature_kind": "numeric",
+      "file": "hotel_bookings.csv",
+      "reason": "Average daily rate set at booking creation",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "required_car_parking_spaces",
+      "confidence": "high",
+      "feature_kind": "numeric",
+      "file": "hotel_bookings.csv",
+      "reason": "Parking request known at booking creation",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "total_of_special_requests",
+      "confidence": "high",
+      "feature_kind": "numeric",
+      "file": "hotel_bookings.csv",
+      "reason": "Special requests made at booking creation",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "reservation_status",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "hotel_bookings.csv",
+      "reason": "Outcome variable, not a feature",
+      "target": "ignore",
+      "value_map": []
+     },
+     {
+      "column": "reservation_status_date",
+      "confidence": "low",
+      "feature_kind": "none",
+      "file": "hotel_bookings.csv",
+      "reason": "Earliest date known for booking creation",
+      "target": "lead.created_at",
+      "value_map": []
+     }
+    ],
+    "joins": [],
+    "outcome": {
+     "column": "is_canceled",
+     "confidence": "high",
+     "file": "hotel_bookings.csv",
+     "kind": "won_flag",
+     "lost_values": [
+      "1"
+     ],
+     "reason": "0=completed booking (won), 1=canceled (lost)",
+     "stage_map": [],
+     "won_values": [
+      "0"
+     ]
+    },
+    "primary_file": "hotel_bookings.csv"
+   },
+   "status": "ok"
+  },
+  "accb884db883f0fdea43d36e38f84d60e834fa21c9945b3e2064604abf4f38d2": {
+   "brief_hash": "no-brief",
+   "card_hash": "732fe1480fdf654c",
+   "error": "expected exactly one primary source (empty join_on), got 0",
+   "model_id": "claude-haiku-4-5-20251001",
+   "prompt_fingerprint": "dde4d3b908867064",
+   "prompt_version": "mapping-draft-v3",
+   "raw": "{\"sources\":[{\"file\":\"olist_marketing_qualified_leads_dataset.csv\",\"join_on\":\"mql_id\"},{\"file\":\"olist_closed_deals_dataset.csv\",\"join_on\":\"mql_id\"}],\"columns\":[{\"file\":\"olist_marketing_qualified_leads_dataset.csv\",\"column\":\"mql_id\",\"target\":\"lead.lead_id\",\"feature_kind\":\"none\",\"value_map\":[],\"reason\":\"Unique identifier for each lead\",\"confidence\":\"high\"},{\"file\":\"olist_marketing_qualified_leads_dataset.csv\",\"column\":\"first_contact_date\",\"target\":\"lead.created_at\",\"feature_kind\":\"none\",\"value_map\":[],\"reason\":\"Earliest date when lead entered the system\",\"confidence\":\"high\"},{\"file\":\"olist_marketing_qualified_leads_dataset.csv\",\"column\":\"landing_page_id\",\"target\":\"feature\",\"feature_kind\":\"categorical\",\"value_map\":[],\"reason\":\"Landing page indicates lead source and intent at arrival\",\"confidence\":\"medium\"},{\"file\":\"olist_marketing_qualified_leads_dataset.csv\",\"column\":\"origin\",\"target\":\"utm_source\",\"feature_kind\":\"none\",\"value_map\":[{\"source_value\":\"organic_search\",\"target\":\"utm_source\",\"target_value\":\"organic_search\"},{\"source_value\":\"paid_search\",\"target\":\"utm_source\",\"target_value\":\"paid_search\"},{\"source_value\":\"social\",\"target\":\"utm_source\",\"target_value\":\"social\"},{\"source_value\":\"unknown\",\"target\":\"utm_source\",\"target_value\":\"unknown\"},{\"source_value\":\"direct_traffic\",\"target\":\"utm_source\",\"target_value\":\"direct\"},{\"source_value\":\"email\",\"target\":\"utm_source\",\"target_value\":\"email\"},{\"source_value\":\"referral\",\"target\":\"utm_source\",\"target_value\":\"referral\"},{\"source_value\":\"other\",\"target\":\"utm_source\",\"target_value\":\"other\"},{\"source_value\":\"display\",\"target\":\"utm_source\",\"target_value\":\"display\"},{\"source_value\":\"other_publicities\",\"target\":\"utm_source\",\"target_value\":\"other\"}],\"reason\":\"Traffic origin maps to UTM source\",\"confidence\":\"high\"},{\"file\":\"olist_closed_deals_dataset.csv\",\"column\":\"won_date\",\"target\":\"lead.won_at\",\"feature_kind\":\"none\",\"value_map\":[],\"reason\":\"Date when deal was won\",\"confidence\":\"high\"},{\"file\":\"olist_closed_deals_dataset.csv\",\"column\":\"business_segment\",\"target\":\"feature\",\"feature_kind\":\"categorical\",\"value_map\":[],\"reason\":\"Business segment describes company at time of win\",\"confidence\":\"medium\"},{\"file\":\"olist_closed_deals_dataset.csv\",\"column\":\"lead_type\",\"target\":\"feature\",\"feature_kind\":\"categorical\",\"value_map\":[],\"reason\":\"Lead type categorizes lead source and size at arrival\",\"confidence\":\"high\"},{\"file\":\"olist_closed_deals_dataset.csv\",\"column\":\"lead_behaviour_profile\",\"target\":\"feature\",\"feature_kind\":\"categorical\",\"value_map\":[],\"reason\":\"Behavioral profile predicts lead quality and conversion\",\"confidence\":\"medium\"},{\"file\":\"olist_closed_deals_dataset.csv\",\"column\":\"has_company\",\"target\":\"feature\",\"feature_kind\":\"categorical\",\"value_map\":[],\"reason\":\"Company presence indicates lead completeness\",\"confidence\":\"medium\"},{\"file\":\"olist_closed_deals_dataset.csv\",\"column\":\"has_gtin\",\"target\":\"feature\",\"feature_kind\":\"categorical\",\"value_map\":[],\"reason\":\"GTIN presence indicates product catalog maturity\",\"confidence\":\"medium\"},{\"file\":\"olist_closed_deals_dataset.csv\",\"column\":\"average_stock\",\"target\":\"feature\",\"feature_kind\":\"categorical\",\"value_map\":[],\"reason\":\"Stock level indicates business scale and readiness\",\"confidence\":\"medium\"},{\"file\":\"olist_closed_deals_dataset.csv\",\"column\":\"business_type\",\"target\":\"feature\",\"feature_kind\":\"categorical\",\"value_map\":[],\"reason\":\"Business type categorizes company model\",\"confidence\":\"high\"},{\"file\":\"olist_closed_deals_dataset.csv\",\"column\":\"declared_product_catalog_size\",\"target\":\"feature\",\"feature_kind\":\"numeric\",\"value_map\":[],\"reason\":\"Catalog size indicates business scale\",\"confidence\":\"medium\"},{\"file\":\"olist_closed_deals_dataset.csv\",\"column\":\"declared_monthly_revenue\",\"target\":\"feature\",\"feature_kind\":\"numeric\",\"value_map\":[],\"reason\":\"Revenue indicates company size and capacity\",\"confidence\":\"medium\"},{\"file\":\"olist_closed_deals_dataset.csv\",\"column\":\"seller_id\",\"target\":\"ignore\",\"feature_kind\":\"none\",\"value_map\":[],\"reason\":\"Seller ID is internal identifier, not lead attribute\",\"confidence\":\"high\"},{\"file\":\"olist_closed_deals_dataset.csv\",\"column\":\"sdr_id\",\"target\":\"ignore\",\"feature_kind\":\"none\",\"value_map\":[],\"reason\":\"SDR ID is internal staff identifier, not lead attribute\",\"confidence\":\"high\"},{\"file\":\"olist_closed_deals_dataset.csv\",\"column\":\"sr_id\",\"target\":\"ignore\",\"feature_kind\":\"none\",\"value_map\":[],\"reason\":\"Sales rep ID is internal staff identifier, not lead attribute\",\"confidence\":\"high\"}],\"outcome\":{\"kind\":\"presence\",\"file\":\"olist_closed_deals_dataset.csv\",\"column\":\"won_date\",\"stage_map\":[],\"won_values\":[\"*\"],\"lost_values\":[],\"reason\":\"Lead won if present in closed deals file, lost if absent\",\"confidence\":\"high\"}}",
+   "reply": null,
+   "status": "parse_error"
+  },
+  "b0aa02b776eb190eaa06a216cab01c18247a2db891239c55f54e4fe550747db8": {
+   "brief_hash": "no-brief",
+   "card_hash": "2d4321644c1a6a62",
+   "error": "",
+   "model_id": "claude-haiku-4-5-20251001",
+   "prompt_fingerprint": "dceae432c8626c23",
+   "prompt_version": "mapping-draft-v4",
+   "raw": null,
+   "reply": {
+    "columns": [
+     {
+      "column": "opportunity_id",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "sales_pipeline.csv",
+      "reason": "Unique identifier for each opportunity/lead",
+      "target": "lead.lead_id",
+      "value_map": []
+     },
+     {
+      "column": "engage_date",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "sales_pipeline.csv",
+      "reason": "Earliest date when lead engagement began",
+      "target": "lead.created_at",
+      "value_map": []
+     },
+     {
+      "column": "close_date",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "sales_pipeline.csv",
+      "reason": "Date when deal was closed (won or lost)",
+      "target": "lead.close_at",
+      "value_map": []
+     },
+     {
+      "column": "close_value",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "sales_pipeline.csv",
+      "reason": "Monetary value of closed deal",
+      "target": "lead.deal_value",
+      "value_map": []
+     },
+     {
+      "column": "product",
+      "confidence": "medium",
+      "feature_kind": "categorical",
+      "file": "sales_pipeline.csv",
+      "reason": "Product offered; could predict conversion likelihood",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "sales_agent",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "sales_pipeline.csv",
+      "reason": "Sales agent name; not a lead attribute",
+      "target": "ignore",
+      "value_map": []
+     },
+     {
+      "column": "sector",
+      "confidence": "medium",
+      "feature_kind": "categorical",
+      "file": "accounts.csv",
+      "reason": "Industry sector; may predict lead quality and conversion",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "year_established",
+      "confidence": "medium",
+      "feature_kind": "numeric",
+      "file": "accounts.csv",
+      "reason": "Company age; could indicate stability and buying power",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "revenue",
+      "confidence": "medium",
+      "feature_kind": "numeric",
+      "file": "accounts.csv",
+      "reason": "Company revenue; correlates with deal size and conversion",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "employees",
+      "confidence": "medium",
+      "feature_kind": "numeric",
+      "file": "accounts.csv",
+      "reason": "Company size; predicts budget and decision-making complexity",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "office_location",
+      "confidence": "low",
+      "feature_kind": "categorical",
+      "file": "accounts.csv",
+      "reason": "Geographic location; may affect sales cycle and conversion",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "subsidiary_of",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "accounts.csv",
+      "reason": "Parent company relationship; not a lead attribute",
+      "target": "ignore",
+      "value_map": []
+     },
+     {
+      "column": "manager",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "sales_teams.csv",
+      "reason": "Manager name; not a lead attribute",
+      "target": "ignore",
+      "value_map": []
+     },
+     {
+      "column": "regional_office",
+      "confidence": "low",
+      "feature_kind": "categorical",
+      "file": "sales_teams.csv",
+      "reason": "Sales region; may affect conversion and sales cycle",
+      "target": "feature",
+      "value_map": []
+     }
+    ],
+    "joins": [
+     {
+      "file": "accounts.csv",
+      "join_on": "account"
+     },
+     {
+      "file": "sales_teams.csv",
+      "join_on": "sales_agent"
+     }
+    ],
+    "outcome": {
+     "column": "deal_stage",
+     "confidence": "high",
+     "file": "sales_pipeline.csv",
+     "kind": "stage",
+     "lost_values": [
+      "Lost"
+     ],
+     "reason": "Deal stage column maps directly to CRM pipeline stages",
+     "stage_map": [
+      {
+       "stage": "New",
+       "value": "Prospecting"
+      },
+      {
+       "stage": "Contacted",
+       "value": "Engaging"
+      },
+      {
+       "stage": "Won",
+       "value": "Won"
+      },
+      {
+       "stage": "Lost",
+       "value": "Lost"
+      }
+     ],
+     "won_values": [
+      "Won"
+     ]
+    },
+    "primary_file": "sales_pipeline.csv"
+   },
+   "status": "ok"
+  },
+  "b38ef2610bb8dbf8b1711fbd6ce89127f09de8316e3fd91aa6e95ea328db462d": {
+   "brief_hash": "no-brief",
+   "card_hash": "84e171103e61ecd6",
+   "error": "no column drafted as lead.created_at (required)",
+   "model_id": "claude-haiku-4-5-20251001",
+   "prompt_fingerprint": "4790383da9086054",
+   "prompt_version": "mapping-draft-v2",
+   "raw": "{\"sources\": [{\"file\": \"hotel_bookings.csv\", \"join_on\": \"\"}], \"columns\": [{\"file\": \"hotel_bookings.csv\", \"column\": \"hotel\", \"target\": \"feature\", \"feature_kind\": \"categorical\", \"value_map\": [], \"reason\": \"Hotel type may predict booking outcome\", \"confidence\": \"medium\"}, {\"file\": \"hotel_bookings.csv\", \"column\": \"lead_time\", \"target\": \"feature\", \"feature_kind\": \"numeric\", \"value_map\": [], \"reason\": \"Days between booking and arrival predicts cancellation\", \"confidence\": \"high\"}, {\"file\": \"hotel_bookings.csv\", \"column\": \"arrival_date_year\", \"target\": \"ignore\", \"feature_kind\": \"none\", \"value_map\": [], \"reason\": \"Year is temporal context, not predictive feature\", \"confidence\": \"high\"}, {\"file\": \"hotel_bookings.csv\", \"column\": \"arrival_date_month\", \"target\": \"ignore\", \"feature_kind\": \"none\", \"value_map\": [], \"reason\": \"Month is temporal context, not predictive feature\", \"confidence\": \"high\"}, {\"file\": \"hotel_bookings.csv\", \"column\": \"arrival_date_week_number\", \"target\": \"ignore\", \"feature_kind\": \"none\", \"value_map\": [], \"reason\": \"Week number is temporal context, not predictive feature\", \"confidence\": \"high\"}, {\"file\": \"hotel_bookings.csv\", \"column\": \"arrival_date_day_of_month\", \"target\": \"ignore\", \"feature_kind\": \"none\", \"value_map\": [], \"reason\": \"Day of month is temporal context, not predictive feature\", \"confidence\": \"high\"}, {\"file\": \"hotel_bookings.csv\", \"column\": \"stays_in_weekend_nights\", \"target\": \"feature\", \"feature_kind\": \"numeric\", \"value_map\": [], \"reason\": \"Weekend stay length may predict cancellation behavior\", \"confidence\": \"medium\"}, {\"file\": \"hotel_bookings.csv\", \"column\": \"stays_in_week_nights\", \"target\": \"feature\", \"feature_kind\": \"numeric\", \"value_map\": [], \"reason\": \"Weekday stay length may predict cancellation behavior\", \"confidence\": \"medium\"}, {\"file\": \"hotel_bookings.csv\", \"column\": \"adults\", \"target\": \"feature\", \"feature_kind\": \"numeric\", \"value_map\": [], \"reason\": \"Number of adults may predict booking outcome\", \"confidence\": \"medium\"}, {\"file\": \"hotel_bookings.csv\", \"column\": \"children\", \"target\": \"feature\", \"feature_kind\": \"numeric\", \"value_map\": [], \"reason\": \"Presence of children may predict cancellation\", \"confidence\": \"medium\"}, {\"file\": \"hotel_bookings.csv\", \"column\": \"babies\", \"target\": \"feature\", \"feature_kind\": \"numeric\", \"value_map\": [], \"reason\": \"Presence of babies may predict cancellation\", \"confidence\": \"low\"}, {\"file\": \"hotel_bookings.csv\", \"column\": \"meal\", \"target\": \"feature\", \"feature_kind\": \"categorical\", \"value_map\": [], \"reason\": \"Meal plan type may predict booking outcome\", \"confidence\": \"medium\"}, {\"file\": \"hotel_bookings.csv\", \"column\": \"country\", \"target\": \"feature\", \"feature_kind\": \"categorical\", \"value_map\": [], \"reason\": \"Guest country may predict cancellation patterns\", \"confidence\": \"medium\"}, {\"file\": \"hotel_bookings.csv\", \"column\": \"market_segment\", \"target\": \"feature\", \"feature_kind\": \"categorical\", \"value_map\": [], \"reason\": \"Market segment predicts booking behavior and cancellation\", \"confidence\": \"high\"}, {\"file\": \"hotel_bookings.csv\", \"column\": \"distribution_channel\", \"target\": \"feature\", \"feature_kind\": \"categorical\", \"value_map\": [], \"reason\": \"Booking channel may predict cancellation likelihood\", \"confidence\": \"high\"}, {\"file\": \"hotel_bookings.csv\", \"column\": \"is_repeated_guest\", \"target\": \"feature\", \"feature_kind\": \"categorical\", \"value_map\": [], \"reason\": \"Repeat guests have different cancellation patterns\", \"confidence\": \"high\"}, {\"file\": \"hotel_bookings.csv\", \"column\": \"previous_cancellations\", \"target\": \"feature\", \"feature_kind\": \"numeric\", \"value_map\": [], \"reason\": \"Past cancellations predict future cancellation behavior\", \"confidence\": \"high\"}, {\"file\": \"hotel_bookings.csv\", \"column\": \"previous_bookings_not_canceled\", \"target\": \"feature\", \"feature_kind\": \"numeric\", \"value_map\": [], \"reason\": \"Completed bookings indicate reliability\", \"confidence\": \"high\"}, {\"file\": \"hotel_bookings.csv\", \"column\": \"reserved_room_type\", \"target\": \"feature\", \"feature_kind\": \"categorical\", \"value_map\": [], \"reason\": \"Room type preference may predict cancellation\", \"confidence\": \"low\"}, {\"file\": \"hotel_bookings.csv\", \"column\": \"assigned_room_type\", \"target\": \"ignore\", \"feature_kind\": \"none\", \"value_map\": [], \"reason\": \"Assigned after booking, leaks information about outcome\", \"confidence\": \"high\"}, {\"file\": \"hotel_bookings.csv\", \"column\": \"booking_changes\", \"target\": \"feature\", \"feature_kind\": \"numeric\", \"value_map\": [], \"reason\": \"Number of changes may predict cancellation\", \"confidence\": \"medium\"}, {\"file\": \"hotel_bookings.csv\", \"column\": \"deposit_type\", \"target\": \"feature\", \"feature_kind\": \"categorical\", \"value_map\": [], \"reason\": \"Deposit type affects cancellation likelihood\", \"confidence\": \"high\"}, {\"file\": \"hotel_bookings.csv\", \"column\": \"agent\", \"target\": \"ignore\", \"feature_kind\": \"none\", \"value_map\": [], \"reason\": \"Agent ID is not predictive of booking outcome\", \"confidence\": \"high\"}, {\"file\": \"hotel_bookings.csv\", \"column\": \"company\", \"target\": \"ignore\", \"feature_kind\": \"none\", \"value_map\": [], \"reason\": \"Company ID is not predictive of booking outcome\", \"confidence\": \"high\"}, {\"file\": \"hotel_bookings.csv\", \"column\": \"days_in_waiting_list\", \"target\": \"feature\", \"feature_kind\": \"numeric\", \"value_map\": [], \"reason\": \"Waiting list duration may predict cancellation\", \"confidence\": \"medium\"}, {\"file\": \"hotel_bookings.csv\", \"column\": \"customer_type\", \"target\": \"feature\", \"feature_kind\": \"categorical\", \"value_map\": [], \"reason\": \"Customer type predicts booking behavior\", \"confidence\": \"high\"}, {\"file\": \"hotel_bookings.csv\", \"column\": \"adr\", \"target\": \"feature\", \"feature_kind\": \"numeric\", \"value_map\": [], \"reason\": \"Average daily rate may predict cancellation\", \"confidence\": \"medium\"}, {\"file\": \"hotel_bookings.csv\", \"column\": \"required_car_parking_spaces\", \"target\": \"feature\", \"feature_kind\": \"numeric\", \"value_map\": [], \"reason\": \"Parking needs may indicate booking commitment\", \"confidence\": \"low\"}, {\"file\": \"hotel_bookings.csv\", \"column\": \"total_of_special_requests\", \"target\": \"feature\", \"feature_kind\": \"numeric\", \"value_map\": [], \"reason\": \"Special requests indicate engagement and commitment\", \"confidence\": \"high\"}, {\"file\": \"hotel_bookings.csv\", \"column\": \"reservation_status_date\", \"target\": \"ignore\", \"feature_kind\": \"none\", \"value_map\": [], \"reason\": \"Status date is outcome timing, leaks label information\", \"confidence\": \"high\"}], \"outcome\": {\"kind\": \"won_flag\", \"file\": \"hotel_bookings.csv\", \"column\": \"is_canceled\", \"stage_map\": [], \"won_values\": [\"0\"], \"lost_values\": [\"1\"], \"reason\": \"Booking completion (not canceled) is the success outcome\", \"confidence\": \"high\"}}",
+   "reply": null,
+   "status": "parse_error"
+  },
+  "bb78789344e0b34915724cbefddda43e6cea070850b520d5741d4811d8f2e742": {
+   "brief_hash": "no-brief",
+   "card_hash": "2d4321644c1a6a62",
+   "error": "no column drafted as lead.created_at (required)",
+   "model_id": "claude-haiku-4-5-20251001",
+   "prompt_fingerprint": "4790383da9086054",
+   "prompt_version": "mapping-draft-v2",
+   "raw": "{\"sources\":[{\"file\":\"sales_pipeline.csv\",\"join_on\":\"\"},{\"file\":\"accounts.csv\",\"join_on\":\"account\"},{\"file\":\"sales_teams.csv\",\"join_on\":\"sales_agent\"}],\"columns\":[{\"file\":\"sales_pipeline.csv\",\"column\":\"opportunity_id\",\"target\":\"lead.lead_id\",\"feature_kind\":\"none\",\"value_map\":[],\"reason\":\"Unique identifier for each opportunity/lead\",\"confidence\":\"high\"},{\"file\":\"sales_pipeline.csv\",\"column\":\"sales_agent\",\"target\":\"ignore\",\"feature_kind\":\"none\",\"value_map\":[],\"reason\":\"Person name; not a lead attribute\",\"confidence\":\"high\"},{\"file\":\"sales_pipeline.csv\",\"column\":\"product\",\"target\":\"feature\",\"feature_kind\":\"categorical\",\"value_map\":[],\"reason\":\"Product type at time of engagement; predictive of outcome\",\"confidence\":\"high\"},{\"file\":\"sales_pipeline.csv\",\"column\":\"account\",\"target\":\"company_name\",\"feature_kind\":\"none\",\"value_map\":[],\"reason\":\"Company name associated with the opportunity\",\"confidence\":\"high\"},{\"file\":\"sales_pipeline.csv\",\"column\":\"deal_stage\",\"target\":\"value_map\",\"feature_kind\":\"none\",\"value_map\":[{\"source_value\":\"Prospecting\",\"target\":\"form_variant\",\"target_value\":\"Prospecting\"},{\"source_value\":\"Engaging\",\"target\":\"form_variant\",\"target_value\":\"Engaging\"},{\"source_value\":\"Won\",\"target\":\"form_variant\",\"target_value\":\"Won\"},{\"source_value\":\"Lost\",\"target\":\"form_variant\",\"target_value\":\"Lost\"}],\"reason\":\"CRM stage values mapped to schema\",\"confidence\":\"medium\"},{\"file\":\"sales_pipeline.csv\",\"column\":\"engage_date\",\"target\":\"lead.contacted_at\",\"feature_kind\":\"none\",\"value_map\":[],\"reason\":\"Date when engagement began with prospect\",\"confidence\":\"high\"},{\"file\":\"sales_pipeline.csv\",\"column\":\"close_date\",\"target\":\"lead.close_at\",\"feature_kind\":\"none\",\"value_map\":[],\"reason\":\"Date when deal was closed (won or lost)\",\"confidence\":\"high\"},{\"file\":\"sales_pipeline.csv\",\"column\":\"close_value\",\"target\":\"lead.deal_value\",\"feature_kind\":\"none\",\"value_map\":[],\"reason\":\"Value of closed deal\",\"confidence\":\"high\"},{\"file\":\"accounts.csv\",\"column\":\"sector\",\"target\":\"feature\",\"feature_kind\":\"categorical\",\"value_map\":[],\"reason\":\"Industry sector; predictive of sales outcome\",\"confidence\":\"high\"},{\"file\":\"accounts.csv\",\"column\":\"year_established\",\"target\":\"feature\",\"feature_kind\":\"numeric\",\"value_map\":[],\"reason\":\"Company age at time of engagement; may predict outcome\",\"confidence\":\"medium\"},{\"file\":\"accounts.csv\",\"column\":\"revenue\",\"target\":\"feature\",\"feature_kind\":\"numeric\",\"value_map\":[],\"reason\":\"Company revenue; predictive of deal likelihood\",\"confidence\":\"high\"},{\"file\":\"accounts.csv\",\"column\":\"employees\",\"target\":\"feature\",\"feature_kind\":\"numeric\",\"value_map\":[],\"reason\":\"Company size; predictive of sales outcome\",\"confidence\":\"high\"},{\"file\":\"accounts.csv\",\"column\":\"office_location\",\"target\":\"feature\",\"feature_kind\":\"categorical\",\"value_map\":[],\"reason\":\"Geographic location; may predict outcome\",\"confidence\":\"medium\"},{\"file\":\"accounts.csv\",\"column\":\"subsidiary_of\",\"target\":\"ignore\",\"feature_kind\":\"none\",\"value_map\":[],\"reason\":\"Parent company relationship; not predictive at lead time\",\"confidence\":\"high\"},{\"file\":\"sales_teams.csv\",\"column\":\"manager\",\"target\":\"ignore\",\"feature_kind\":\"none\",\"value_map\":[],\"reason\":\"Sales manager name; not a lead attribute\",\"confidence\":\"high\"},{\"file\":\"sales_teams.csv\",\"column\":\"regional_office\",\"target\":\"feature\",\"feature_kind\":\"categorical\",\"value_map\":[],\"reason\":\"Sales region; may correlate with outcome\",\"confidence\":\"medium\"}],\"outcome\":{\"kind\":\"stage\",\"file\":\"sales_pipeline.csv\",\"column\":\"deal_stage\",\"stage_map\":[{\"value\":\"Prospecting\",\"stage\":\"New\"},{\"value\":\"Engaging\",\"stage\":\"Contacted\"},{\"value\":\"Won\",\"stage\":\"Won\"},{\"value\":\"Lost\",\"stage\":\"Lost\"}],\"won_values\":[\"Won\"],\"lost_values\":[\"Lost\"],\"reason\":\"Deal stage column maps to CRM pipeline stages\",\"confidence\":\"high\"}}",
+   "reply": null,
+   "status": "parse_error"
+  },
+  "e01f0d1add9eafcab58f0d1049acbc6cb2b23a42d17c0d2f48c1522cc2508238": {
+   "brief_hash": "no-brief",
+   "card_hash": "732fe1480fdf654c",
+   "error": "",
+   "model_id": "claude-haiku-4-5-20251001",
+   "prompt_fingerprint": "4790383da9086054",
+   "prompt_version": "mapping-draft-v2",
+   "raw": null,
+   "reply": {
+    "columns": [
+     {
+      "column": "mql_id",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "olist_closed_deals_dataset.csv",
+      "reason": "Unique identifier for each lead",
+      "target": "lead.lead_id",
+      "value_map": []
+     },
+     {
+      "column": "first_contact_date",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "olist_marketing_qualified_leads_dataset.csv",
+      "reason": "Date when lead first came in via marketing",
+      "target": "lead.created_at",
+      "value_map": []
+     },
+     {
+      "column": "won_date",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "olist_closed_deals_dataset.csv",
+      "reason": "Date when deal was won",
+      "target": "lead.won_at",
+      "value_map": []
+     },
+     {
+      "column": "origin",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "olist_marketing_qualified_leads_dataset.csv",
+      "reason": "Lead source/origin channel",
+      "target": "utm_source",
+      "value_map": []
+     },
+     {
+      "column": "lead_type",
+      "confidence": "high",
+      "feature_kind": "categorical",
+      "file": "olist_closed_deals_dataset.csv",
+      "reason": "Lead classification by size/type at acquisition",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "lead_behaviour_profile",
+      "confidence": "medium",
+      "feature_kind": "categorical",
+      "file": "olist_closed_deals_dataset.csv",
+      "reason": "Behavioral profile predicting lead quality",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "business_segment",
+      "confidence": "high",
+      "feature_kind": "categorical",
+      "file": "olist_closed_deals_dataset.csv",
+      "reason": "Business segment describes lead industry/category",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "business_type",
+      "confidence": "high",
+      "feature_kind": "categorical",
+      "file": "olist_closed_deals_dataset.csv",
+      "reason": "Type of business (reseller/manufacturer) at signup",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "average_stock",
+      "confidence": "medium",
+      "feature_kind": "categorical",
+      "file": "olist_closed_deals_dataset.csv",
+      "reason": "Stock level indicates company size/maturity",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "declared_product_catalog_size",
+      "confidence": "medium",
+      "feature_kind": "numeric",
+      "file": "olist_closed_deals_dataset.csv",
+      "reason": "Product catalog size indicates company scale",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "declared_monthly_revenue",
+      "confidence": "medium",
+      "feature_kind": "numeric",
+      "file": "olist_closed_deals_dataset.csv",
+      "reason": "Revenue indicates company size and deal potential",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "has_company",
+      "confidence": "low",
+      "feature_kind": "none",
+      "file": "olist_closed_deals_dataset.csv",
+      "reason": "Mostly missing; insufficient signal",
+      "target": "ignore",
+      "value_map": []
+     },
+     {
+      "column": "has_gtin",
+      "confidence": "low",
+      "feature_kind": "none",
+      "file": "olist_closed_deals_dataset.csv",
+      "reason": "Mostly missing; insufficient signal",
+      "target": "ignore",
+      "value_map": []
+     },
+     {
+      "column": "seller_id",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "olist_closed_deals_dataset.csv",
+      "reason": "Seller identifier; not lead attribute",
+      "target": "ignore",
+      "value_map": []
+     },
+     {
+      "column": "sdr_id",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "olist_closed_deals_dataset.csv",
+      "reason": "Sales rep ID; post-acquisition assignment",
+      "target": "ignore",
+      "value_map": []
+     },
+     {
+      "column": "sr_id",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "olist_closed_deals_dataset.csv",
+      "reason": "Sales rep ID; post-acquisition assignment",
+      "target": "ignore",
+      "value_map": []
+     },
+     {
+      "column": "landing_page_id",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "olist_marketing_qualified_leads_dataset.csv",
+      "reason": "Landing page ID; not a lead attribute",
+      "target": "ignore",
+      "value_map": []
+     }
+    ],
+    "outcome": {
+     "column": "won_date",
+     "confidence": "high",
+     "file": "olist_closed_deals_dataset.csv",
+     "kind": "presence",
+     "lost_values": [],
+     "reason": "Lead won if present in closed deals file; lost otherwise",
+     "stage_map": [],
+     "won_values": [
+      "*"
+     ]
+    },
+    "sources": [
+     {
+      "file": "olist_closed_deals_dataset.csv",
+      "join_on": ""
+     },
+     {
+      "file": "olist_marketing_qualified_leads_dataset.csv",
+      "join_on": "mql_id"
+     }
+    ]
+   },
+   "status": "ok"
+  },
+  "edb81fe6b5740ddb548cbb0994d7c72bd9bac75b2aa017d8ca471e375ce6c299": {
+   "brief_hash": "no-brief",
+   "card_hash": "732fe1480fdf654c",
+   "error": "",
+   "model_id": "claude-haiku-4-5-20251001",
+   "prompt_fingerprint": "dceae432c8626c23",
+   "prompt_version": "mapping-draft-v4",
+   "raw": null,
+   "reply": {
+    "columns": [
+     {
+      "column": "mql_id",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "olist_marketing_qualified_leads_dataset.csv",
+      "reason": "Unique identifier for each lead",
+      "target": "lead.lead_id",
+      "value_map": []
+     },
+     {
+      "column": "first_contact_date",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "olist_marketing_qualified_leads_dataset.csv",
+      "reason": "Earliest date when lead came in via marketing",
+      "target": "lead.created_at",
+      "value_map": []
+     },
+     {
+      "column": "landing_page_id",
+      "confidence": "medium",
+      "feature_kind": "categorical",
+      "file": "olist_marketing_qualified_leads_dataset.csv",
+      "reason": "Landing page indicates lead source and intent at arrival",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "origin",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "olist_marketing_qualified_leads_dataset.csv",
+      "reason": "Marketing channel origin maps to utm_source",
+      "target": "utm_source",
+      "value_map": []
+     },
+     {
+      "column": "won_date",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "olist_closed_deals_dataset.csv",
+      "reason": "Date when deal was won",
+      "target": "lead.won_at",
+      "value_map": []
+     },
+     {
+      "column": "business_segment",
+      "confidence": "medium",
+      "feature_kind": "categorical",
+      "file": "olist_closed_deals_dataset.csv",
+      "reason": "Business segment describes company at time of lead",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "lead_type",
+      "confidence": "high",
+      "feature_kind": "categorical",
+      "file": "olist_closed_deals_dataset.csv",
+      "reason": "Lead type categorizes lead source and size at arrival",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "lead_behaviour_profile",
+      "confidence": "medium",
+      "feature_kind": "categorical",
+      "file": "olist_closed_deals_dataset.csv",
+      "reason": "Behavioral profile predicts lead quality and conversion",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "business_type",
+      "confidence": "medium",
+      "feature_kind": "categorical",
+      "file": "olist_closed_deals_dataset.csv",
+      "reason": "Business type describes company structure at arrival",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "declared_product_catalog_size",
+      "confidence": "medium",
+      "feature_kind": "numeric",
+      "file": "olist_closed_deals_dataset.csv",
+      "reason": "Catalog size indicates company scale at lead time",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "declared_monthly_revenue",
+      "confidence": "medium",
+      "feature_kind": "numeric",
+      "file": "olist_closed_deals_dataset.csv",
+      "reason": "Revenue indicates company size and deal potential",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "average_stock",
+      "confidence": "low",
+      "feature_kind": "categorical",
+      "file": "olist_closed_deals_dataset.csv",
+      "reason": "Stock levels indicate operational scale at arrival",
+      "target": "feature",
+      "value_map": []
+     },
+     {
+      "column": "has_company",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "olist_closed_deals_dataset.csv",
+      "reason": "Only known after outcome, would leak label",
+      "target": "ignore",
+      "value_map": []
+     },
+     {
+      "column": "has_gtin",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "olist_closed_deals_dataset.csv",
+      "reason": "Only known after outcome, would leak label",
+      "target": "ignore",
+      "value_map": []
+     },
+     {
+      "column": "seller_id",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "olist_closed_deals_dataset.csv",
+      "reason": "Unique identifier per row, not a feature",
+      "target": "ignore",
+      "value_map": []
+     },
+     {
+      "column": "sdr_id",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "olist_closed_deals_dataset.csv",
+      "reason": "Sales rep id, not a lead attribute",
+      "target": "ignore",
+      "value_map": []
+     },
+     {
+      "column": "sr_id",
+      "confidence": "high",
+      "feature_kind": "none",
+      "file": "olist_closed_deals_dataset.csv",
+      "reason": "Sales rep id, not a lead attribute",
+      "target": "ignore",
+      "value_map": []
+     }
+    ],
+    "joins": [
+     {
+      "file": "olist_closed_deals_dataset.csv",
+      "join_on": "mql_id"
+     }
+    ],
+    "outcome": {
+     "column": "won_date",
+     "confidence": "high",
+     "file": "olist_closed_deals_dataset.csv",
+     "kind": "presence",
+     "lost_values": [],
+     "reason": "Lead won if present in closed deals file, lost if absent",
+     "stage_map": [],
+     "won_values": [
+      "*"
+     ]
+    },
+    "primary_file": "olist_marketing_qualified_leads_dataset.csv"
+   },
+   "status": "ok"
+  }
+ },
+ "format": 2
+}

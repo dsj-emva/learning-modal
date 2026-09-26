@@ -844,3 +844,24 @@ def test_dump_escapes_what_toml_forbids_raw_and_refuses_lone_surrogates(mapping:
     assert load_mapping(text) == odd
     with pytest.raises(ValueError, match="lone surrogate"):
         dump_mapping(replace(mapping, review={"created_at": Review("broken \ud800")}))
+
+
+# --- the committed live drafts (Phase 10 live draft check) -------------------------------------------------------------
+
+@pytest.mark.parametrize("name", ["olist", "crm_opportunities", "hotel_bookings"])
+def test_committed_live_draft_stays_an_unconfirmed_draft(name: str) -> None:
+    text = (REPO / "mappings" / "drafts" / f"{name}.draft.toml").read_text()
+    m = load_mapping(text)
+    assert text.startswith("# DRAFT by claude-haiku-4-5-20251001") and "BY HAND" not in text
+    assert not m.outcome_confirmed and not m.features_confirmed
+    with pytest.raises(ValueError, match="outcome_confirmed is false"):
+        load_mapping(text, require_confirmed=True)
+
+
+def test_committed_draft_cache_holds_a_current_reply_per_dataset() -> None:
+    from emva.ingest.draft import PROMPT_VERSION, prompt_fingerprint
+
+    entries = json.loads((REPO / "mappings" / "drafts" / "draft_cache.json").read_text())["entries"].values()
+    current = [e for e in entries if e["prompt_fingerprint"] == prompt_fingerprint()]
+    assert len(current) == 3 and all(e["status"] == "ok" and e["prompt_version"] == PROMPT_VERSION for e in current)
+    assert all(e["model_id"] == "claude-haiku-4-5-20251001" for e in entries)
