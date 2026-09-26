@@ -184,6 +184,9 @@ def render() -> None:
                    "status_quo_rules.json, or the report failed; see the training log).")
     if run.dataset == storage.SAMPLE_DATASET_NAME:
         st.caption("Trained on the bundled synthetic sample: every number here is on simulated data.")
+    elif storage.is_converted(run.dataset_path):
+        st.caption("Trained on a converted dataset (dataset.json): every number here is on that source's data, not "
+                   "on simulated data. For a public export, say \"on public data\"; check its licence before quoting.")
 
 
 render()

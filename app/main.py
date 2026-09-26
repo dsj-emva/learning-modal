@@ -81,8 +81,8 @@ def main() -> None:
         if st.button("Sign out", icon=":material/logout:", key="sign_out", type="tertiary"):
             st.session_state.clear()
             st.rerun()
-        ui.html('<div class="k-footnote">Proof of concept. Figures from the bundled sample are on simulated data '
-                "and are not to be quoted externally.</div>")
+        ui.html('<div class="k-footnote">Proof of concept. Figures from the bundled sample are on simulated data, '
+                "figures from a converted public export on public data; neither is to be quoted externally.</div>")
     nav.run()
 
 

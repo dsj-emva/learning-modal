@@ -147,3 +147,5 @@ def test_results_page_renders_a_converted_dataset(app_trained, tmp_path: Path, m
     assert "Standard table" in page and "No baseline row: this dataset was converted" in page
     assert "Compared with the frozen baseline" not in page
     assert ("vs status quo" in page) == rules and "vs baseline" not in page
+    captions = "\n".join(c.value for c in at.caption)
+    assert "on that source's data, not on simulated data" in captions and "bundled synthetic sample" not in captions

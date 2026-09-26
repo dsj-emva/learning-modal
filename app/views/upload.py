@@ -231,10 +231,11 @@ def _pick(label: str, options: list[str], current: str, key: str, help_text: str
 
 
 def _review_note(form: ingest.MappingForm, key: str) -> None:
-    """The draft's or reviewer's reason and confidence for a lead role or the outcome, as a caption."""
+    """The draft's or reviewer's reason and confidence for a lead role or the outcome, as plain text (``st.text``: an
+    LLM's or a person's words are never rendered as markdown)."""
     r = form.review.get(key)
     if r is not None and (r.reason or r.confidence):
-        st.caption(f"{r.confidence or 'no'} confidence · {r.reason}")
+        st.text(f"{r.confidence or 'no'} confidence · {r.reason}")  # plain text: a reason is never markdown
 
 
 def _lead_and_outcome(form: ingest.MappingForm, edited: ingest.MappingForm, frames: dict[str, pd.DataFrame],

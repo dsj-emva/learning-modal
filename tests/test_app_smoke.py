@@ -213,6 +213,7 @@ def test_draft_button_uses_a_cached_draft(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert not at.exception, at.exception
     page = _text(at)
     assert "from the draft cache" in page and "Low confidence, check these rows" in page
+    assert "high confidence · hand-built test reply" in [t.value for t in at.text]  # plain text, not markdown
 
 
 def test_raw_ground_truth_upload_is_refused(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
