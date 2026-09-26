@@ -223,7 +223,8 @@ without Streamlit; UI modules are thin.
 
 ```mermaid
 flowchart LR
-    UP["Upload & train page"] --> VAL["app.validation.validate_files"] --> STORE["app.storage.save_dataset<br/>DATA_DIR/datasets/NAME"]
+    UP["Upload & train page"] --> ING["app.ingest (Map & convert)<br/>emva.ingest profile, draft, convert"] --> VAL
+    UP --> VAL["app.validation.validate_files"] --> STORE["app.storage.save_dataset<br/>DATA_DIR/datasets/NAME"]
     UP --> PRE["app.training.pre_training_summary<br/>pipeline.build + labels.split_masks"]
     UP --> START["app.training.start_training"] --> JOB["python -m app.job"]
     JOB --> CLI["python -m emva --data --out<br/>scores, weights, model.joblib"]
@@ -231,15 +232,17 @@ flowchart LR
     JOB --> REG["app.training.finish_run<br/>registry.json"]
     RES["Model results page"] --> FR["app.results<br/>report.frozen_test_labels, eval.metrics,<br/>eval.bootstrap, value_report.scale_stats"]
     SC["Score a lead page"] --> AD["app.scoring.score_form"] --> ES["emva.scoring<br/>lead_from_form, score_leads, points_breakdown"]
+    SC --> SRC["app.scoring.score_source<br/>emva.ingest.convert_leads"] --> ES
 ```
 
 | module | owns |
 |---|---|
 | `app/storage.py` | Data root layout; `list_runs` marks a `running` run failed when its job process is gone (pid + command-line check) (`datasets/<name>/`, `runs/<run_id>/`, `registry.json`), `Dataset` / `Run`, slug names, the training-file allow-list (a `ground_truth*` name is refused by name, never opened), atomic JSON writes under an `fcntl` lock, the read-only bundled sample (`data/v1`, training files only) |
-| `app/validation.py` | `validate_files` -> `ValidationReport(errors, warnings, summary)` of `Issue(file, column, message, rows)`; required columns derived from `emva.scoring.submit_time_fields` and what `emva.io` / `emva.eval.status_quo` read; never raises on user input |
-| `app/training.py`, `app/job.py` | `TrainingConfig` (label mode, feature set), the CLI and report argv, `pre_training_summary`, `start_training` (spawns the job, output to `train.log`), `finish_run` (parses the printed summary), `reconcile` (a vanished job becomes `failed`). The job runs the CLI, then the report when the dataset has rules, then records the outcome itself, so a run completes with no browser open |
+| `app/ingest.py` | Map & convert (Phase 9): `MappingForm` (the editable, possibly incomplete mapping under review), `form_from_mapping` / `mapping_from_form` / `form_from_toml`, the review and outcome tables, saved and built-in (`mappings/*.toml`) mapping choices, `draft` (Claude Haiku via `emva.ingest.draft_mapping`, cache `DATA_DIR/ingest/draft_cache.json`; a missing key or API error becomes a message and the table is filled by hand), `convert_raw` (`emva.ingest.convert` + `mapping.toml` + `validate_files`), coverage summary |
+| `app/validation.py` | `validate_files` -> `ValidationReport(errors, warnings, summary)` of `Issue(file, column, message, rows)`; required columns derived from `emva.scoring.submit_time_fields` and what `emva.io` / `emva.eval.status_quo` read; a converted dataset's `dataset.json` (`emva.dataset_meta.parse_dataset_meta`, its `as_of` for the snapshot warning) and `mapping.toml` (a confirmed mapping); never raises on user input |
+| `app/training.py`, `app/job.py` | `TrainingConfig` (label mode, feature set), the CLI and report argv, `pre_training_summary`, `start_training` (spawns the job, output to `train.log`), `finish_run` (parses the printed summary), `reconcile` (a vanished job becomes `failed`). The job runs the CLI, then the report when the dataset has rules or is converted (`report_available`), then records the outcome itself, so a run completes with no browser open. Dates come from `emva.dataset_meta.dataset_dates` (ADR 0020) |
 | `app/results.py` | Results-page frames from `scores.csv` / `weights.csv` (round-trip float parsing) + the dataset: `evaluate` (frozen mature or legacy test set; the report's baseline, model and status-quo `ScoredModel`s), `standard_table` (`emva.eval.report.headline_frame` / `paired_frame`), `calibration`, `auc_month` (bootstrap CI per month), `scorecard` (plain feature names), `value_distribution`, `training_base_rate`. Nothing is scraped from `report.txt` |
-| `app/scoring.py` | Form sections, labels and defaults over `submit_time_fields` (session fields default to a typical visit, because a blank one sets `session_missing`), `values_from_lead`, `score_form`, `describe_transform` |
+| `app/scoring.py` | Form sections, labels and defaults over `submit_time_fields` (session fields default to a typical visit, because a blank one sets `session_missing`), `values_from_lead`, `score_form`, `describe_transform`; source format for a converted dataset's run: `run_mapping`, `source_fields`, `frames_from_source_form` / `_uploads`, `score_source` (`emva.ingest.convert_leads` then `score_leads`), `source_lead_score` |
 | `app/auth.py` | `expected_password` (`APP_PASSWORD`; unset or blank = refuse), `check_password` (`hmac.compare_digest`) |
 | `app/main.py`, `app/ui.py`, `app/views/` | Entrypoint (gate, sidebar, `st.navigation`), cached loaders (`st.cache_data` for evaluation frames, `st.cache_resource` for bundles), the three pages |
 | `app/theme.py`, `app/components.py`, `app/charts.py`, `.streamlit/config.toml` | Identity: palette, fonts, the one stylesheet; escaped HTML components (KPI cards, pills, file cards, result card, tables); the shared Plotly template |

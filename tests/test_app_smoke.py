@@ -214,3 +214,33 @@ def test_raw_ground_truth_upload_is_refused(monkeypatch: pytest.MonkeyPatch, tmp
     at = _upload_raw(at, {"ground_truth_labels.csv": b"lead_id,y\nL1,1\n"})
     assert not at.exception and "Refused ground_truth_labels.csv" in _text(at)
     assert "Column profile" not in _text(at)
+
+
+def test_score_page_source_format(monkeypatch: pytest.MonkeyPatch, app_converted) -> None:
+    """Score one lead in the source format, then a CSV of them, then a refused value (shown escaped)."""
+    from conftest import INGEST_FIXTURES, OLIST_MQL
+
+    root, run = app_converted
+    at = _sign_in(_app(monkeypatch, root), "letmein")
+    at.switch_page("views/score.py").run()
+    at.segmented_control(key=f"score_mode_{run.run_id}").set_value("source").run()
+    assert not at.exception, at.exception
+    assert [t.label for t in at.text_input if t.key.startswith("src_")] == ["mql_id", "first_contact_date",
+                                                                            "landing_page_id"]
+    origin = next(s for s in at.selectbox if s.key.endswith(":origin"))
+    origin.select("paid_search")
+    next(b for b in at.button if b.label == "Score this lead").click()
+    at.run()
+    assert not at.exception, at.exception
+    assert "Chance this lead closes" in _text(at) and "Why this score" in _text(at)
+    raw = (INGEST_FIXTURES / "olist_funnel" / OLIST_MQL).read_bytes()
+    at.file_uploader(key=f"src_upload_{run.run_id}").upload("new.csv", raw, "text/csv").run()
+    at.button(key=f"src_score_file_{run.run_id}").click().run()
+    assert not at.exception, at.exception
+    assert at.selectbox(key=f"src_pick_{run.run_id}").options and "Chance this lead closes" in _text(at)
+    bad = raw.replace(b"paid_search", b"<b>pigeon</b>", 1)
+    at.file_uploader(key=f"src_upload_{run.run_id}").clear().upload("new.csv", bad, "text/csv").run()
+    at.button(key=f"src_score_file_{run.run_id}").click().run()
+    page = _text(at)
+    assert not at.exception and "These leads cannot be scored" in page
+    assert "<b>pigeon</b>" not in page and "&lt;b&gt;pigeon&lt;/b&gt;" in page

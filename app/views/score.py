@@ -1,4 +1,5 @@
-"""Page: Score a lead. Fill in one lead's form answers and session, and see what the model makes of it and why."""
+"""Page: Score a lead. Fill in one lead's form answers and session, and see what the model makes of it and why. For a
+model trained on a converted dataset, leads can also be given in the source's own format (a form or a CSV)."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -8,11 +9,13 @@ import streamlit as st
 from app import charts, scoring, storage, ui
 from app import components as C
 from app.scoring import FormField
+from emva.ingest.mapping import DatasetMapping
 from emva.model import INTERCEPT
-from emva.persist import BUNDLE_FILE
+from emva.persist import BUNDLE_FILE, ModelBundle
 from emva.scoring import FieldType, UnknownLevelError
 
 LONG_TEXT = {"what_to_solve", "user_agent", "landing_url"}
+MODES = {"emva": "EMVA form", "source": "Source format"}
 
 
 def _widget(f: FormField, default: object, key: str) -> object:
@@ -56,10 +59,14 @@ def _form(defaults: dict[str, object], form_key: str) -> dict[str, object] | Non
     return values if submitted else None
 
 
-def _result(res: scoring.LeadScore, base: float, transform: str) -> None:
-    """The result card, then the points breakdown."""
+def _result(res: scoring.LeadScore, base: float, transform: str, batch: bool = False) -> None:
+    """The result card, then the points breakdown (``batch``: the lead was scored with others from a file)."""
     flags = [C.pill("Looks like a bot", "bad") if res.is_bot else C.pill("Not a bot", "ok")]
-    flags.append(C.pill("Scored alone: duplicates are checked in batches", "info"))
+    if batch:
+        flags.append(C.pill("Duplicate within the file", "warn") if res.is_duplicate else
+                     C.pill("No duplicate within the file", "ok"))
+    else:
+        flags.append(C.pill("Scored alone: duplicates are checked in batches", "info"))
     ui.html(C.result_card(res.p, base, res.deal_value, res.value_at_submit, res.value_formula, transform,
                           "".join(flags)))
     if res.blank_session:
@@ -81,6 +88,78 @@ def _result(res: scoring.LeadScore, base: float, transform: str) -> None:
                     key="lead_points")
 
 
+def _source_form(mapping: DatasetMapping, run_id: str) -> dict[str, object] | None:
+    """The source-format form: only the raw columns the mapping reads at submit time; returns values on submit."""
+    values: dict[str, object] = {}
+    with st.form(f"source_form_{run_id}", border=False):
+        cols = st.columns(2, gap="medium")
+        for i, f in enumerate(scoring.source_fields(mapping)):
+            with cols[i % 2]:
+                label, key, help_text = f.column, f"src_{run_id}_{f.key}", f"{f.file} · feeds {f.feeds}"
+                if f.options is not None:
+                    values[f.key] = st.selectbox(label, ["", *f.options], key=key, help=help_text,
+                                                 format_func=lambda o: "— blank —" if o == "" else o)
+                else:
+                    values[f.key] = st.text_input(label, key=key, help=help_text)
+        submitted = st.form_submit_button("Score this lead", type="primary", icon=":material/target:",
+                                          width="stretch", key=f"src_submit_{run_id}")
+    return values if submitted else None
+
+
+def _source_mode(run: storage.Run, bundle: ModelBundle, mapping: DatasetMapping) -> None:
+    """Leads in the source format: a one-lead form or a CSV, converted with the dataset's mapping and scored."""
+    state = f"source_{run.run_id}"
+    left, right = st.columns([3, 2], gap="large")
+    frames = None
+    with left:
+        st.caption(f"Leads as {mapping.name} sends them, converted with the dataset's confirmed mapping "
+                   "(emva.ingest.convert_leads) and scored with the same model. Outcome columns are not needed.")
+        one, many = st.tabs(["One lead", "Upload a CSV"])
+        try:
+            with one:
+                values = _source_form(mapping, run.run_id)
+                if values is not None:
+                    frames = scoring.frames_from_source_form(mapping, values)
+            with many:
+                files = st.file_uploader("New leads in the source format", type=["csv"], accept_multiple_files=True,
+                                         key=f"src_upload_{run.run_id}",
+                                         help=f"The primary file {mapping.sources[0].file} (any name if it is the "
+                                              "only file), plus any joined file the mapping reads at submit time.")
+                refused = [f.name for f in files or [] if f.name.lower().startswith(storage.FORBIDDEN_PREFIX)]
+                if refused:
+                    ui.html(C.callout(f"Refused {', '.join(refused)}: ground-truth files are never accepted.", "bad"))
+                elif st.button("Score these leads", type="primary", icon=":material/target:", disabled=not files,
+                               key=f"src_score_file_{run.run_id}"):
+                    frames = scoring.frames_from_source_uploads(mapping, {f.name: f.getvalue() for f in files})
+            if frames is not None:
+                st.session_state[state] = scoring.score_source(bundle, mapping, frames, run.dataset_path)
+        except ValueError as e:  # includes UnknownLevelError and convert_leads' refusals
+            st.session_state.pop(state, None)
+            ui.html(C.callout(str(e), "bad", lead="These leads cannot be scored:"))
+    with right:
+        result: scoring.SourceScores | None = st.session_state.get(state)
+        if result is None:
+            ui.html(C.empty_state("Ready when you are", "Fill in a lead as the source sends it, or upload a CSV of "
+                                                        "new leads, and score it."))
+            return
+        table = result.table()
+        st.dataframe(table, hide_index=True, width="stretch", height=min(38 + 35 * len(table), 250), column_config={
+            "lead_id": st.column_config.TextColumn("Lead"),
+            "p": st.column_config.NumberColumn("P(close)", format="percent"),
+            "deal_value": st.column_config.NumberColumn("Deal value if won", format="£%.0f"),
+            "value_at_submit": st.column_config.NumberColumn("Value sent", format="£%.0f"),
+            "value_formula": st.column_config.NumberColumn("p × value", format="£%.0f"),
+            "is_bot": st.column_config.CheckboxColumn("Bot"), "is_duplicate": st.column_config.CheckboxColumn("Dup")})
+        st.download_button("Scores CSV", table.to_csv(index=False).encode("utf-8"),
+                           file_name=f"{run.run_id}-source-scores.csv", mime="text/csv", icon=":material/download:",
+                           key=f"src_dl_{run.run_id}")
+        ids = table.lead_id.tolist()
+        lead_id = st.selectbox("Why this score: lead", ids, key=f"src_pick_{run.run_id}") if len(ids) > 1 else ids[0]
+        res = scoring.source_lead_score(bundle, result, lead_id, run.dataset_path)
+        _result(res, ui.base_rate(run.run_id, run.out_dir, run.dataset_path), scoring.describe_transform(bundle),
+                batch=len(ids) > 1)
+
+
 def render() -> None:
     """The page."""
     ui.html(C.page_header("Score a lead", "What is this lead worth?",
@@ -93,6 +172,19 @@ def render() -> None:
         return
     run = ui.pick_run(runs, key="score_run", label="Model (completed runs)")
     bundle = ui.bundle(run.run_id, str(Path(run.out_dir) / BUNDLE_FILE))
+    try:
+        mapping = scoring.run_mapping(run.dataset_path)
+    except ValueError as e:
+        mapping = None
+        ui.html(C.callout(str(e), "warn", lead="The dataset's mapping.toml cannot be read; source format is off."))
+    if mapping is not None:
+        mode = st.segmented_control("Lead format", list(MODES), default="emva", required=True,
+                                    format_func=MODES.get, key=f"score_mode_{run.run_id}",
+                                    help="This model was trained on a converted dataset: leads can be given in the "
+                                         "source's own format too.")
+        if mode == "source":
+            _source_mode(run, bundle, mapping)
+            return
     left, right = st.columns([3, 2], gap="large")
     with left:
         lead_id = st.text_input("Start from a lead in the training data (optional)", key=f"prefill_{run.run_id}",

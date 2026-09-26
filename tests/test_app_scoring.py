@@ -1,6 +1,7 @@
 """app.scoring: the form adapter scores through emva.scoring, matching the batch run (R17, ADR 0018)."""
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
 import numpy as np
@@ -87,3 +88,96 @@ def test_bot_flag_is_reported_not_dropped(trained) -> None:
 def test_describe_transform(trained) -> None:
     text = scoring.describe_transform(trained[0])
     assert text.startswith("p × expected deal value, capped at £") and "floored at £25" in text
+
+
+# --- source format (Phase 9): leads as the source sends them, converted with the dataset's mapping -----------------
+
+@pytest.fixture(scope="module")
+def converted(app_converted):
+    """``(bundle, dataset dir, mapping)`` of the run trained on the converted Olist-shaped fixture."""
+    _, run = app_converted
+    return load_bundle(Path(run.out_dir) / "model.joblib"), Path(run.dataset_path), \
+        scoring.run_mapping(run.dataset_path)
+
+
+def _mql_csv() -> bytes:
+    from conftest import INGEST_FIXTURES, OLIST_MQL
+
+    return (INGEST_FIXTURES / "olist_funnel" / OLIST_MQL).read_bytes()
+
+
+def test_run_mapping(converted, app_trained) -> None:
+    _, _, mapping = converted
+    assert mapping.name == "olist_funnel" and mapping.outcome_confirmed
+    assert scoring.run_mapping(app_trained[1].dataset_path) is None  # the v1 format has no mapping
+
+
+def test_source_fields_are_the_submit_time_columns(converted) -> None:
+    _, _, mapping = converted
+    fields = scoring.source_fields(mapping)
+    assert [f.column for f in fields] == ["mql_id", "first_contact_date", "origin", "landing_page_id"]
+    by = {f.column: f for f in fields}
+    assert by["origin"].options[:2] == ("paid_search", "social") and by["origin"].feeds == "utm_source, utm_medium"
+    assert by["landing_page_id"].options is None and by["mql_id"].feeds.startswith("lead lead_id")
+    assert "won_date" not in by and "declared_monthly_revenue" not in by  # outcome and deal value: never asked
+
+
+def test_source_form_lead_scores_like_convert_leads_then_score_leads(converted) -> None:
+    from emva.ingest.convert import convert_leads
+
+    bundle, data, mapping = converted
+    keys = {f.column: f.key for f in scoring.source_fields(mapping)}
+    values = {keys["mql_id"]: "", keys["first_contact_date"]: "2018-04-01", keys["origin"]: "paid_search",
+              keys["landing_page_id"]: "lp-1"}
+    frames = scoring.frames_from_source_form(mapping, values)
+    assert "mql_id" not in next(iter(frames.values())).columns  # a blank id: convert_leads numbers the lead
+    res = scoring.score_source(bundle, mapping, frames, data)
+    t = res.table()
+    assert list(t.lead_id) == ["new-000001"] and 0 < t.p.iloc[0] < 1
+    direct = score_leads(bundle, convert_leads(frames, mapping), data)
+    assert t.p.iloc[0] == direct.p_formula.iloc[0] and t.value_at_submit.iloc[0] == direct.value_at_submit.iloc[0]
+    one = scoring.source_lead_score(bundle, res, "new-000001", data)
+    logit = np.log(one.p / (1 - one.p))
+    assert abs(one.points.log_odds.sum() - logit) < 1e-9 and "session_missing" in set(one.points.feature)
+    assert "time_on_page_s" in one.blank_session  # the source has no on-site session
+
+
+def test_source_upload_scores_every_row_and_ignores_outcome_columns(converted) -> None:
+    bundle, data, mapping = converted
+    frames = scoring.frames_from_source_uploads(mapping, {"new_mqls.csv": _mql_csv()})  # any name when alone
+    res = scoring.score_source(bundle, mapping, frames, data)
+    raw = pd.read_csv(io.BytesIO(_mql_csv()), dtype=str)
+    assert list(res.table().lead_id) == list(raw.mql_id) and res.table().p.between(0, 1).all()
+    with_outcome = raw.assign(won_date="2018-05-01", deal_stage="Won")  # extra columns are not read
+    frames = scoring.frames_from_source_uploads(mapping, {"x.csv": with_outcome.to_csv(index=False).encode()})
+    assert scoring.score_source(bundle, mapping, frames, data).table().p.tolist() == res.table().p.tolist()
+
+
+def test_source_refusals_are_clear(converted) -> None:
+    bundle, data, mapping = converted
+    keys = {f.column: f.key for f in scoring.source_fields(mapping)}
+    frames = scoring.frames_from_source_form(mapping, {keys["origin"]: "carrier_pigeon"})
+    with pytest.raises(ValueError, match="not in its value_map"):
+        scoring.score_source(bundle, mapping, frames, data)
+    raw = pd.read_csv(io.BytesIO(_mql_csv()), dtype=str)
+    dup = pd.concat([raw.head(2), raw.head(1)]).to_csv(index=False).encode()
+    with pytest.raises(ValueError, match="unique"):
+        scoring.score_source(bundle, mapping, scoring.frames_from_source_uploads(mapping, {"x.csv": dup}), data)
+    with pytest.raises(ValueError, match="missing source file"):
+        scoring.frames_from_source_uploads(mapping, {"a.csv": b"x\n1\n", "b.csv": b"y\n2\n"})
+
+
+def test_joined_file_gets_the_primary_join_value() -> None:
+    from emva.ingest.mapping import load_mapping
+
+    from conftest import REPO
+
+    m = load_mapping((REPO / "mappings" / "crm_opportunities.toml").read_text(encoding="utf-8"))
+    fields = scoring.source_fields(m)
+    assert [(f.file, f.column) for f in fields] == [("sales_pipeline.csv", "opportunity_id"),
+                                                    ("sales_pipeline.csv", "engage_date"),
+                                                    ("sales_pipeline.csv", "account"),
+                                                    ("accounts.csv", "office_location")]
+    values = {f.key: v for f, v in zip(fields, ["", "2017-03-01", "Acme", "United States"])}
+    frames = scoring.frames_from_source_form(m, values)
+    assert frames["accounts.csv"].account.iloc[0] == "Acme" == frames["sales_pipeline.csv"].account.iloc[0]
