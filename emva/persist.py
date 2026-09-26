@@ -61,7 +61,8 @@ class ModelBundle:
     ``value_transform`` is None in legacy label mode (no ``value_at_submit``); ``extras`` is the generic feature set's
     encoder of the declared extra columns, fitted on the training leads (None for the other feature sets; its
     ``x_`` columns are part of ``design_columns``, and an unseen categorical value is ``other``, not refused).
-    Provenance: ``created_at`` (UTC ISO 8601), ``data_name`` (the training data directory's name), ``versions`` (``library_versions``).
+    Provenance: ``created_at`` (UTC ISO 8601), ``data_name`` (the training data directory's name), ``versions``
+    (``library_versions``). ``load_bundle`` refuses a bundle whose ``extras`` and ``feature_set`` disagree.
     """
 
     format_version: int

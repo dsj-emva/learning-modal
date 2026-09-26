@@ -373,7 +373,8 @@ class DatasetMapping:
         ``submit_time_only`` (the default) keeps what a new lead has when it arrives: the ``lead_id`` and
         ``created_at`` expressions, every field row that is not ``ignore`` and every ``[[features]]`` source
         (``emva.ingest.convert.convert_leads`` reads exactly these; the first two are optional there). False adds the
-        outcome, the other CRM times, the deal value and ignored fields: everything ``convert`` reads. Join columns are included for joined files.
+        outcome, the other CRM times, the deal value and ignored fields: everything ``convert`` reads. Join columns
+        are included for joined files.
         """
         if submit_time_only:
             exprs = [e for e in (self.lead.lead_id, self.lead.created_at) if e is not None]
@@ -628,8 +629,6 @@ def dump_mapping(m: DatasetMapping, header: str = "") -> str:
     return "\n".join(out) + "\n"
 
 
-__all__ = ["ANSWER_PREFIX", "CONFIDENCES", "DatasetMapping", "Expr", "FeatureMap", "FieldMap", "IGNORE",
-           "LEAD_COLUMNS",
+__all__ = ["ANSWER_PREFIX", "CONFIDENCES", "DatasetMapping", "Expr", "FeatureMap", "FieldMap", "IGNORE", "LEAD_COLUMNS",
            "LEAD_ROLES", "LeadColumns", "MAX_SOURCES", "OPS", "OUTCOME_KINDS", "Outcome", "Review", "STAGES", "Source",
-           "TARGETS",
-           "check_confirmed", "dump_mapping", "load_mapping"]
+           "TARGETS", "check_confirmed", "dump_mapping", "load_mapping"]

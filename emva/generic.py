@@ -14,11 +14,13 @@ the model bundle so ``emva.scoring`` reproduces the same design columns):
   Level order: the reference, the other kept levels by training count (descending, then value), ``other``,
   ``missing``. So an unseen value never raises: this amends ADR 0009's "unknown level raises" for extras only.
 - **numeric**: edges are the training quantiles at 1/B, ..., (B-1)/B (B = ``GENERIC_NUMERIC_BINS``; numpy's
-  ``inverted_cdf`` method, so every edge is an observed training value), de-duplicated. An edge at the training maximum would leave the top bin empty, so it is replaced by
-  the largest training value below the maximum (if any) and the edges are de-duplicated again (a 0/1 column with 90%
-  ones still gets the bins ``<=0`` and ``>0``). Bins are right-closed: ``<=e1``, ``(e1, e2]``, ..., ``>ek``; with no
-  edge (one distinct training value) the single bin is ``all``. A blank is ``missing``; a value outside the training
-  range falls into the edge bin. Reference = the first bin (``missing`` when no training lead has a value).
+  ``inverted_cdf`` method, so every edge is an observed training value), de-duplicated. An edge at the training
+  maximum would leave the top bin empty, so it is replaced by the largest training value below the maximum (if any)
+  and the edges are de-duplicated again (a 0/1 column with 90% ones still gets the bins ``<=0`` and ``>0``). Bins
+  are right-closed: ``<=e1``, ``(e1, e2]``, ..., ``>ek``; with no edge (one distinct training value) the single bin is
+  ``all``. A blank is ``missing``; a non-finite number (``inf``, an overflow such as ``1e400``) is refused; a value
+  outside the training range falls into the edge bin. Level order: the bins, then ``missing``.
+  Reference = the first bin (``missing`` when no training lead has a value).
 
 Design columns are ``x_<name>=<level>`` for every level but the reference, extras in declaration order. Everything is
 deterministic: no data-dependent ordering is left to an unstable sort.
@@ -113,10 +115,11 @@ def bin_labels(edges: tuple[float, ...]) -> tuple[str, ...]:
     return (f"<={shown[0]}", *(f"({a}, {b}]" for a, b in zip(shown, shown[1:])), f">{shown[-1]}")
 
 
-def numeric_edges(values: np.ndarray, bins: int = GENERIC_NUMERIC_BINS) -> tuple[float, ...]:
-    """Inner bin edges from training ``values`` (no NaN): the module docstring's rule."""
+def numeric_edges(values: np.ndarray) -> tuple[float, ...]:
+    """Inner bin edges from training ``values`` (no NaN): the module docstring's rule (``GENERIC_NUMERIC_BINS``)."""
     if len(values) == 0:
         return ()
+    bins = GENERIC_NUMERIC_BINS
     edges = np.unique(np.quantile(values, np.arange(1, bins) / bins, method="inverted_cdf"))
     top = values.max()
     if len(edges) and edges[-1] >= top:
@@ -127,8 +130,10 @@ def numeric_edges(values: np.ndarray, bins: int = GENERIC_NUMERIC_BINS) -> tuple
 
 @dataclass(frozen=True)
 class FittedExtra:
-    """One extra's frozen encoding: ``levels`` (reference first, then design-column order), ``reference``, the
-    numeric ``edges`` (empty for a categorical extra) and ``train_counts`` (training leads per level)."""
+    """One extra's frozen encoding: ``levels`` in design-column order (the module docstring's level order: the
+    reference first, except for a numeric extra with no training value, whose levels stay ``all``, ``missing`` with
+    the reference ``missing`` last), ``reference``, the numeric ``edges`` (empty for a categorical extra) and
+    ``train_counts`` (training leads per level)."""
 
     feature: ExtraFeature
     levels: tuple[str, ...]
@@ -155,11 +160,11 @@ class FittedExtra:
         return [f"{self.feature.column}={lvl}" for lvl in self.levels if lvl != self.reference]
 
 
-def _fit_one(feature: ExtraFeature, values: pd.Series, min_count: int, bins: int) -> FittedExtra:
+def _fit_one(feature: ExtraFeature, values: pd.Series) -> FittedExtra:
     """Fit one extra on its training ``values``."""
     if feature.kind is ExtraKind.NUMERIC:
         v = numeric_values(values, feature.name).dropna().to_numpy()
-        edges = numeric_edges(v, bins)
+        edges = numeric_edges(v)
         levels = (*bin_labels(edges), MISSING)
         fitted = FittedExtra(feature, levels, levels[0] if len(v) else MISSING, edges, {})
     else:
@@ -167,7 +172,7 @@ def _fit_one(feature: ExtraFeature, values: pd.Series, min_count: int, bins: int
         counts = t.dropna().value_counts()
         ranked = sorted(((lvl, int(n)) for lvl, n in counts.items() if lvl not in (OTHER, MISSING)),
                         key=lambda kv: (-kv[1], kv[0]))
-        kept = [lvl for lvl, n in ranked if n >= min_count]
+        kept = [lvl for lvl, n in ranked if n >= GENERIC_MIN_LEVEL_COUNT]
         n_missing = int(t.isna().sum() + counts.get(MISSING, 0))
         reference = kept[0] if kept else (OTHER if len(t) - n_missing >= n_missing else MISSING)
         levels = (*kept, OTHER, MISSING)
@@ -206,8 +211,7 @@ class GenericEncoder:
         return pd.DataFrame(data, index=X.index, columns=self.columns())
 
 
-def fit_encoder(features: tuple[ExtraFeature, ...], X_train: pd.DataFrame,
-                min_count: int = GENERIC_MIN_LEVEL_COUNT, bins: int = GENERIC_NUMERIC_BINS) -> GenericEncoder:
+def fit_encoder(features: tuple[ExtraFeature, ...], X_train: pd.DataFrame) -> GenericEncoder:
     """Fit every extra's encoding on the training rows ``X_train`` (raw columns ``x_<name>``; module docstring).
 
     Raises ``ValueError`` when a raw column is missing or a numeric extra holds a non-number.
@@ -215,7 +219,7 @@ def fit_encoder(features: tuple[ExtraFeature, ...], X_train: pd.DataFrame,
     missing = [f.column for f in features if f.column not in X_train]
     if missing:
         raise ValueError(f"raw extra column(s) {missing} are not in the training frame")
-    return GenericEncoder(tuple(_fit_one(f, X_train[f.column], min_count, bins) for f in features))
+    return GenericEncoder(tuple(_fit_one(f, X_train[f.column]) for f in features))
 
 
 def parse_features(entries: object, where: str) -> tuple[ExtraFeature, ...]:
