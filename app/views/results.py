@@ -9,16 +9,16 @@ import streamlit as st
 
 from app import charts, results, storage, ui
 from app import components as C
-from emva.constants import TEST_FROM
+from emva.dataset_meta import dataset_dates
 
 TEST_SET_LABELS = {"mature": "Mature leads (horizon labels)", "legacy": "Legacy labels (frozen POC)"}
 
 
 def _kpis(head: pd.DataFrame) -> None:
-    """The KPI strip: this model against the status quo (or, without rules, the frozen baseline)."""
+    """The KPI strip: this model against the status quo, else the frozen baseline, else nothing (ADR 0022)."""
     m = head.set_index("model")
     model = m.loc[results.CANDIDATE]
-    ref_name = next((n for n in (results.STATUS_QUO, results.BASELINE) if n in m.index), None)
+    ref_name = results.kpi_reference(m.index)
     ref = m.loc[ref_name] if ref_name else None
     vs = f"vs {ref_name.split(' (')[0].lower()}" if ref_name else ""
 
@@ -36,8 +36,10 @@ def _kpis(head: pd.DataFrame) -> None:
     ]))
 
 
-def _standard_table(head: pd.DataFrame, paired: pd.DataFrame | None, notes: list[str]) -> None:
-    """The standard report's headline and paired comparison (``emva.eval.report`` frames), formatted."""
+def _standard_table(head: pd.DataFrame, paired: pd.DataFrame | None, notes: list[str],
+                    baseline_missing: str | None) -> None:
+    """The standard report's headline and paired comparison (``emva.eval.report`` frames), formatted; without a
+    baseline row the paired comparison is replaced by ``baseline_missing`` (ADR 0022)."""
     rows = [[r.model, C.num(r.auc), f"{r.auc_lo:.3f} – {r.auc_hi:.3f}", C.num(r.brier, 4), C.pct(r.top20_wins),
              C.pct(r.top20_revenue_p), C.pct(r.top20_revenue_value)] for r in head.itertuples()]
     ui.html(C.table(["Scored by", "AUC", "95% interval", "Brier", "Top-20% wins", "Top-20% revenue (by p)",
@@ -46,7 +48,9 @@ def _standard_table(head: pd.DataFrame, paired: pd.DataFrame | None, notes: list
     if results.STATUS_QUO in set(head.model):
         caption.insert(0, "Brier needs a probability, so the status quo (a bucket value) has none.")
     st.caption(" ".join(caption + notes))
-    if paired is not None and not paired.empty:
+    if baseline_missing:
+        ui.html(C.callout(baseline_missing, "info"))
+    elif paired is not None and not paired.empty:
         ui.html(C.section("Compared with the frozen baseline", "AUC difference on the same bootstrap resamples; "
                           "an interval that excludes 0 is a real difference, not noise."))
         ui.html(C.table(["Scored by", "AUC − baseline", "95% interval", "Bootstrap p"],
@@ -128,7 +132,8 @@ def render() -> None:
 
     ev = ui.evaluation(run.run_id, run.out_dir, run.dataset_path, test_set)
     if ev is None:
-        ui.html(C.callout(f"It needs labelled leads created on or after {TEST_FROM} with both wins and losses.",
+        test_from = dataset_dates(run.dataset_path)[1]
+        ui.html(C.callout(f"It needs labelled leads created on or after {test_from} with both wins and losses.",
                           "warn", lead="This test set is empty for this dataset."))
     else:
         head = ev["headline"]
@@ -138,7 +143,7 @@ def render() -> None:
                                       "highest."))
         _kpis(head)
         ui.html(C.section("Standard table", "The evaluation every change to the model is judged by, on this test set."))
-        _standard_table(head, ev["paired"], ev["notes"])
+        _standard_table(head, ev["paired"], ev["notes"], ev["baseline_missing"])
         left, right = st.columns(2, gap="large")
         with left:
             ui.html(C.section("Calibration", "Predicted chance vs what actually happened, by tenth of the test "
@@ -175,10 +180,13 @@ def render() -> None:
         with st.expander("Full standard report (baseline vs model vs status quo)"):
             st.markdown(report_text)
     else:
-        st.caption("No standard report for this run (the dataset has no status_quo_rules.json, or the report failed; "
-                   "see the training log).")
+        st.caption("No standard report for this run (the dataset is in the sample's format without "
+                   "status_quo_rules.json, or the report failed; see the training log).")
     if run.dataset == storage.SAMPLE_DATASET_NAME:
         st.caption("Trained on the bundled synthetic sample: every number here is on simulated data.")
+    elif storage.is_converted(run.dataset_path):
+        st.caption("Trained on a converted dataset (dataset.json): every number here is on that source's data, not "
+                   "on simulated data. For a public export, say \"on public data\"; check its licence before quoting.")
 
 
 render()

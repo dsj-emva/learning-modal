@@ -71,13 +71,16 @@ def _scale_cells(values: np.ndarray | pd.Series) -> dict[str, str]:
 
 
 def transform_table(result: PipelineResult, ids: pd.Index, revenue: pd.Series | None,
-                    baseline_value: pd.Series) -> tuple[pd.DataFrame, list[dict[str, float]]]:
-    """One row per transform (plus the baseline's value first) on the leads ``ids``.
+                    baseline_value: pd.Series | None) -> tuple[pd.DataFrame, list[dict[str, float]]]:
+    """One row per transform (plus the baseline's value first, unless ``baseline_value`` is None) on the leads ``ids``.
 
     Transforms are fitted on ``result``'s training leads. With ``revenue`` (recorded revenue indexed like
     ``ids``) the table adds top-20% capture, ties at the cut, retention vs the baseline's capture and value /
     revenue. Also returns, per transform row, the raw numbers the acceptance check needs. Raises ``ValueError``
-    when the test set has no recorded revenue or the baseline captures none of it (ratios undefined).
+    when the test set has no recorded revenue or the baseline captures none of it (ratios undefined). Without a
+    baseline (a converted dataset, ADR 0022) the "vs baseline" column and the retention numbers are left out, and a
+    transform that cannot be fitted on the candidate's values (e.g. tiers over a constant score) gets a row saying
+    why instead of raising.
     """
     X, tr = result.X, result.train
     rows: list[dict[str, str]] = []
@@ -86,25 +89,38 @@ def transform_table(result: PipelineResult, ids: pd.Index, revenue: pd.Series | 
     if revenue is not None:
         if revenue.sum() <= 0:
             raise ValueError("the test set has no recorded revenue; capture and value / revenue are undefined")
-        base_capture = tie_averaged_top_share(revenue, baseline_value.loc[ids].values)
-        if base_capture <= 0:
-            raise ValueError("the baseline captures no revenue in its top 20%; retention vs baseline is undefined")
-    entries = [("baseline (identity)", baseline_value.loc[ids].values)]
-    entries += [(f"candidate: {t.describe()}", t.fit(X.value_formula[tr]).apply(X.value_formula.loc[ids]))
-                for t in REPORT_TRANSFORMS]
+        if baseline_value is not None:
+            base_capture = tie_averaged_top_share(revenue, baseline_value.loc[ids].values)
+            if base_capture <= 0:
+                raise ValueError("the baseline captures no revenue in its top 20%; retention vs baseline is undefined")
+    entries = [] if baseline_value is None else [("baseline (identity)", baseline_value.loc[ids].values)]
+    for t in REPORT_TRANSFORMS:
+        try:
+            entries.append((f"candidate: {t.describe()}", t.fit(X.value_formula[tr]).apply(X.value_formula.loc[ids])))
+        except ValueError as e:
+            if baseline_value is not None:
+                raise
+            entries.append((f"candidate: {t.describe()}", f"not fitted: {e}"))
     for name, v in entries:
+        if isinstance(v, str):
+            rows.append({"value": name, "p1": v})
+            raw.append({})
+            continue
         row = {"value": name, **_scale_cells(v)}
         stats = scale_stats(v)
         if revenue is not None:
             capture = tie_averaged_top_share(revenue, v)
             row["top-20% revenue"] = f"{capture:.3f}"
             row["ties at cut"] = str(ties_at_cut(v))
-            row["vs baseline"] = f"{capture / base_capture:.1%}"
+            if base_capture is not None:
+                row["vs baseline"] = f"{capture / base_capture:.1%}"
             row["value / revenue"] = f"{v.sum() / revenue.sum():.2f}"
-            stats |= {"capture": capture, "retention": capture / base_capture}
+            stats |= {"capture": capture}
+            if base_capture is not None:
+                stats["retention"] = capture / base_capture
         rows.append(row)
         raw.append(stats)
-    return pd.DataFrame(rows), raw[1:]
+    return pd.DataFrame(rows), raw if baseline_value is None else raw[1:]
 
 
 def click_id_coverage(X: pd.DataFrame) -> pd.DataFrame:
@@ -139,12 +155,14 @@ def _md(df: pd.DataFrame) -> str:
 
 
 def value_report_sections(result: PipelineResult, tests: Sequence[tuple[str, pd.Series]],
-                          baseline_value: pd.Series) -> list[str]:
+                          baseline_value: pd.Series | None) -> list[str]:
     """Markdown lines: the value-scale comparison per test set and over all scored leads, an acceptance summary
     (plan 3.2), and click-ID coverage.
 
     ``tests`` are ``(title, recorded revenue indexed by lead_id)`` pairs; ``baseline_value`` is the baseline's
-    ``value_formula`` for every scored lead.
+    ``value_formula`` for every scored lead, or None when the report has no baseline (a converted dataset,
+    ADR 0022): then the baseline row and the acceptance summary (defined against the baseline) are replaced by a
+    note, and a test set without recorded revenue gets a note instead of its table.
     """
     out = ["## Value transforms (plan 3.2)", "",
            f"Candidate value = `value_formula` (p × E[deal value] × margin) through each transform, fitted on the "
@@ -154,18 +172,27 @@ def value_report_sections(result: PipelineResult, tests: Sequence[tuple[str, pd.
            "monotone, so capture moves only through ties at the cut.", ""]
     all_ids = result.X.index
     all_table, all_raw = transform_table(result, all_ids, None, baseline_value)
-    verdicts: dict[str, list[bool]] = {t.describe(): [s["max_over_median"] < MAX_OVER_MEDIAN_TARGET] for t, s in
-                                       zip(REPORT_TRANSFORMS, all_raw)}
+    verdicts: dict[str, list[bool]] = {} if baseline_value is None else {
+        t.describe(): [s["max_over_median"] < MAX_OVER_MEDIAN_TARGET] for t, s in zip(REPORT_TRANSFORMS, all_raw)}
     for title, revenue in tests:
+        if baseline_value is None and revenue.sum() <= 0:
+            out += [f"### {title}", "", "No recorded revenue on this test set: capture is undefined.", ""]
+            continue
         table, raw = transform_table(result, revenue.index, revenue, baseline_value)
         out += [f"### {title}", "", _md(table), ""]
-        for t, s in zip(REPORT_TRANSFORMS, raw):
-            verdicts[t.describe()] += [s["retention"] >= MIN_CAPTURE_RETENTION, s["max_over_median"] < MAX_OVER_MEDIAN_TARGET]
+        if baseline_value is not None:
+            for t, s in zip(REPORT_TRANSFORMS, raw):
+                verdicts[t.describe()] += [s["retention"] >= MIN_CAPTURE_RETENTION,
+                                           s["max_over_median"] < MAX_OVER_MEDIAN_TARGET]
     out += ["### All scored leads", "", _md(all_table), "",
             f"### Acceptance (plan 3.2): ≥ {MIN_CAPTURE_RETENTION:.0%} of the baseline's capture on every test set "
-            f"and max/median < {MAX_OVER_MEDIAN_TARGET:g}× on every test set and on all scored leads", "",
-            _md(pd.DataFrame([{"transform": k, "result": "PASS" if all(v) else "fail"} for k, v in verdicts.items()])),
-            "", "## Click-ID coverage (plan 3.5)", "",
+            f"and max/median < {MAX_OVER_MEDIAN_TARGET:g}× on every test set and on all scored leads", ""]
+    if baseline_value is None:
+        out += ["Not computed: the criterion is defined against the baseline, which this report omits.", ""]
+    else:
+        out += [_md(pd.DataFrame([{"transform": k, "result": "PASS" if all(v) else "fail"}
+                                  for k, v in verdicts.items()])), ""]
+    out += ["## Click-ID coverage (plan 3.5)", "",
             "Scored leads per paid channel by the identifier an upload could match on (see "
             "`docs/platform_contract.md`): a click id (" + ", ".join(CLICK_ID_COLUMNS) + "), else the lead-form id, "
             "else nothing but hashed email / phone (Meta: plus the `fbp` browser cookie).", "",

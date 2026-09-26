@@ -28,6 +28,7 @@ flowchart TD
 | step | owner | notes |
 |---|---|---|
 | constants | `emva/constants.py` | `AS_OF` 2026-09-24 UTC, `TEST_FROM` 2026-05-01, `STALLED_DAYS`/`GHOSTED_DAYS` 90, `HORIZON_DAYS` 120, `CATS` (feature → reference level, also design column order), `LR_C` 0.5, `POINTS_TO_DOUBLE_ODDS` 20, `TOP_FRACTION` 0.2 |
+| dataset dates | `emva/dataset_meta.py` | Phase 9, ADR 0020. `dataset_dates(data)`: `(as_of, test_from)` from `<data>/dataset.json` when present (refused loudly if malformed), else `AS_OF` / `TEST_FROM`; `pipeline.run` and `eval.report` read it, so a converted dataset labels, splits and reports on its own period. `read_dataset_meta` returns the whole file (counts, `coverage`) for the app |
 | load | `emva/io.py::load` | `read_leads` + `add_crm_outcomes` + `enrich` (the submit-time half: answers, domain and name enrichment, no CRM history; reused by `emva.scoring`). Raises on a lead with two Won rows. Enrichment columns are NaN when the domain is not in `companies.csv` |
 | clean | `emva/io.py::clean` | Bots and duplicates are dropped before labelling; 9,311 of 10,000 v1 leads remain |
 | labels | `emva/labels.py` | Two definitions side by side; see section 2 |
@@ -223,7 +224,8 @@ without Streamlit; UI modules are thin.
 
 ```mermaid
 flowchart LR
-    UP["Upload & train page"] --> VAL["app.validation.validate_files"] --> STORE["app.storage.save_dataset<br/>DATA_DIR/datasets/NAME"]
+    UP["Upload & train page"] --> ING["app.ingest (Map & convert)<br/>emva.ingest profile, draft, convert"] --> VAL
+    UP --> VAL["app.validation.validate_files"] --> STORE["app.storage.save_dataset<br/>DATA_DIR/datasets/NAME"]
     UP --> PRE["app.training.pre_training_summary<br/>pipeline.build + labels.split_masks"]
     UP --> START["app.training.start_training"] --> JOB["python -m app.job"]
     JOB --> CLI["python -m emva --data --out<br/>scores, weights, model.joblib"]
@@ -231,17 +233,56 @@ flowchart LR
     JOB --> REG["app.training.finish_run<br/>registry.json"]
     RES["Model results page"] --> FR["app.results<br/>report.frozen_test_labels, eval.metrics,<br/>eval.bootstrap, value_report.scale_stats"]
     SC["Score a lead page"] --> AD["app.scoring.score_form"] --> ES["emva.scoring<br/>lead_from_form, score_leads, points_breakdown"]
+    SC --> SRC["app.scoring.score_source<br/>emva.ingest.convert_leads"] --> ES
 ```
 
 | module | owns |
 |---|---|
-| `app/storage.py` | Data root layout; `list_runs` marks a `running` run failed when its job process is gone (pid + command-line check) (`datasets/<name>/`, `runs/<run_id>/`, `registry.json`), `Dataset` / `Run`, slug names, the training-file allow-list (a `ground_truth*` name is refused by name, never opened), atomic JSON writes under an `fcntl` lock, the read-only bundled sample (`data/v1`, training files only) |
-| `app/validation.py` | `validate_files` -> `ValidationReport(errors, warnings, summary)` of `Issue(file, column, message, rows)`; required columns derived from `emva.scoring.submit_time_fields` and what `emva.io` / `emva.eval.status_quo` read; never raises on user input |
-| `app/training.py`, `app/job.py` | `TrainingConfig` (label mode, feature set), the CLI and report argv, `pre_training_summary`, `start_training` (spawns the job, output to `train.log`), `finish_run` (parses the printed summary), `reconcile` (a vanished job becomes `failed`). The job runs the CLI, then the report when the dataset has rules, then records the outcome itself, so a run completes with no browser open |
-| `app/results.py` | Results-page frames from `scores.csv` / `weights.csv` (round-trip float parsing) + the dataset: `evaluate` (frozen mature or legacy test set; the report's baseline, model and status-quo `ScoredModel`s), `standard_table` (`emva.eval.report.headline_frame` / `paired_frame`), `calibration`, `auc_month` (bootstrap CI per month), `scorecard` (plain feature names), `value_distribution`, `training_base_rate`. Nothing is scraped from `report.txt` |
-| `app/scoring.py` | Form sections, labels and defaults over `submit_time_fields` (session fields default to a typical visit, because a blank one sets `session_missing`), `values_from_lead`, `score_form`, `describe_transform` |
+| `app/storage.py` | Data root layout; `list_runs` marks a `running` run failed when its job process is gone (pid + command-line check) (`datasets/<name>/`, `runs/<run_id>/`, `registry.json`), `Dataset` / `Run`, slug names, the training-file allow-list (a `ground_truth*` name is refused by name, never opened), atomic JSON writes under an `fcntl` lock, the read-only bundled sample (`data/v1`, training files only); Phase 9: a dataset may also hold `mapping.toml` and `dataset.json` (`is_converted`, `list_mappings`), the store's own record is `keel_meta.json` (`init_root` renames a legacy `dataset.json` record; ADR 0022) |
+| `app/ingest.py` | Map & convert (Phase 9): `MappingForm` (the editable, possibly incomplete mapping under review), `form_from_mapping` / `mapping_from_form` / `form_from_toml`, the review and outcome tables, saved and built-in (`mappings/*.toml`) mapping choices, `draft` (Claude Haiku via `emva.ingest.draft_mapping`, cache `DATA_DIR/ingest/draft_cache.json`; a missing key or API error becomes a message and the table is filled by hand), `convert_raw` (`emva.ingest.convert` + `mapping.toml` + an optional uploaded `status_quo_rules.json` + `validate_files`), coverage summary, `derived_counts` (the card's "Derived during conversion") |
+| `app/validation.py` | `validate_files` -> `ValidationReport(errors, warnings, summary)` of `Issue(file, column, message, rows)`; required columns derived from `emva.scoring.submit_time_fields` and what `emva.io` / `emva.eval.status_quo` read; a converted dataset's `dataset.json` (`emva.dataset_meta.parse_dataset_meta`, its `as_of` for the snapshot warning, a warning naming the leads whose CRM times were reordered) and `mapping.toml` (a confirmed mapping); never raises on user input |
+| `app/training.py`, `app/job.py` | `TrainingConfig` (label mode, feature set), the CLI and report argv, `pre_training_summary`, `start_training` (spawns the job, output to `train.log`), `finish_run` (parses the printed summary); a vanished job becomes `failed` in `app.storage.list_runs` (`job_alive`). The job runs the CLI, then the report when the dataset has rules or is converted (`report_available`), then records the outcome itself, so a run completes with no browser open. Dates come from `emva.dataset_meta.dataset_dates` (ADR 0020) |
+| `app/results.py` | Results-page frames from `scores.csv` / `weights.csv` (round-trip float parsing) + the dataset: `evaluate` (frozen mature or legacy test set; the report's baseline, model and status-quo `ScoredModel`s), `standard_table` (`emva.eval.report.headline_frame` / `paired_frame`), `calibration`, `auc_month` (bootstrap CI per month), `scorecard` (plain feature names), `value_distribution`, `training_base_rate`. `baseline_scores` returns no scores and a reason on a converted dataset or a failed script; `kpi_reference` picks status quo, else baseline, else nothing (ADR 0022). Nothing is scraped from `report.txt` |
+| `app/scoring.py` | Form sections, labels and defaults over `submit_time_fields` (session fields default to a typical visit, because a blank one sets `session_missing`), `values_from_lead`, `score_form`, `describe_transform`; source format for a converted dataset's run: `run_mapping` (via `app.storage.read_mapping`), `source_fields`, `frames_from_source_form` / `_uploads`, `score_source` (`emva.ingest.convert_leads` then `score_leads`), `source_lead_score` |
 | `app/auth.py` | `expected_password` (`APP_PASSWORD`; unset or blank = refuse), `check_password` (`hmac.compare_digest`) |
 | `app/main.py`, `app/ui.py`, `app/views/` | Entrypoint (gate, sidebar, `st.navigation`), cached loaders (`st.cache_data` for evaluation frames, `st.cache_resource` for bundles), the three pages |
 | `app/theme.py`, `app/components.py`, `app/charts.py`, `.streamlit/config.toml` | Identity: palette, fonts, the one stylesheet; escaped HTML components (KPI cards, pills, file cards, result card, tables); the shared Plotly template |
 
 Ground truth: `grep -rn "ground_truth" app/` returns only `storage.FORBIDDEN_PREFIX`, the name check.
+
+## 9. Dataset converter (`emva/ingest/`, Phase 9, ADRs 0020-0023)
+
+Foreign CSVs (1-3 files per source) become a dataset directory the pipeline reads like data/v1. The LLM only
+drafts the mapping (ADR 0021); everything after the person's confirmation is deterministic code.
+
+```mermaid
+flowchart LR
+    RAW["raw CSVs<br/>(data/external/raw/, or Keel uploads)"] --> FR["convert.frames_from_bytes<br/>every cell as text"]
+    FR --> PROF["profile.profile<br/>names, types, share missing, distinct,<br/>min/max, redacted examples"]
+    PROF --> DRAFT["draft.draft_mapping<br/>Haiku 4.5, structured output,<br/>ReplyCache (profiles hash, prompt version,<br/>fingerprint, model id)"]
+    DRAFT --> TOML["mapping TOML<br/>outcome_confirmed = false"]
+    HAND["hand-written / saved mapping<br/>mappings/*.toml, dataset's mapping.toml"] --> TOML
+    TOML --> REV["person reviews:<br/>targets, [lead] expressions, outcome, dates<br/>sets outcome_confirmed = true"]
+    REV --> CONV["convert.convert<br/>join_sources, evaluate, outcome -> CRM rows,<br/>placeholders, refuse off-schema values"]
+    FR --> CONV
+    CONV --> DS["dataset dir<br/>historical_leads, crm_history,<br/>companies + people (header-only),<br/>dataset.json (dates, counts, coverage), mapping.toml"]
+    DS --> PIPE["python -m emva / emva.eval.report<br/>dates via dataset_meta.dataset_dates<br/>no baseline row (ADR 0022)"]
+    NEW["new leads in source format"] --> CL["convert.convert_leads"] --> SCORE["emva.scoring.score_leads<br/>(run's model.joblib)"]
+    TOML --> CL
+```
+
+| module | owns |
+|---|---|
+| `emva/ingest/mapping.py` | `DatasetMapping` (`Source`: a plain `.csv` file name, never ground truth; `LeadColumns`: only `created_at` required, a Won lead without `won_at` takes `close_at`; `Outcome`, `FieldMap`, `Review`, `Expr`), the TOML schema (module docstring), `TARGETS` (lead columns + `answers.<key>`), `OPS` (`date_from_parts`, `minus_days`, `product`, `sum`), `load_mapping` / `dump_mapping` (unknown keys refused, deterministic output), `check_confirmed` |
+| `emva/ingest/profile.py` | `ColumnProfile`, `profile`, `infer_type`, `redact` (`<email>`, `<phone>`, `<ip>`), `is_person_column` / `looks_like_names` / `redact_as_names` (`<name>` only: a person token as the last token of the name, or 2-3 capitalised words as values); examples only for columns with <= 20 distinct values, at most 10 |
+| `emva/ingest/draft.py` | `SYSTEM_PROMPT`, `RESPONSE_SCHEMA` (target enum `DRAFT_TARGETS`, reason, confidence), `check_reply` / `parse_reply` (`ContractError`), `draft_mapping` (always `outcome_confirmed = False`), `default_dates`, `draft_key` / `is_cached`; client from `emva.context.agent.make_client`, cache `emva.context.cache.ReplyCache` |
+| `emva/ingest/convert.py` | `frames_from_bytes`, `join_sources`, `evaluate`, `convert` (five files + `dataset.json`: CRM rows New / Contacted / final stage strictly ordered in time, placeholders for unmapped email / form_variant / lead_id, values checked against `emva.scoring.submit_time_fields`, events after `as_of` refused), `coverage` (39 v2 design columns: data / constant / unfilled), `DERIVED_COUNTS` (the derived or adjusted values `dataset.json` counts; the CLI prints them all), `convert_leads` (new leads without outcome columns) |
+| `emva/ingest/__main__.py` | `python -m emva.ingest draft|convert|score` |
+| `emva/dataset_meta.py` | `dataset_dates`, `read_dataset_meta`, `parse_dataset_meta`, `has_dataset_meta` (section 1) |
+| `app/ingest.py` | the Keel side (section 8): `MappingForm`, review / outcome tables, draft, `convert_raw` |
+
+`emva/ingest/` reads no ground truth. From `emva/eval/` it imports only `evaluation_only.is_evaluation_only`, the
+name check that refuses ground-truth files (draft CLI, `Source.file`, `frames_from_bytes`, score CLI) while keeping
+the name itself inside `emva/eval/` (grep rule). The Phase 4 modules (`rolling`,
+`hardening`, `calibration_decay`, ...) and `emva.troas` still use the constants and run on data/v1 and data/v2 only
+(ADR 0020, consequences).

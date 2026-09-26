@@ -10,6 +10,8 @@ value options ``--value-cap-percentile``, ``--value-floor``, ``--value-compressi
 ``emva.value_transform``). The default ``--feature-set v2`` uses the plan Phase 2 features (see ``emva.features``).
 Every run also writes ``model.joblib`` into ``--out``: the fitted models as an ``emva.persist.ModelBundle``, which
 ``emva.scoring`` loads to score new leads. It prints nothing, so stdout stays the baseline's.
+The snapshot date and train/test boundary are the dataset's own when ``--data`` carries a ``dataset.json`` (a
+converted dataset, ADR 0020; ``emva.dataset_meta.dataset_dates``), else the constants ``AS_OF`` / ``TEST_FROM``.
 """
 from __future__ import annotations
 

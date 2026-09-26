@@ -4,11 +4,13 @@ Layout, created by ``init_root``::
 
     DATA_DIR/
       registry.json            {"runs": [Run, ...]}  (atomic writes, guarded by registry.lock)
-      datasets/<name>/         uploaded training files + dataset.json (a Dataset)
+      datasets/<name>/         training files + keel_meta.json (the store's Dataset record); a converted dataset
+                               also holds mapping.toml (the confirmed mapping) and dataset.json (dates, coverage)
       runs/<run_id>/           python -m emva --out (scores.csv, weights.csv, model.joblib), train.log, report.txt
 
-Only training-input files are accepted (``TRAINING_FILES``). A file named like evaluation-only ground truth is
-refused by name before anything reads it: the app never opens such a file (CLAUDE.md ground rule 2).
+Only training-input files are accepted (``TRAINING_FILES``), plus the two metadata files a converted dataset carries
+(``METADATA_FILES``). A file named like evaluation-only ground truth is refused by name before anything reads it: the
+app never opens such a file (CLAUDE.md ground rule 2).
 Invalid user input raises ``StorageError`` (a ``ValueError``) with a message fit to show in the UI.
 """
 from __future__ import annotations
@@ -16,16 +18,20 @@ from __future__ import annotations
 import csv
 import fcntl
 import json
+import logging
 import os
 import re
 import secrets
 import subprocess
 import tempfile
+import tomllib
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 REPO_ROOT: Path = Path(__file__).resolve().parents[1]
 # The bundled synthetic sample, offered read-only in the training panel.
@@ -38,11 +44,18 @@ LEADS_FILE, CRM_FILE, COMPANIES_FILE, PEOPLE_FILE, RULES_FILE = (
 # the rules only feed the status-quo benchmark.
 TRAINING_FILES: tuple[str, ...] = (LEADS_FILE, CRM_FILE, COMPANIES_FILE, PEOPLE_FILE, RULES_FILE)
 REQUIRED_FILES: tuple[str, ...] = (LEADS_FILE, CRM_FILE, COMPANIES_FILE)
+# A dataset converted from a foreign CSV also keeps the mapping it was converted with and the converter's metadata
+# (the dataset's own as_of / test_from and a coverage table). The store writes them as given and reads only the
+# mapping's ``source_url``; a dataset that carries ``dataset.json`` is "converted".
+MAPPING_FILE, DATASET_META_FILE = "mapping.toml", "dataset.json"
+METADATA_FILES: tuple[str, ...] = (MAPPING_FILE, DATASET_META_FILE)
 # Evaluation-only file names (ground truth) are refused on sight, never opened.
 FORBIDDEN_PREFIX: str = "ground_truth"
 
 REGISTRY_FILE: str = "registry.json"
-DATASET_META: str = "dataset.json"
+# The store's own record of a dataset (a ``Dataset`` as JSON). Before Phase 9 it was called dataset.json, which is
+# now the converter's file; ``init_root`` renames such legacy records (``_migrate_store_meta``).
+STORE_META: str = "keel_meta.json"
 LOG_FILE: str = "train.log"
 REPORT_FILE: str = "report.txt"
 RUN_STATUSES: tuple[str, ...] = ("queued", "running", "succeeded", "failed")
@@ -68,18 +81,20 @@ def validate_name(name: str) -> str:
     return name
 
 
-def check_file_name(name: str) -> None:
-    """Raise ``StorageError`` unless ``name`` is one of ``TRAINING_FILES``.
+def check_file_name(name: str, allow_metadata: bool = False) -> None:
+    """Raise ``StorageError`` unless ``name`` is one of ``TRAINING_FILES`` (or, with ``allow_metadata``, one of
+    ``METADATA_FILES``).
 
     A ground-truth file name gets its own message: those files are evaluation-only and must not be uploaded.
     Only the name is checked; the file is never opened.
     """
+    allowed = TRAINING_FILES + METADATA_FILES if allow_metadata else TRAINING_FILES
     base = Path(name).name
     if base.lower().startswith(FORBIDDEN_PREFIX):
         raise StorageError(f"'{base}' looks like an evaluation-only ground-truth file. The app never accepts "
                            "ground truth: upload only CRM exports (leads, CRM history, companies, people, rules).")
-    if base != name or base not in TRAINING_FILES:
-        raise StorageError(f"'{name}' is not a training file; expected one of: {', '.join(TRAINING_FILES)}")
+    if base != name or base not in allowed:
+        raise StorageError(f"'{name}' is not a training file; expected one of: {', '.join(allowed)}")
 
 
 def atomic_write_text(path: Path, text: str) -> None:
@@ -102,13 +117,39 @@ def atomic_write_json(path: Path, obj: object) -> None:
     atomic_write_text(path, json.dumps(obj, indent=2, sort_keys=True) + "\n")
 
 
+def _is_store_record(obj: object) -> bool:
+    """True when ``obj`` (parsed JSON) is a ``Dataset`` record as the store writes it, not the converter's file."""
+    return (isinstance(obj, dict) and {"name", "created_at", "rows"} <= obj.keys()
+            and obj.keys() <= Dataset.__dataclass_fields__.keys())
+
+
+def _migrate_store_meta(datasets: Path) -> None:
+    """Rename pre-Phase 9 store records (``dataset.json`` holding a ``Dataset``) to ``STORE_META``, so that
+    ``dataset.json`` only ever means the converter's metadata. A converter ``dataset.json`` is left alone, and so is
+    a corrupt one (logged as a warning; the dataset's validation refuses it loudly later)."""
+    for legacy in datasets.glob(f"*/{DATASET_META_FILE}"):
+        if (legacy.parent / STORE_META).exists():
+            continue
+        try:
+            obj = json.loads(legacy.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            log.warning("not migrating %s: it is not valid JSON (%s); validation refuses it when the dataset is used",
+                        legacy, e)
+            continue
+        if _is_store_record(obj):
+            os.replace(legacy, legacy.parent / STORE_META)
+            log.info("renamed the store record of dataset %s to %s", legacy.parent.name, STORE_META)
+
+
 def init_root(root: str | Path) -> Path:
-    """Create the data root layout (``datasets/``, ``runs/``, an empty ``registry.json``) if missing; return it."""
+    """Create the data root layout (``datasets/``, ``runs/``, an empty ``registry.json``) if missing, migrate
+    legacy dataset records (``_migrate_store_meta``) and return the root."""
     root = Path(root)
     (root / "datasets").mkdir(parents=True, exist_ok=True)
     (root / "runs").mkdir(parents=True, exist_ok=True)
     if not (root / REGISTRY_FILE).exists():
         atomic_write_json(root / REGISTRY_FILE, {"runs": []})
+    _migrate_store_meta(root / "datasets")
     return root
 
 
@@ -133,6 +174,22 @@ class Dataset:
         """True when the dataset carries ``status_quo_rules.json`` (needed for the status-quo benchmark)."""
         return RULES_FILE in self.rows
 
+    @property
+    def has_mapping(self) -> bool:
+        """True when the dataset keeps the ``mapping.toml`` it was converted with."""
+        return (Path(self.path) / MAPPING_FILE).is_file()
+
+    @property
+    def converted(self) -> bool:
+        """True when the dataset carries the converter's ``dataset.json`` (its own dates and coverage)."""
+        return is_converted(self.path)
+
+
+def is_converted(dataset_path: str | Path) -> bool:
+    """True when the dataset directory holds the converter's ``dataset.json``: its data come from another period
+    and format than the frozen baseline script assumes (ADR 0022)."""
+    return (Path(dataset_path) / DATASET_META_FILE).is_file()
+
 
 def _count_rows(path: Path) -> int:
     """Data rows of a CSV (quoted newlines respected) or 1 for a JSON file."""
@@ -151,15 +208,16 @@ def _dataset_from_dir(name: str, path: Path, created_at: str, read_only: bool) -
 def save_dataset(root: str | Path, name: str, files: dict[str, bytes]) -> Dataset:
     """Store uploaded ``files`` (file name -> content) as dataset ``name`` under ``root/datasets/`` and return it.
 
-    Raises ``StorageError`` for an invalid or taken name (including the sample's), an unknown or ground-truth
-    file name, or a missing required file. The directory appears atomically (written aside, then renamed).
+    ``files`` may also hold ``METADATA_FILES`` (a converted dataset's ``mapping.toml`` and ``dataset.json``),
+    written as given. Raises ``StorageError`` for an invalid or taken name (including the sample's), an unknown or
+    ground-truth file name, or a missing required file. The directory appears atomically (written aside, then renamed).
     Content is not schema-checked here: run ``app.validation.validate_files`` first.
     """
     validate_name(name)
     if name == SAMPLE_DATASET_NAME:
         raise StorageError(f"'{name}' is reserved for the bundled sample dataset")
     for f in files:
-        check_file_name(f)
+        check_file_name(f, allow_metadata=True)
     missing = [f for f in REQUIRED_FILES if f not in files]
     if missing:
         raise StorageError(f"missing required file(s): {', '.join(missing)}")
@@ -173,7 +231,7 @@ def save_dataset(root: str | Path, name: str, files: dict[str, bytes]) -> Datase
             (staging / f).write_bytes(content)
         ds = Dataset(name=name, path=str(target), created_at=utc_now(),
                      rows={f: _count_rows(staging / f) for f in TRAINING_FILES if f in files})
-        atomic_write_json(staging / DATASET_META, asdict(ds))
+        atomic_write_json(staging / STORE_META, asdict(ds))
         os.rename(staging, target)
     except BaseException:
         for p in staging.glob("*"):
@@ -192,7 +250,7 @@ def list_datasets(root: str | Path) -> list[Dataset]:
     """Stored datasets, newest first, then the bundled sample if it exists."""
     base = Path(root) / "datasets"
     out = []
-    for meta in base.glob(f"*/{DATASET_META}") if base.exists() else []:
+    for meta in base.glob(f"*/{STORE_META}") if base.exists() else []:
         d = json.loads(meta.read_text(encoding="utf-8"))
         out.append(Dataset(**{**d, "path": str(meta.parent)}))
     out.sort(key=lambda d: d.created_at, reverse=True)
@@ -207,6 +265,44 @@ def get_dataset(root: str | Path, name: str) -> Dataset:
         if d.name == name:
             return d
     raise StorageError(f"no dataset named '{name}'")
+
+
+@dataclass(frozen=True)
+class SavedMapping:
+    """A stored dataset's ``mapping.toml``: ``name`` (the dataset's), ``path`` (the file), ``created_at`` (the
+    dataset's, UTC ISO) and ``source_url`` (the mapping's top-level ``source_url``; None when absent or unreadable)."""
+
+    name: str
+    path: str
+    created_at: str
+    source_url: str | None = None
+
+
+def _source_url(path: Path) -> str | None:
+    """The top-level ``source_url`` string of the TOML file ``path``; None (logged) when it cannot be parsed."""
+    try:
+        doc = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError) as e:
+        log.warning("cannot read source_url from %s: %s", path, e)
+        return None
+    url = doc.get("source_url")
+    return url if isinstance(url, str) and url else None
+
+
+def list_mappings(root: str | Path) -> list[SavedMapping]:
+    """The ``mapping.toml`` of every stored dataset that keeps one, newest dataset first."""
+    return [SavedMapping(name=d.name, path=str(Path(d.path) / MAPPING_FILE), created_at=d.created_at,
+                         source_url=_source_url(Path(d.path) / MAPPING_FILE))
+            for d in list_datasets(root) if d.has_mapping]
+
+
+def read_mapping(root: str | Path, name: str) -> str:
+    """The text of dataset ``name``'s ``mapping.toml``; ``StorageError`` when there is no such dataset or it keeps
+    no mapping."""
+    ds = get_dataset(root, validate_name(name))
+    if not ds.has_mapping:
+        raise StorageError(f"dataset '{name}' has no {MAPPING_FILE}")
+    return (Path(ds.path) / MAPPING_FILE).read_text(encoding="utf-8")
 
 
 @dataclass(frozen=True)
@@ -351,7 +447,8 @@ def get_run(root: str | Path, run_id: str) -> Run:
     raise StorageError(f"no run '{run_id}'")
 
 
-__all__ = ["COMPANIES_FILE", "CRM_FILE", "Dataset", "LEADS_FILE", "PEOPLE_FILE", "REQUIRED_FILES", "RULES_FILE",
-           "Run", "SAMPLE_DATASET_NAME", "StorageError", "TRAINING_FILES", "atomic_write_json", "check_file_name",
-           "get_dataset", "get_run", "init_root", "list_datasets", "list_runs", "new_run", "register_run",
-           "run_dir", "sample_dataset", "save_dataset", "update_run", "validate_name"]
+__all__ = ["COMPANIES_FILE", "CRM_FILE", "DATASET_META_FILE", "Dataset", "LEADS_FILE", "MAPPING_FILE", "METADATA_FILES",
+           "PEOPLE_FILE", "REQUIRED_FILES", "RULES_FILE", "Run", "SAMPLE_DATASET_NAME", "STORE_META", "SavedMapping",
+           "StorageError", "TRAINING_FILES", "atomic_write_json", "check_file_name", "get_dataset", "get_run",
+           "init_root", "is_converted", "list_datasets", "list_mappings", "list_runs", "new_run", "read_mapping",
+           "register_run", "run_dir", "sample_dataset", "save_dataset", "update_run", "validate_name"]

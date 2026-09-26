@@ -135,3 +135,92 @@ def test_list_runs_keeps_a_live_job_running(tmp_path: Path) -> None:
     finally:
         fake.kill()
         fake.wait()
+
+
+MAPPING = b'source_url = "https://www.kaggle.com/datasets/example/leads"\n[columns]\nlead_id = "id"\n'
+DATES = b'{"as_of": "2026-09-24", "test_from": "2026-05-01"}\n'
+
+
+def test_save_dataset_keeps_metadata_files(tmp_path: Path) -> None:
+    files = {**_files(*storage.REQUIRED_FILES), storage.MAPPING_FILE: MAPPING, storage.DATASET_META_FILE: DATES}
+    ds = storage.save_dataset(tmp_path, "kaggle-leads", files)
+    d = Path(ds.path)
+    assert (d / storage.MAPPING_FILE).read_bytes() == MAPPING and (d / storage.DATASET_META_FILE).read_bytes() == DATES
+    assert set(ds.rows) == set(storage.REQUIRED_FILES)  # metadata files are not training files
+    assert (d / storage.STORE_META).exists() and ds.has_mapping and ds.converted
+    got = storage.get_dataset(tmp_path, "kaggle-leads")
+    assert got == ds and got.converted and storage.is_converted(got.path)
+    plain = storage.save_dataset(tmp_path, "plain", _files(*storage.REQUIRED_FILES))
+    assert not plain.has_mapping and not plain.converted
+    assert not storage.sample_dataset().converted and not storage.sample_dataset().has_mapping
+
+
+def test_metadata_names_accepted_only_when_allowed() -> None:
+    for name in storage.METADATA_FILES:
+        storage.check_file_name(name, allow_metadata=True)
+        with pytest.raises(StorageError, match="not a training file"):
+            storage.check_file_name(name)
+    with pytest.raises(StorageError, match="ground-truth"):
+        storage.check_file_name("ground_truth.md", allow_metadata=True)
+    with pytest.raises(StorageError, match="not a training file"):
+        storage.check_file_name("sub/mapping.toml", allow_metadata=True)
+
+
+def test_list_and_read_mappings(tmp_path: Path) -> None:
+    import time
+
+    base = _files(*storage.REQUIRED_FILES)
+    storage.save_dataset(tmp_path, "older", {**base, storage.MAPPING_FILE: b'[columns]\nlead_id = "id"\n'})
+    storage.save_dataset(tmp_path, "no-mapping", base)
+    time.sleep(1.1)  # created_at has one-second resolution
+    storage.save_dataset(tmp_path, "newer", {**base, storage.MAPPING_FILE: MAPPING, storage.DATASET_META_FILE: DATES})
+    got = storage.list_mappings(tmp_path)
+    assert [m.name for m in got] == ["newer", "older"]
+    assert got[0].source_url == "https://www.kaggle.com/datasets/example/leads" and got[1].source_url is None
+    assert got[0].path == str(tmp_path / "datasets" / "newer" / storage.MAPPING_FILE)
+    assert got[0].created_at == storage.get_dataset(tmp_path, "newer").created_at
+    assert storage.read_mapping(tmp_path, "newer") == MAPPING.decode()
+    with pytest.raises(StorageError, match="has no mapping.toml"):
+        storage.read_mapping(tmp_path, "no-mapping")
+    with pytest.raises(StorageError, match="no dataset"):
+        storage.read_mapping(tmp_path, "missing")
+    with pytest.raises(StorageError, match="not a valid name"):
+        storage.read_mapping(tmp_path, "../older")
+
+
+def test_unparsable_mapping_is_listed_without_source_url(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    storage.save_dataset(tmp_path, "broken", {**_files(*storage.REQUIRED_FILES), storage.MAPPING_FILE: b"= not toml"})
+    assert [(m.name, m.source_url) for m in storage.list_mappings(tmp_path)] == [("broken", None)]
+    assert "cannot read source_url" in caplog.text
+    assert storage.read_mapping(tmp_path, "broken") == "= not toml"
+
+
+def test_init_root_migrates_legacy_store_records(tmp_path: Path) -> None:
+    """A pre-Phase 9 dataset kept its store record in dataset.json; init_root renames it, and leaves a converter's
+    dataset.json (with its store record already in keel_meta.json) alone."""
+    old = storage.save_dataset(tmp_path, "old", _files(*storage.REQUIRED_FILES))
+    d = Path(old.path)
+    (d / storage.STORE_META).rename(d / storage.DATASET_META_FILE)
+    new = storage.save_dataset(tmp_path, "new", {**_files(*storage.REQUIRED_FILES), storage.DATASET_META_FILE: DATES})
+    storage.init_root(tmp_path)
+    assert (d / storage.STORE_META).exists() and not (d / storage.DATASET_META_FILE).exists()
+    assert storage.get_dataset(tmp_path, "old") == old and not old.converted
+    assert (Path(new.path) / storage.DATASET_META_FILE).read_bytes() == DATES
+    orphan = tmp_path / "datasets" / "orphan"  # a converter file with no store record is not a Dataset: untouched
+    orphan.mkdir()
+    (orphan / storage.DATASET_META_FILE).write_bytes(DATES)
+    storage.init_root(tmp_path)
+    assert (orphan / storage.DATASET_META_FILE).read_bytes() == DATES and not (orphan / storage.STORE_META).exists()
+
+
+def test_init_root_skips_a_corrupt_dataset_json_with_a_warning(tmp_path: Path,
+                                                               caplog: pytest.LogCaptureFixture) -> None:
+    import logging
+
+    broken = tmp_path / "datasets" / "broken"
+    broken.mkdir(parents=True)
+    (broken / storage.DATASET_META_FILE).write_text("{ not json")
+    with caplog.at_level(logging.WARNING, logger="app.storage"):
+        storage.init_root(tmp_path)
+    assert "not valid JSON" in caplog.text and (broken / storage.DATASET_META_FILE).read_text() == "{ not json"
+    assert not (broken / storage.STORE_META).exists()

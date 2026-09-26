@@ -1,0 +1,13 @@
+mql_id,seller_id,sdr_id,sr_id,won_date,business_segment,lead_type,lead_behaviour_profile,has_company,has_gtin,average_stock,business_type,declared_product_catalog_size,declared_monthly_revenue
+b42ca036aeed7605b4ac5362353bb95b,a860868d23f3a68323a2e3f6563d7f31,4afa117de576d0b319586274405e0494,b23d164f8a94fb140ec7bd80febc3e1a,2018-03-11 17:10:05,car_accessories,industry,eagle,,,,manufacturer,,120000.0
+ec4a80ecf379dca6ae66d336cac8af67,033c02867cc5a8b01b0683692e033139,e26e55ea32baf3f26413cfd48bf91700,7dfe9e814a0db8c6d8b3f1e5efa3e4a5,2017-10-04 10:00:54,car_accessories,industry,,,,,manufacturer,,0.0
+86e3fdcdbdc5c36caa9df2d8b8932b95,07d2a47f8e2f96c02bd60b4449e8b01e,e26e55ea32baf3f26413cfd48bf91700,75d0926ae2c73002655630d1e9a22826,2017-12-17 06:16:51,home_decor,online_medium,eagle,,,,reseller,,0.0
+bdfb6e66402fd093964ae71fcd8953b4,3dfae9d68590fef9704a6a3ddabe6313,e26e55ea32baf3f26413cfd48bf91700,b23d164f8a94fb140ec7bd80febc3e1a,2017-08-21 22:21:32,home_decor,offline,,,,,manufacturer,,0.0
+6d2a1ad2c197d1026333c942e13895a4,182e1d9074ba174e80f41429ad21f8a2,4afa117de576d0b319586274405e0494,3bb0abad8dde40fcca4cdfa3364540b7,2018-02-05 14:06:03,pet,industry,wolf,,,,manufacturer,,0.0
+7520b83eefc8fba281c546dcdf77bf7e,5ee57ff5f5553bb8ed61e24225e670d8,e26e55ea32baf3f26413cfd48bf91700,b23d164f8a94fb140ec7bd80febc3e1a,2018-04-03 05:57:57,pet,online_medium,eagle,,,,manufacturer,,0.0
+de0bce543ffd815121488694af84474e,0b1cdc9fe1f929e469c5a54ffe0b2ed5,e26e55ea32baf3f26413cfd48bf91700,b23d164f8a94fb140ec7bd80febc3e1a,2018-04-07 22:58:07,pet,industry,eagle,,,,manufacturer,,0.0
+50c174b5a650113265e250fad6b98849,df512b9cb3e7d8de7206c647590b6de0,4afa117de576d0b319586274405e0494,3bb0abad8dde40fcca4cdfa3364540b7,2018-01-13 02:23:55,home_decor,online_medium,,,,,manufacturer,,0.0
+6010ee284131761009663d36b5b0cd43,49f01a4751e1e0bfb7a0d51f45097d0e,572e456617ffec47b72b58e57c789ddc,7dfe9e814a0db8c6d8b3f1e5efa3e4a5,2018-02-24 21:40:23,pet,offline,,,,,manufacturer,,0.0
+ce17d9538360a65e179c025db8b8f184,dff77ede3e3ef0d3fbde69ee5fbb5ced,4afa117de576d0b319586274405e0494,7dfe9e814a0db8c6d8b3f1e5efa3e4a5,2018-06-22 15:46:05,home_decor,offline,,,,,reseller,,50000.0
+e8eba66c4fbf5751bf5fdcafc0b0a0fb,cff850f16499e786b92cb825a79bf173,4afa117de576d0b319586274405e0494,b23d164f8a94fb140ec7bd80febc3e1a,2017-11-22 20:38:31,car_accessories,online_medium,cat,,,,manufacturer,,120000.0
+6bde955cba584ceaf0be02c5928c59ce,d25fb707067c6b50982cb83b41ae6711,572e456617ffec47b72b58e57c789ddc,75d0926ae2c73002655630d1e9a22826,2018-05-05 03:13:38,pet,online_medium,,,,,reseller,,0.0

@@ -1,0 +1,37 @@
+opportunity_id,sales_agent,product,account,deal_stage,engage_date,close_date,close_value
+OPP00000,Agent One,GTX Pro,,Won,2017-02-25,2017-05-01,10056
+OPP00001,Agent One,GTX Pro,Betasoloin,Lost,2016-11-14,2017-02-03,0
+OPP00002,Agent Two,GTX Pro,Cancity,Engaging,2017-03-20,,
+OPP00003,Agent One,GTX Pro,Isdom,Prospecting,,,
+OPP00004,Agent Two,GTX Pro,Zoomit,Won,2017-01-23,2017-03-09,3516
+OPP00005,Agent Two,GTX Basic,Acme Corporation,Lost,2017-03-03,2017-06-25,0
+OPP00006,Agent Three,MG Special,,Engaging,2017-06-26,,
+OPP00007,Agent Two,GTX Pro,Cancity,Prospecting,,,
+OPP00008,Agent Three,GTX Pro,Isdom,Won,2016-11-20,2016-12-09,13119
+OPP00009,Agent One,MG Special,Zoomit,Lost,2017-04-13,2017-07-24,0
+OPP00010,Agent One,MG Special,Acme Corporation,Engaging,2016-11-05,,
+OPP00011,Agent Two,MG Special,Betasoloin,Prospecting,,,
+OPP00012,Agent Two,MG Special,,Won,2016-11-09,2017-03-06,9116
+OPP00013,Agent Three,GTX Basic,Isdom,Lost,2017-10-23,2017-12-31,0
+OPP00014,Agent Two,GTX Pro,Zoomit,Engaging,2017-11-16,,
+OPP00015,Agent One,GTX Pro,Acme Corporation,Prospecting,,,
+OPP00016,Agent One,GTX Pro,Betasoloin,Won,2016-11-04,2017-01-31,14255
+OPP00017,Agent Two,GTX Basic,Cancity,Lost,2017-04-28,2017-06-23,0
+OPP00018,Agent One,MG Special,,Engaging,2016-12-27,,
+OPP00019,Agent Three,GTX Pro,Zoomit,Prospecting,,,
+OPP00020,Agent One,GTX Basic,Acme Corporation,Won,2017-02-14,2017-02-27,11331
+OPP00021,Agent One,MG Special,Betasoloin,Lost,2017-08-24,2017-10-25,0
+OPP00022,Agent Three,GTX Pro,Cancity,Engaging,2017-05-24,,
+OPP00023,Agent One,GTX Basic,Isdom,Prospecting,,,
+OPP00024,Agent Three,MG Special,,Won,2017-10-06,2017-12-31,4162
+OPP00025,Agent Two,GTX Pro,Acme Corporation,Lost,2017-02-18,2017-02-26,0
+OPP00026,Agent Three,GTX Pro,Betasoloin,Engaging,2017-11-08,,
+OPP00027,Agent One,GTX Pro,Cancity,Prospecting,,,
+OPP00028,Agent One,GTX Pro,Isdom,Won,2017-11-13,2017-12-02,11399
+OPP00029,Agent Two,MG Special,Zoomit,Lost,2016-10-24,2016-11-03,0
+OPP00030,Agent Two,MG Special,,Engaging,2016-12-28,,
+OPP00031,Agent Three,MG Special,Betasoloin,Prospecting,,,
+OPP00032,Agent One,GTX Pro,Cancity,Won,2017-07-12,2017-09-09,4826
+OPP00033,Agent One,GTX Basic,Isdom,Lost,2016-12-11,2017-01-22,0
+OPP00034,Agent One,GTX Basic,Zoomit,Engaging,2017-10-25,,
+OPP00035,Agent One,GTX Basic,Acme Corporation,Prospecting,,,

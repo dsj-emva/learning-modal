@@ -16,7 +16,14 @@
   and ``ENRICHMENT_COLUMNS``; bands, spend bands and sectors in the model's level lists.
 - **people.csv**: ``email`` (never read by the model; optional).
 - **status_quo_rules.json** (``emva.eval.status_quo``): the keys it reads; optional (without it the status-quo
-  benchmark and the standard report are skipped); every lead's ``form_variant`` needs a base value.
+  benchmark is skipped, and so is the standard report unless the dataset is a converted one); every lead's
+  ``form_variant`` needs a base value.
+- **dataset.json** (a converted dataset's metadata, ``emva.ingest.convert``): optional; the rules of
+  ``emva.dataset_meta.parse_dataset_meta`` (a JSON object with a valid ``as_of`` and ``test_from``). When present,
+  its ``as_of`` is the snapshot date the "dated after the snapshot" warning uses (ADR 0020), else ``AS_OF``; CRM
+  rows the converter had to reorder (``crm_times_reordered``) are a warning naming example lead ids.
+- **mapping.toml** (the confirmed mapping a converted dataset came from): optional; it must load with
+  ``emva.ingest.load_mapping`` and have ``outcome_confirmed = true``. Each of the two without the other is a note.
 
 Nothing here raises on user input: every problem becomes an ``Issue`` in the returned ``ValidationReport``.
 """
@@ -33,7 +40,10 @@ import pandas as pd
 from app.storage import (
     COMPANIES_FILE,
     CRM_FILE,
+    DATASET_META_FILE,
     LEADS_FILE,
+    MAPPING_FILE,
+    METADATA_FILES,
     PEOPLE_FILE,
     REQUIRED_FILES,
     RULES_FILE,
@@ -42,7 +52,9 @@ from app.storage import (
     check_file_name,
 )
 from emva.constants import AS_OF, DEAL_VALUE_LEVELS, ENRICHMENT_COLUMNS, MISSING, STAGE, V2_LEVELS, WEEKDAYS
+from emva.dataset_meta import parse_as_of, parse_dataset_meta
 from emva.eval.status_quo import RULE_FIELDS
+from emva.ingest.mapping import load_mapping
 from emva.scoring import FieldType, submit_time_fields
 
 # Fewer leads than this cannot give a train and a test set worth reporting.
@@ -176,8 +188,10 @@ class _Checker:
             self.error(name, col, f"unknown {what} {seen}; allowed: {list(allowed)}", bad)
 
 
-def _check_leads(c: _Checker, L: pd.DataFrame, rules: dict | None) -> None:
-    """Row-level checks of ``historical_leads.csv`` (all required columns present)."""
+def _check_leads(c: _Checker, L: pd.DataFrame, rules: dict | None, as_of: pd.Timestamp = AS_OF,
+                 own_dates: bool = False) -> None:
+    """Row-level checks of ``historical_leads.csv`` (all required columns present); leads after ``as_of`` get a
+    warning (``own_dates``: the date is the dataset's ``dataset.json`` one, not the pipeline's default)."""
     f = LEADS_FILE
     blank_id = _blank(L.lead_id)
     if blank_id.any():
@@ -228,9 +242,10 @@ def _check_leads(c: _Checker, L: pd.DataFrame, rules: dict | None) -> None:
         if no_base.any():
             c.error(f, "form_variant", f"form variant(s) {sorted(L.form_variant[no_base].unique())} have no base "
                                        f"value in {RULES_FILE}", no_base)
-    future = created > AS_OF
+    future = created > as_of
     if future.any():
-        c.warn(f, "created_at", f"{_n(future)} lead(s) are dated after {AS_OF.date()}, the pipeline's snapshot date; "
+        whose = f"the dataset's snapshot date ({DATASET_META_FILE})" if own_dates else "the pipeline's snapshot date"
+        c.warn(f, "created_at", f"{_n(future)} lead(s) are dated after {as_of.date()}, {whose}; "
                                 "their outcomes are treated as unknown", future)
     if len(L) < MIN_LEADS:
         c.error(f, None, f"only {len(L)} leads; training needs at least {MIN_LEADS}")
@@ -316,6 +331,32 @@ def _check_rules(c: _Checker, content: bytes) -> dict | None:
     return rules if not [i for i in c.report.errors if i.file == f] else None
 
 
+def _check_meta(c: _Checker, content: bytes) -> pd.Timestamp | None:
+    """``dataset.json`` by the rules of ``emva.dataset_meta.parse_dataset_meta``; its ``as_of``, or None (and an
+    error) when it is unusable. CRM rows the converter moved because they were dated before the previous row of
+    their lead (``crm_times_reordered``, e.g. a win before created_at) become a warning with example lead ids."""
+    try:
+        meta = parse_dataset_meta(content.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as e:
+        c.error(DATASET_META_FILE, None, str(e))
+        return None
+    reordered = meta.get("crm_times_reordered", 0)
+    if reordered:
+        ids = meta.get("crm_times_reordered_ids", [])
+        c.warn(CRM_FILE, "changed_at", f"{reordered} CRM event(s) were dated before the previous event of their lead "
+                                       "(e.g. a win before the lead was created); the conversion moved each to 1 s "
+                                       f"after it. Check the source dates, e.g. leads {ids}")
+    return parse_as_of(meta["as_of"])
+
+
+def _check_mapping(c: _Checker, content: bytes) -> None:
+    """``mapping.toml`` must be a confirmed mapping (``emva.ingest.load_mapping(..., require_confirmed=True)``)."""
+    try:
+        load_mapping(content.decode("utf-8"), require_confirmed=True)
+    except (UnicodeDecodeError, ValueError) as e:
+        c.error(MAPPING_FILE, None, str(e))
+
+
 def _summary(L: pd.DataFrame | None, C: pd.DataFrame | None, frames: dict[str, pd.DataFrame]) -> dict[str, object]:
     """Preview numbers: rows per file, leads, created_at range, final CRM stage counts, won leads."""
     out: dict[str, object] = {"rows": {n: len(df) for n, df in frames.items()}}
@@ -337,6 +378,7 @@ def _summary(L: pd.DataFrame | None, C: pd.DataFrame | None, frames: dict[str, p
 def validate_files(files: dict[str, bytes]) -> ValidationReport:
     """Validate uploaded training files (file name -> content); never raises on user input.
 
+    ``files`` may also hold a converted dataset's ``METADATA_FILES`` (``mapping.toml``, ``dataset.json``).
     Unknown or ground-truth file names become errors without being parsed. Required files missing, missing
     columns, unparsable values and broken references become errors; things that train but deserve a look
     (Won rows without a value, leads dated after the snapshot, no rules file) become warnings.
@@ -345,7 +387,7 @@ def validate_files(files: dict[str, bytes]) -> ValidationReport:
     usable: dict[str, bytes] = {}
     for name, content in files.items():
         try:
-            check_file_name(name)
+            check_file_name(name, allow_metadata=True)
             usable[name] = content
         except StorageError as e:
             c.error(Path(name).name, None, str(e))
@@ -354,9 +396,18 @@ def validate_files(files: dict[str, bytes]) -> ValidationReport:
             c.error(name, None, "required file is missing")
     if PEOPLE_FILE not in usable:
         c.warn(PEOPLE_FILE, None, "not provided; the model never reads it, so training is unaffected")
+    as_of = _check_meta(c, usable[DATASET_META_FILE]) if DATASET_META_FILE in usable else None
+    if MAPPING_FILE in usable:
+        _check_mapping(c, usable[MAPPING_FILE])
+    if (MAPPING_FILE in usable) != (DATASET_META_FILE in usable):
+        have, lack = (MAPPING_FILE, DATASET_META_FILE) if MAPPING_FILE in usable else (DATASET_META_FILE, MAPPING_FILE)
+        c.warn(have, None, f"provided without {lack}; a converted dataset normally keeps both (the converter writes "
+                           "them together)")
     rules = None
     if RULES_FILE in usable:
         rules = _check_rules(c, usable[RULES_FILE])
+    elif DATASET_META_FILE in usable:
+        c.warn(RULES_FILE, None, "not provided; the standard report leaves out the status-quo row")
     else:
         c.warn(RULES_FILE, None, "not provided; the status-quo benchmark and the standard report will be skipped")
 
@@ -370,7 +421,7 @@ def validate_files(files: dict[str, bytes]) -> ValidationReport:
     L = frames.get(LEADS_FILE) if ok.get(LEADS_FILE) else None
     C = frames.get(CRM_FILE) if ok.get(CRM_FILE) else None
     if L is not None:
-        _check_leads(c, L, rules)
+        _check_leads(c, L, rules, AS_OF if as_of is None else as_of, own_dates=as_of is not None)
     if C is not None:
         _check_crm(c, C, L.lead_id if L is not None else None)
     if ok.get(COMPANIES_FILE):
@@ -384,9 +435,10 @@ def validate_files(files: dict[str, bytes]) -> ValidationReport:
 
 
 def validate_dir(path: str | Path) -> ValidationReport:
-    """``validate_files`` on the training files present in directory ``path`` (other files are not opened)."""
+    """``validate_files`` on the training and metadata files present in directory ``path`` (other files are not
+    opened)."""
     p = Path(path)
-    return validate_files({n: (p / n).read_bytes() for n in TRAINING_FILES if (p / n).exists()})
+    return validate_files({n: (p / n).read_bytes() for n in TRAINING_FILES + METADATA_FILES if (p / n).exists()})
 
 
 __all__ = ["Issue", "MIN_LEADS", "REQUIRED_COLUMNS", "ValidationReport", "validate_dir", "validate_files"]

@@ -1,0 +1,109 @@
+# Hotel booking demand (Antonio, Almeida and Nunes 2019, Data in Brief 22: 41-49), Kaggle "jessemostipak/hotel-booking-demand".
+# Written and reviewed BY HAND (the API key was not available); this is NOT an LLM draft. outcome_confirmed = true
+# only because a person reviewed the outcome mapping below.
+#
+# These are hotel BOOKINGS, not B2B enquiries: the pipeline scores them as leads to exercise the converter, and the
+# numbers say nothing about lead scoring on real enquiries.
+#
+# Outcome: a cancelled booking (is_canceled = 1: reservation_status Canceled or No-Show) is Lost, dated at
+# reservation_status_date; a kept booking (is_canceled = 0, Check-Out) is Won at the arrival date (the moment it can
+# no longer be cancelled). created_at = the booking date = arrival date - lead_time days. contacted_at = created_at
+# (a booking is worked from the moment it is made), so a cancellation after H days is a mature non-win, not "ghosted".
+# With the pipeline's H = 120 days a kept booking whose arrival is more than 120 days after booking counts as NOT won
+# within H (34% of bookings have lead_time > 120). That is what the fixed-horizon label means here; H is not changed.
+# deal_value = adr x (weekend + week nights); zero-night or zero-rate stays give a non-positive value, left blank.
+#
+# Dates: arrivals 2015-07-01 .. 2017-08-31, booking dates 2013-06 .. 2017-08 (bulk from 2014-10). as_of = 2017-09-01,
+# the day after the last arrival (every outcome is known by then). Mature (H = 120) = booked on or before 2017-05-04.
+# test_from = 2016-12-01: the last ~26% of the booking-date span (legacy test set) and the last ~16% of the mature
+# span (horizon test set). Frozen here (ground rule 4).
+#
+# Fields: only country maps onto the schema (answers.country; used by ip_country only with an on-site session, which
+# bookings do not have). Nothing else in the file means a schema field: no UTM, email, company, form or session data,
+# so most design columns are unfilled (see dataset.json coverage). is_repeated_guest -> returned_visitor is carried
+# for the record (the model does not read it). Everything else is ignored, notably reservation_status(_date),
+# assigned_room_type, booking_changes and days_in_waiting_list, which are known only after booking (label leakage).
+
+name = "hotel_bookings"
+as_of = "2017-09-01"
+test_from = "2016-12-01"
+source_url = "https://www.kaggle.com/datasets/jessemostipak/hotel-booking-demand"
+licence = "CC BY 4.0 (Antonio, Almeida and Nunes 2019, Data in Brief, doi:10.1016/j.dib.2018.11.126)"
+outcome_confirmed = true
+drop_rows_without_created_at = false
+
+[[sources]]
+name = "b"
+file = "hotel_bookings.csv"
+
+[lead]
+created_at = { op = "minus_days", args = [{ op = "date_from_parts", args = ["b.arrival_date_year", "b.arrival_date_month", "b.arrival_date_day_of_month"] }, "b.lead_time"] }
+contacted_at = { op = "minus_days", args = [{ op = "date_from_parts", args = ["b.arrival_date_year", "b.arrival_date_month", "b.arrival_date_day_of_month"] }, "b.lead_time"] }
+won_at = { op = "date_from_parts", args = ["b.arrival_date_year", "b.arrival_date_month", "b.arrival_date_day_of_month"] }
+close_at = "b.reservation_status_date"
+deal_value = { op = "product", args = ["b.adr", { op = "sum", args = ["b.stays_in_weekend_nights", "b.stays_in_week_nights"] }] }
+
+[outcome]
+kind = "won_flag"
+column = "b.is_canceled"
+lost_without_close = "error"
+won_values = ["0"]
+lost_values = ["1"]
+
+[review]
+created_at = { reason = "Booking date: arrival date minus lead_time days (the dataset gives no booking timestamp).", confidence = "high" }
+contacted_at = { reason = "A booking is worked when it is made; avoids treating late cancellations as never contacted.", confidence = "medium" }
+won_at = { reason = "Arrival date: a kept booking can no longer be cancelled.", confidence = "medium" }
+close_at = { reason = "reservation_status_date is the cancellation date for Canceled and the arrival date for No-Show.", confidence = "high" }
+deal_value = { reason = "Room revenue: average daily rate times nights stayed.", confidence = "high" }
+outcome = { reason = "is_canceled: 1 = Canceled or No-Show (Lost), 0 = Check-Out (Won).", confidence = "high" }
+
+[[fields]]
+source = "b.country"
+target = "answers.country"
+reason = "Guest country (ISO 3166-1 alpha-3), the closest thing to a typed country."
+confidence = "medium"
+
+[[fields]]
+source = "b.is_repeated_guest"
+reason = "Repeat guest; carried as returned_visitor for the record, not read by the model."
+confidence = "medium"
+[fields.value_map]
+"0" = { returned_visitor = "False" }
+"1" = { returned_visitor = "True" }
+
+[[fields]]
+source = "b.market_segment"
+target = "ignore"
+reason = "Travel-agent / group / direct segments do not match the utm_source levels the channel feature reads."
+confidence = "medium"
+
+[[fields]]
+source = "b.distribution_channel"
+target = "ignore"
+reason = "Booking channel (TA/TO, Direct, Corporate, GDS); no UTM equivalent."
+confidence = "medium"
+
+[[fields]]
+source = "b.reservation_status"
+target = "ignore"
+reason = "Outcome itself (label leakage)."
+confidence = "high"
+
+[[fields]]
+source = "b.assigned_room_type"
+target = "ignore"
+reason = "Known only at check-in (leakage)."
+confidence = "high"
+
+[[fields]]
+source = "b.booking_changes"
+target = "ignore"
+reason = "Accumulates after booking (leakage)."
+confidence = "high"
+
+[[fields]]
+source = "b.days_in_waiting_list"
+target = "ignore"
+reason = "Accumulates after booking (leakage)."
+confidence = "high"

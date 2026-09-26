@@ -8,3 +8,4 @@ runs/
 .claude/
 .env
 data/**/*.tmp
+data/external/

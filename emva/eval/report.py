@@ -23,6 +23,12 @@ side by side for one release):
     (ghosted leads excluded, stalled censored). This definition is fixed to the defaults
     whatever label options the candidate was trained with.
 
+Dates (ADR 0020): ``AS_OF`` and ``TEST_FROM`` above are the dataset's own when it carries a ``dataset.json``
+(``emva.dataset_meta.dataset_dates``). Such a converted dataset (``emva.ingest``) is not in the format or period the
+frozen baseline script hard-codes, so the report omits the baseline row, the paired comparison against it and the
+"legacy labels equal the baseline's" check, and says so (ADR 0022); it does the same when the baseline script fails.
+Without ``status_quo_rules.json`` (converted datasets have none) the status-quo row is omitted with a note.
+
 Revenue is recorded deal value for won test leads, 0 when blank or not won. This differs
 from the baseline script's own ``top20_revenue``, which fills blank deal values with its own
 predicted value; that would move with each candidate's value model, so the report does not
@@ -43,6 +49,7 @@ from sklearn.metrics import brier_score_loss
 
 from emva.cli import add_feature_arguments, add_label_arguments, feature_set, label_config
 from emva.constants import AS_OF, LABEL_SOURCES, TEST_FROM, TOP_FRACTION
+from emva.dataset_meta import dataset_dates, has_dataset_meta
 from emva.eval.bootstrap import N_RESAMPLES, SEED, auc_ci, paired_auc
 from emva.eval.collinearity import CollinearityResult, check_collinearity, format_result
 from emva.eval.metrics import (
@@ -105,6 +112,10 @@ class TestSet:
         return pd.Series(np.where(self.y == 1, self.leads.deal_value.fillna(0), 0), index=self.ids)
 
 
+# The status quo's rules file; a dataset without it (e.g. a converted one) gets no status-quo row.
+RULES_FILE = "status_quo_rules.json"
+
+
 def run_baseline(data: str | Path, out: str | Path) -> tuple[pd.DataFrame, str]:
     """Run the frozen baseline script into ``out``; return its scores.csv and stdout."""
     proc = subprocess.run([sys.executable, str(BASELINE_SCRIPT), "--data", str(Path(data).resolve()), "--out", str(out)],
@@ -165,8 +176,13 @@ def paired_frame(ts: TestSet, models: list[ScoredModel], n_resamples: int = N_RE
     return pd.DataFrame(rows, columns=["model", "auc_diff", "diff_lo", "diff_hi", "p_value"])
 
 
-def standard_sections(ts: TestSet, models: list[ScoredModel], n_resamples: int, seed: int) -> list[str]:
-    """The standard table (ground rule 3) for one test definition, as markdown lines under ``##``/``###`` headings."""
+def standard_sections(ts: TestSet, models: list[ScoredModel], n_resamples: int, seed: int,
+                      paired_note: str | None = None) -> list[str]:
+    """The standard table (ground rule 3) for one test definition, as markdown lines under ``##``/``###`` headings.
+
+    ``models[0]`` is the baseline the paired comparison is made against; with ``paired_note`` (there is no baseline)
+    the paired table is replaced by that note.
+    """
     y, ids, revenue = ts.y, ts.ids, ts.revenue
     out: list[str] = [f"## {ts.title}", "", ts.description, "", "### Headline", ""]
     h = headline_frame(ts, models, n_resamples, seed)
@@ -180,11 +196,14 @@ def standard_sections(ts: TestSet, models: list[ScoredModel], n_resamples: int, 
     })
     out += [md_table(head), "", "### Paired AUC comparison vs baseline", ""]
 
-    pf = paired_frame(ts, models, n_resamples, seed)
-    paired = pd.DataFrame({"model": pf.model, "AUC − baseline": [f"{d:+.3f}" for d in pf.auc_diff],
-                           "95% CI": [f"[{lo:+.3f}, {hi:+.3f}]" for lo, hi in zip(pf.diff_lo, pf.diff_hi)],
-                           "bootstrap p": [f"{p:.3f}" for p in pf.p_value]})
-    out += [md_table(paired), "", "### Calibration by decile of p", ""]
+    if paired_note is None:
+        pf = paired_frame(ts, models, n_resamples, seed)
+        paired = pd.DataFrame({"model": pf.model, "AUC − baseline": [f"{d:+.3f}" for d in pf.auc_diff],
+                               "95% CI": [f"[{lo:+.3f}, {hi:+.3f}]" for lo, hi in zip(pf.diff_lo, pf.diff_hi)],
+                               "bootstrap p": [f"{p:.3f}" for p in pf.p_value]})
+        out += [md_table(paired), "", "### Calibration by decile of p", ""]
+    else:
+        out += [paired_note, "", "### Calibration by decile of p", ""]
 
     cal = None
     for m in models:
@@ -196,8 +215,10 @@ def standard_sections(ts: TestSet, models: list[ScoredModel], n_resamples: int, 
     for c in cal.columns:
         if c.endswith(("mean p", "observed")):
             cal[c] = cal[c].map(_fmt_num)
-    out += [md_table(cal), "", "Status quo has no probability, so it has no Brier score or calibration.",
-            "", "### AUC by test month", ""]
+    out += [md_table(cal), ""]
+    if any(m.p is None for m in models):
+        out += ["Status quo has no probability, so it has no Brier score or calibration.", ""]
+    out += ["### AUC by test month", ""]
 
     month = None
     for m in models:
@@ -232,17 +253,19 @@ def standard_sections(ts: TestSet, models: list[ScoredModel], n_resamples: int, 
 
 
 def label_sections(X: pd.DataFrame, legacy_y: pd.Series, test_a: TestSet, test_b: TestSet,
-                   candidate_labels: LabelConfig) -> list[str]:
-    """Label counts by ``label_source`` under both definitions, and train/test sizes."""
+                   candidate_labels: LabelConfig, as_of: pd.Timestamp = AS_OF, test_from: str = TEST_FROM) -> list[str]:
+    """Label counts by ``label_source`` under both definitions (read at ``as_of``), and train/test sizes (split at
+    ``test_from``)."""
     rows = []
     for src in [*LABEL_SOURCES, "all"]:
         m = X.label_source == src if src != "all" else pd.Series(True, index=X.index)
         rows.append({"label_source": src, "leads": int(m.sum()), "legacy y": _counts(legacy_y[m]),
                      "won_within_h": _counts(X.won_within_h[m]), "horizon y": _counts(X.y[m])})
-    pre = X.created_at < TEST_FROM
-    mature = is_mature(X, FROZEN_HORIZON.horizon_days)
+    pre = X.created_at < test_from
+    mature = is_mature(X, FROZEN_HORIZON.horizon_days, as_of)
     sizes = pd.DataFrame([
-        {"definition": "legacy", "train (wins)": f"{int((legacy_y.notna() & pre).sum())} ({int((legacy_y[pre] == 1).sum())})",
+        {"definition": "legacy",
+         "train (wins)": f"{int((legacy_y.notna() & pre).sum())} ({int((legacy_y[pre] == 1).sum())})",
          "test (wins)": f"{len(test_a.ids)} ({int(test_a.y.sum())})"},
         {"definition": FROZEN_HORIZON.describe(),
          "train (wins)": f"{int((X.y.notna() & mature & pre).sum())} ({int((X.y[mature & pre] == 1).sum())})",
@@ -252,28 +275,30 @@ def label_sections(X: pd.DataFrame, legacy_y: pd.Series, test_a: TestSet, test_b
     return [
         "## Label definitions", "",
         f"Counts over all {len(X)} scored leads, as wins / losses / unlabelled. `label_source` is the CRM state at "
-        f"{AS_OF.date()}. legacy y = baseline rules. won_within_h = Won within {FROZEN_HORIZON.horizon_days} days of "
+        f"{as_of.date()}. legacy y = baseline rules. won_within_h = Won within {FROZEN_HORIZON.horizon_days} days of "
         "created_at (NaN if younger and not Won). horizon y = won_within_h with ghosted-at-H leads excluded and "
         "stalled leads censored (the default training and test label).", "",
         md_table(pd.DataFrame(rows)), "",
-        f"Mature = created_at + {FROZEN_HORIZON.horizon_days} days <= {AS_OF.isoformat()}: the latest mature lead was created "
-        f"{last.isoformat()}. Train = created before {TEST_FROM} (all mature); test = created on or after {TEST_FROM}.",
+        f"Mature = created_at + {FROZEN_HORIZON.horizon_days} days <= {as_of.isoformat()}: the latest mature lead was "
+        f"created {last.isoformat()}. Train = created before {test_from} (all mature); test = created on or after "
+        f"{test_from}.",
         "",
         md_table(sizes), "",
         f"Candidate trained with: `{candidate_labels.describe()}`.", "",
     ]
 
 
-def ghosted_share_section(X: pd.DataFrame, legacy_y: pd.Series, test_a: TestSet,
-                          models: list[ScoredModel]) -> list[str]:
-    """Share of ghosted and of still-New leads in the bottom decile of each model's p, on several populations."""
-    mature = is_mature(X, FROZEN_HORIZON.horizon_days)
-    window = X.created_at >= TEST_FROM
+def ghosted_share_section(X: pd.DataFrame, legacy_y: pd.Series, test_a: TestSet, models: list[ScoredModel],
+                          as_of: pd.Timestamp = AS_OF, test_from: str = TEST_FROM) -> list[str]:
+    """Share of ghosted and of still-New leads in the bottom decile of each model's p, on several populations
+    (maturity at ``as_of``, test window from ``test_from``)."""
+    mature = is_mature(X, FROZEN_HORIZON.horizon_days, as_of)
+    window = X.created_at >= test_from
     populations = [
         ("all leads labelled by legacy rules (train + test)", legacy_y.notna()),
         ("(a) legacy test set", X.index.isin(test_a.ids)),
         ("all mature leads, every label_source", mature),
-        ("mature leads created on or after " + TEST_FROM + ", every label_source", mature & window),
+        ("mature leads created on or after " + test_from + ", every label_source", mature & window),
     ]
     flags = [("ghosted", X.label_source == "ghosted"), ("still New", X.final_stage == "New")]
     rows = []
@@ -290,23 +315,26 @@ def ghosted_share_section(X: pd.DataFrame, legacy_y: pd.Series, test_a: TestSet,
     return ["## Bottom-decile ghosted share", "",
             "Share of leads in the 10% of each population with the lowest p that are *ghosted* (`label_source`: "
             f"mature and not contacted within {FROZEN_HORIZON.horizon_days} days) or *still New* at "
-            f"{AS_OF.date()} whatever their age (the definition behind the plan's baseline figure of 27%). The "
+            f"{as_of.date()} whatever their age (the definition behind the plan's baseline figure of 27%). The "
             "horizon test set (b) excludes ghosted leads, so the comparison uses populations that keep them.", "",
             md_table(pd.DataFrame(rows)), ""]
 
 
-def frozen_test_labels(L: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series, pd.Series, pd.Series]:
+def frozen_test_labels(L: pd.DataFrame, as_of: pd.Timestamp = AS_OF,
+                       test_from: str = TEST_FROM) -> tuple[pd.DataFrame, pd.Series, pd.Series, pd.Series]:
     """Both frozen test definitions, independent of any candidate's label options.
 
     Returns ``(X, legacy_y, y_a, y_b)``: the cleaned leads with default horizon labels
     (``emva.labels.assign_labels(..., FROZEN_HORIZON)``), the legacy label for every cleaned lead,
-    and the labels of the (a) legacy and (b) horizon test sets, indexed by their ``lead_id``s.
+    and the labels of the (a) legacy and (b) horizon test sets, indexed by their ``lead_id``s. Labels and maturity
+    are read at ``as_of``; the test sets are leads created on or after ``test_from`` (the dataset's dates, ADR 0020;
+    the defaults are the frozen v1 ones).
     """
-    X = assign_labels(clean(L), FROZEN_HORIZON)
-    legacy_y = label(X)
-    window = X.created_at >= TEST_FROM
+    X = assign_labels(clean(L), FROZEN_HORIZON, as_of)
+    legacy_y = label(X, as_of)
+    window = X.created_at >= test_from
     y_a = legacy_y[legacy_y.notna() & window]
-    y_b = X.y[X.y.notna() & is_mature(X, FROZEN_HORIZON.horizon_days) & window]
+    y_b = X.y[X.y.notna() & is_mature(X, FROZEN_HORIZON.horizon_days, as_of) & window]
     return X, legacy_y, y_a, y_b
 
 
@@ -326,65 +354,106 @@ def build_report(data: str | Path, n_resamples: int = N_RESAMPLES, seed: int = S
     return build_report_with_check(data, n_resamples, seed, labels, features)[0]
 
 
+def baseline_or_note(data: str | Path) -> tuple[pd.DataFrame | None, str, str | None]:
+    """The frozen baseline's ``(scores, stdout, None)`` on ``data``, or ``(None, "", note)`` saying why it is omitted.
+
+    Omitted only when ``data`` carries a ``dataset.json`` (a converted dataset: the baseline script hard-codes the v1
+    snapshot date, test boundary and file format, ADR 0022); the script is then not run. On any other dataset
+    (data/v1, data/v2, uploads in the v1 format) a failing script raises ``RuntimeError`` (``run_baseline``), as
+    before Phase 9: the baseline row is never dropped silently.
+    """
+    if has_dataset_meta(data):
+        return None, "", ("Baseline omitted: this dataset carries its own dates in `dataset.json` (a converted "
+                          "dataset, ADR 0020). The frozen `baseline/emva_score.py` hard-codes the v1 snapshot date, "
+                          "test boundary and file format, so its scores would not be comparable (ADR 0022). The "
+                          "paired comparison against it and the check that the legacy labels equal the baseline's "
+                          "are omitted too.")
+    with tempfile.TemporaryDirectory() as tmp:
+        base, stdout = run_baseline(data, tmp)
+    return base, stdout, None
+
+
 def build_report_with_check(data: str | Path, n_resamples: int = N_RESAMPLES, seed: int = SEED,
                             labels: LabelConfig = HORIZON,
                             features: FeatureSet = FeatureSet.V2) -> tuple[str, CollinearityResult]:
-    """``build_report`` plus the candidate's collinearity result (so the CLI can exit 1 on failure)."""
+    """``build_report`` plus the candidate's collinearity result (so the CLI can exit 1 on failure).
+
+    The dates are the dataset's (``emva.dataset_meta.dataset_dates``); the baseline row is omitted as
+    ``baseline_or_note`` says, and the status-quo row when ``data`` has no ``status_quo_rules.json``, each with a note.
+    """
+    as_of, test_from = dataset_dates(data)
     L = load(data)
-    with tempfile.TemporaryDirectory() as tmp:
-        base, base_stdout = run_baseline(data, tmp)
+    base, base_stdout, baseline_note = baseline_or_note(data)
     cand_result = run(data, labels=labels, features=features)
     cand = cand_result.X
 
-    X, legacy_y, y_a, y_b = frozen_test_labels(L)
-    if not X.index.equals(base.index) or not legacy_y.equals(base.y):
+    X, legacy_y, y_a, y_b = frozen_test_labels(L, as_of, test_from)
+    if base is not None and (not X.index.equals(base.index) or not legacy_y.equals(base.y)):
         raise ValueError("legacy labels computed here differ from the baseline script's")
     ids_a, ids_b = y_a.index, y_b.index
     for name, ids in [("legacy", ids_a), ("horizon", ids_b)]:
         missing = ids.difference(cand.index[cand.p_formula.notna()])
         if len(missing):
             raise ValueError(f"candidate has no score for {len(missing)} {name} test leads, e.g. {list(missing[:5])}")
-    last_mature = X.created_at[is_mature(X, FROZEN_HORIZON.horizon_days)].max()
+    last_mature = X.created_at[is_mature(X, FROZEN_HORIZON.horizon_days, as_of)].max()
     test_a = TestSet(
         "(a) Legacy labels, legacy test set",
-        f"{len(ids_a)} leads labelled by the baseline rules, created on or after {TEST_FROM} "
+        f"{len(ids_a)} leads labelled by the baseline rules, created on or after {test_from} "
         f"({int(legacy_y[ids_a].sum())} won). Label = legacy y.",
         y_a, L.loc[ids_a])
     test_b = TestSet(
         "(b) Horizon labels, mature test set",
-        f"{len(ids_b)} mature leads created on or after {TEST_FROM} and up to {last_mature.isoformat()} that the "
+        f"{len(ids_b)} mature leads created on or after {test_from} and up to {last_mature.isoformat()} that the "
         f"default horizon definition labels ({int(X.y[ids_b].sum())} won). Label = won within "
         f"{FROZEN_HORIZON.horizon_days} days; ghosted-at-H leads excluded, stalled leads censored.",
         y_b, L.loc[ids_b])
 
-    sq = status_quo_value(L.loc[X.index], load_rules(Path(data) / "status_quo_rules.json")).sq_value
-    models = [
-        ScoredModel("baseline", base.p_formula, base.value_formula),
-        ScoredModel("candidate", cand.p_formula.loc[X.index], cand.value_formula.loc[X.index]),
-        ScoredModel("status quo", None, sq),
-    ]
+    rules = Path(data) / RULES_FILE
+    models = [] if base is None else [ScoredModel("baseline", base.p_formula, base.value_formula)]
+    models.append(ScoredModel("candidate", cand.p_formula.loc[X.index], cand.value_formula.loc[X.index]))
+    sq_note = None
+    if rules.exists():
+        models.append(ScoredModel("status quo", None, status_quo_value(L.loc[X.index], load_rules(rules)).sq_value))
+    else:
+        sq_note = (f"Status quo omitted: the dataset has no `{RULES_FILE}` (the rules the status quo is "
+                   "reconstructed from; converted datasets have none).")
 
+    described = [] if base is None else ["baseline = frozen `baseline/emva_score.py`"]
+    described.append(f"candidate = `emva` pipeline trained with `{labels.describe()}` labels and "
+                     f"`{cand_result.features.value}` features")
+    if sq_note is None:
+        described.append("status quo = `status_quo_rules.json` reconstructed")
+    by = "p (status quo: by its value)" if sq_note is None else "p"
+    rank = f"Top-{int(TOP_FRACTION * 100)}% capture ranks by {by} or by p×value."
     out: list[str] = [
         "# EMVA standard report",
         "",
-        f"Data: `{data}`. baseline = frozen `baseline/emva_score.py`; candidate = `emva` pipeline trained with "
-        f"`{labels.describe()}` labels and `{cand_result.features.value}` features; status quo = "
-        "`status_quo_rules.json` reconstructed. Every model is scored "
+        f"Data: `{data}`. " + "; ".join(described) + ". Every model is scored "
         f"on the same rows under two test definitions. AUC CI: percentile bootstrap, {n_resamples} resamples, "
-        f"seed {seed}. Top-{int(TOP_FRACTION * 100)}% capture ranks by p (status quo: by its value) or by p×value.",
+        f"seed {seed}. " + rank,
         "",
     ]
-    out += label_sections(X, legacy_y, test_a, test_b, labels)
-    out += standard_sections(test_a, models, n_resamples, seed)
-    out += standard_sections(test_b, models, n_resamples, seed)
-    out += ghosted_share_section(X, legacy_y, test_a, models)
-    out += value_report_sections(cand_result, [(t.title, t.revenue) for t in (test_a, test_b)], base.value_formula)
+    notes = [n for n in (baseline_note, sq_note) if n is not None]
+    if notes:
+        out += [f"Dates: as_of {as_of.isoformat()}, test_from {test_from}"
+                f"{' (from dataset.json)' if has_dataset_meta(data) else ''}.", ""]
+        out += [f"- {n}" for n in notes] + [""]
+    paired_note = None if base is not None else "Omitted: there is no baseline row (see the note at the top)."
+    out += label_sections(X, legacy_y, test_a, test_b, labels, as_of, test_from)
+    out += standard_sections(test_a, models, n_resamples, seed, paired_note)
+    out += standard_sections(test_b, models, n_resamples, seed, paired_note)
+    out += ghosted_share_section(X, legacy_y, test_a, models, as_of, test_from)
+    out += value_report_sections(cand_result, [(t.title, t.revenue) for t in (test_a, test_b)],
+                                 None if base is None else base.value_formula)
     collinearity_lines, collinearity = collinearity_section(cand_result)
     out += collinearity_lines
-    out += ["## Baseline script output", "",
-            "- Revenue = recorded deal value of won test leads (blank = 0). The baseline script's own summary, "
-            "which fills blank deal values with its predicted value, printed:",
-            "", "```", base_stdout.rstrip(), "```"]
+    if base is None:
+        out += ["## Baseline script output", "", f"- {baseline_note}"]
+    else:
+        out += ["## Baseline script output", "",
+                "- Revenue = recorded deal value of won test leads (blank = 0). The baseline script's own summary, "
+                "which fills blank deal values with its predicted value, printed:",
+                "", "```", base_stdout.rstrip(), "```"]
     return "\n".join(out), collinearity
 
 

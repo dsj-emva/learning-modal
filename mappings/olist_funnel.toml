@@ -1,0 +1,113 @@
+# Olist marketing funnel (Kaggle "olistbr/marketing-funnel-olist"): marketing-qualified leads (MQLs) of sellers who
+# signed up on Olist's landing pages, joined with the deals Olist's sales team closed.
+# Written and reviewed BY HAND (the API key was not available); this is NOT an LLM draft. outcome_confirmed = true
+# only because a person reviewed the outcome mapping below.
+#
+# Lead = one MQL (olist_marketing_qualified_leads_dataset.csv, 8,000 rows, unique mql_id). created_at = contacted_at =
+# first_contact_date (the date the MQL filled the landing-page form and entered the SDRs' queue: every MQL is
+# contacted). Outcome = presence of a closed deal: an MQL with a row in olist_closed_deals_dataset.csv (842, all
+# matching) is Won at won_date. An MQL with no closed deal is LOST, dated at as_of: Olist gives no close date for it,
+# and it was not won by the snapshot, which is at least 5.5 months after the last MQL (2018-05-31) and after the last
+# deal (2018-11-14), and 75% of deals close within 55 days of first contact. Treating it as open would make every
+# mature one "stalled" (idle 90+ days) and censor it, leaving the horizon label with wins only; treating it as never
+# contacted would exclude it as ghosted. The cost: lost_dated_at_as_of leads carry no real close date (last_change is
+# the snapshot), which the labels do not read for Lost leads.
+#
+# deal_value = declared_monthly_revenue of the closed deal (the only amount Olist gives; 45 of 842 deals declare a
+# positive value, the rest 0, which the converter leaves blank as it cannot be a deal value). Weak: the value model
+# trains on a few dozen deals. Every other closed-deal column (business_segment, lead_type, lead_behaviour_profile,
+# has_company, has_gtin, average_stock, business_type, declared_product_catalog_size, seller/sdr/sr ids) exists ONLY
+# for won MQLs, so mapping any of them would leak the label: all ignored.
+#
+# origin -> UTM: paid_search -> google / cpc (channel google); social -> facebook / paid_social (channel meta: Olist
+# does not say which network; Facebook/Instagram is the assumption, medium confidence); organic_search, email,
+# referral, display -> utm_medium only (channel organic_direct: the channel feature reads utm_source, and "google"
+# means paid search in this schema; display could be any network); direct_traffic, unknown, other,
+# other_publicities -> nothing (organic_direct). landing_page_id -> utm_content (an identifier, not read by the model).
+#
+# Dates: first_contact_date 2017-06-14 .. 2018-05-31, won_date to 2018-11-14 18:04. as_of = 2018-11-15 (the day after
+# the last deal). Every MQL is mature at H = 120. test_from = 2018-03-01: the last ~22% of the MQL date span (March to
+# May 2018; MQL volume grows in 2018, so this is ~48% of the leads). Frozen here (ground rule 4).
+
+name = "olist_funnel"
+as_of = "2018-11-15"
+test_from = "2018-03-01"
+source_url = "https://www.kaggle.com/datasets/olistbr/marketing-funnel-olist"
+licence = "CC BY-NC-SA 4.0"
+outcome_confirmed = true
+drop_rows_without_created_at = false
+
+[[sources]]
+name = "mql"
+file = "olist_marketing_qualified_leads_dataset.csv"
+
+[[sources]]
+name = "deal"
+file = "olist_closed_deals_dataset.csv"
+join_on = "mql_id"
+
+[lead]
+lead_id = "mql.mql_id"
+created_at = "mql.first_contact_date"
+contacted_at = "mql.first_contact_date"
+won_at = "deal.won_date"
+deal_value = "deal.declared_monthly_revenue"
+
+[outcome]
+kind = "presence"
+column = "deal.won_date"
+lost_without_close = "as_of"
+
+[review]
+lead_id = { reason = "mql_id, unique per MQL.", confidence = "high" }
+created_at = { reason = "First contact = landing-page sign-up; the only MQL timestamp.", confidence = "high" }
+contacted_at = { reason = "Every MQL enters the SDR queue at first contact.", confidence = "medium" }
+won_at = { reason = "won_date of the closed deal.", confidence = "high" }
+deal_value = { reason = "Declared monthly revenue of the won seller; mostly 0 (blanked).", confidence = "low" }
+outcome = { reason = "Won = has a closed deal; no deal by the snapshot = Lost at as_of (no close date exists).", confidence = "medium" }
+
+[[fields]]
+source = "mql.origin"
+reason = "Acquisition channel; paid search and social map to the channel feature's sources, the rest to organic/direct."
+confidence = "medium"
+[fields.value_map]
+paid_search = { utm_source = "google", utm_medium = "cpc" }
+social = { utm_source = "facebook", utm_medium = "paid_social" }
+organic_search = { utm_medium = "organic" }
+email = { utm_medium = "email" }
+referral = { utm_medium = "referral" }
+display = { utm_medium = "display" }
+direct_traffic = {}
+unknown = {}
+other = {}
+other_publicities = {}
+
+[[fields]]
+source = "mql.landing_page_id"
+target = "utm_content"
+reason = "Landing page identifier; carried for the record, not read by the model."
+confidence = "medium"
+
+[[fields]]
+source = "deal.business_segment"
+target = "ignore"
+reason = "Exists only for won MQLs (label leakage)."
+confidence = "high"
+
+[[fields]]
+source = "deal.lead_type"
+target = "ignore"
+reason = "Exists only for won MQLs (label leakage)."
+confidence = "high"
+
+[[fields]]
+source = "deal.lead_behaviour_profile"
+target = "ignore"
+reason = "Exists only for won MQLs (label leakage)."
+confidence = "high"
+
+[[fields]]
+source = "deal.business_type"
+target = "ignore"
+reason = "Exists only for won MQLs (label leakage)."
+confidence = "high"

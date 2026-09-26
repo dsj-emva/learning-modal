@@ -84,3 +84,45 @@ def app_trained(tmp_path_factory):
     proc = training.start_training(root, run, python=sys.executable, report_resamples=APP_REPORT_RESAMPLES)
     assert proc.wait(timeout=180) == 0, Path(run.log_path).read_text()
     return root, storage.get_run(root, run.run_id)
+
+
+# --- app (Phase 9): a converted dataset trained end to end -----------------------------------------------------------
+INGEST_FIXTURES = REPO / "tests" / "fixtures" / "ingest"
+OLIST_MQL, OLIST_DEALS = "olist_marketing_qualified_leads_dataset.csv", "olist_closed_deals_dataset.csv"
+OLIST_COPIES = 8
+
+
+def olist_raw(copies: int = OLIST_COPIES) -> dict[str, bytes]:
+    """The hand-built Olist-shaped fixture (tests/fixtures/ingest/olist_funnel, 40 MQLs, 12 deals) repeated ``copies``
+    times with ``-<k>`` appended to every ``mql_id`` in both files, so it clears the app's 200-lead minimum and the
+    value model has deals to fit; primary file first."""
+    import pandas as pd
+
+    raw = INGEST_FIXTURES / "olist_funnel"
+    out = {}
+    for name in (OLIST_MQL, OLIST_DEALS):
+        df = pd.read_csv(raw / name, dtype=str)
+        out[name] = pd.concat([df.assign(mql_id=df.mql_id + f"-{k}") for k in range(copies)]).to_csv(
+            index=False).encode()
+    return out
+
+
+@pytest.fixture(scope="session")
+def app_converted(tmp_path_factory):
+    """``(root, run)``: an app data root holding ``olist_raw()`` converted with the committed hand-written
+    ``mappings/olist_funnel.toml`` (``app.ingest.convert_raw``), saved with its mapping.toml and dataset.json, and
+    trained end to end by ``app.training.start_training`` (horizon + v2, report with 200 resamples)."""
+    import sys
+
+    from app import ingest, storage, training
+    from emva.ingest.mapping import load_mapping
+
+    root = storage.init_root(tmp_path_factory.mktemp("app-converted"))
+    mapping = load_mapping((REPO / "mappings" / "olist_funnel.toml").read_text(encoding="utf-8"))
+    conv = ingest.convert_raw(ingest.raw_frames(olist_raw()), mapping, "2026-09-26")
+    assert conv.report.ok, conv.report.errors
+    ds = storage.save_dataset(root, "olist-fixture", conv.files)
+    run = storage.register_run(root, storage.new_run(root, ds, training.TrainingConfig().as_dict()))
+    proc = training.start_training(root, run, python=sys.executable, report_resamples=APP_REPORT_RESAMPLES)
+    assert proc.wait(timeout=180) == 0, Path(run.log_path).read_text()
+    return root, storage.get_run(root, run.run_id)
