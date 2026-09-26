@@ -1,11 +1,13 @@
-# Phase 10 (a): generic feature set (branch `phase10-generic-features`)
+# Phase 10: generic feature set, (a) pipeline and (b) Keel (branch `phase10-generic-features`)
 
 Phase 9 showed that the fixed design schema (ADR 0009: 39 columns from form answers, UTM tags, email, on-site session
 telemetry and company enrichment) barely covers foreign sources. On public data, Olist fills 3 of 39 signals
 (horizon test AUC 0.553 [0.530, 0.574]); CRM opportunities and hotel bookings fill 0 of 39 (AUC 0.500 exactly).
 Phase 10 (a) builds the deferred **generic feature set**: the v2 design plus extra source columns that a mapping
 declares and a person confirms as known at submit time. The encoding is fitted on the training leads only and frozen
-in the model bundle. Part (b), the Keel UI, comes later.
+in the model bundle. Part (b) brings it to Keel: declaring and confirming extras in Map & convert, validating
+`extra_features.csv`, training with `generic`, the "Generic vs v2" results section and source-format scoring with
+extras (section "Keel (part b)" below).
 
 ADR 0024 (Proposed) records the decisions; it amends ADR 0009 (unknown levels raise: not for extras) and ADR 0017
 (decision 2: no customer-specific columns: allowed as declared extras, outside the pooled part).
@@ -46,7 +48,7 @@ Fixed before the run:
 | `emva/ingest/draft.py` | Reply schema: target `feature` plus `feature_kind` (`numeric` / `categorical` / `none`); `PROMPT_VERSION` `mapping-draft-v2`; drafted features always unconfirmed |
 | `emva/eval/generic_report.py`, `emva/eval/report.py` | "Generic vs v2" section: a v2 model on the same rows and split, paired AUC difference on both test sets, the criterion's verdict, the leakage screen |
 | `mappings/*.toml` | Declared extras: Olist 1, CRM 9 (third source `sales_teams.csv`), hotel 23; `features_confirmed = true` after a review by hand |
-| `app/storage.py`, `app/ingest.py` | Minimal pass-through so the app tests keep passing (see decision D11) |
+| `app/storage.py`, `app/ingest.py` | Part (a): minimal pass-through so the app tests keep passing (see decision D11); part (b): the Keel support below |
 
 ## Orchestrator decisions
 
@@ -98,6 +100,51 @@ Decisions taken during the work (for the orchestrator's review):
   run.
 - **D14 (draft names):** a drafted feature's name is its column name as a slug, prefixed with the source name when
   two files share the column.
+
+Decisions taken in part (b) (Keel), proposed for the orchestrator's review and recorded in ADR 0024 (decisions 9-14):
+
+- **D15 (b) bundle compatibility:** `emva.persist.load_bundle` reads format 1 again (Phase 8-9 bundles, e.g. the runs
+  on Railway) as a bundle with `extras = None`, which scores exactly as its v2 / legacy run did; `save_bundle` still
+  writes format 2; any other version, and a "format 1" file carrying an `extras` field, is refused loudly
+  (`READABLE_FORMATS = {1, 2}`). Tested with a bundle built in-test the way the Phase 9 `save_bundle` wrote it (same
+  scores as its format-2 twin), and checked once by hand with a bundle written by the `main` checkout's code (max
+  |p difference| 1e-16 over 9,311 v1 leads). No committed fixture. `scores.csv` / `weights.csv` of pre-Phase-10 runs
+  are unchanged (generic adds no columns), so `app/results.py` reads them as before.
+- **D16 (b) where `extra_features.csv` lives:** it is training data, so it moves from `METADATA_FILES` to
+  `TRAINING_FILES` (counted in `Dataset.rows`; `Dataset.has_extras` reads the file on disk, so a dataset stored while
+  it was metadata counts too). Only a converted dataset carries it: its columns are declared in `dataset.json`, so the
+  EMVA-format upload has no slot for it and `app.validation` refuses it without that declaration (and a declaration
+  without the file). Validation: `lead_id` plus the declared names in declaration order, `lead_id` filled and unique,
+  the same leads as `historical_leads.csv` in both directions, numeric extras numbers or blank, read exactly as the
+  pipeline reads it (only an empty cell is blank).
+- **D17 (b) EMVA form on a generic run:** no inputs for extras; the page says that the model's N extras are scored as
+  `missing` there and points to the source format, which has them. Reason: the EMVA form is the fixed schema, and an
+  extra has no meaning outside its source's columns; the source format is where a person knows the value.
+- **D18 (b) review table:** extras are a `feature` checkbox with `kind` and `name` columns on the field review table,
+  not a target option, because a column can be a field and a feature at once (the committed Olist mapping maps
+  `landing_page_id` to `utm_content` and declares it as the extra `landing_page`). A plain-column feature without a
+  field row is listed with target `ignore` (or `(value map)` when its column has a value map); derived-expression
+  features are read-only (edited as TOML). A row's reason / confidence describe the field when it has a target, else
+  the feature; the check flag is set when either confidence is low. A blank name becomes the column's slug (prefixed
+  with the source when taken).
+- **D19 (b) the features confirmation:** a second required checkbox, "Extra features are known when the lead is
+  submitted", shown only with declared features and keyed by a digest of the features (source, kind, name), so any
+  change clears it. As with the outcome, the form never carries a loaded mapping's `features_confirmed` over: a person
+  ticks both before every conversion (`app.ingest.confirm(m, features_confirmed=...)`).
+- **D20 (b) "Generic vs v2" in Keel:** `app.results.generic_comparison` retrains v2 and generic with
+  `emva.pipeline.run` on the same data, labels and split in the server process (cached per run and test set) and
+  calls `emva.eval.generic_report.compare` on the selected test set; the collinearity check is the report's
+  (`check_collinearity` of the generic design's training rows). It refuses when the retrained generic model does not
+  reproduce the run's `scores.csv` on the test leads (the dataset changed). Keel shows the difference, its CI, the
+  collinearity verdict and the leakage screen, but not the Phase 10 PASS/FAIL line: that criterion was pre-registered
+  for the three Kaggle datasets, not as a rule for a customer's run.
+- **D21 (b) long scorecards:** for a generic run with more than 25 signals, the chart and table show the 25 largest
+  |points| and an expander lists every signal; `x_` columns are named "Extra · <name>" with their reference level
+  from the bundle's encoder. Other runs are unchanged.
+- **D22 (b) source-format inputs for extras:** with a generic bundle, a plain-column categorical extra offers its
+  training levels plus `other` (any unlisted value scores as `other` anyway), unless a value map already fixes the
+  options; a numeric extra is a number input written as CSV text (`29`, `2.5`). With a v2 bundle the extras' columns
+  stay free text (the bundle ignores them).
 
 ## Results (on public data)
 
@@ -950,9 +997,56 @@ Flagged: none.
 
 </details>
 
+## Keel (part b)
+
+What changed, by module (details in `docs/ARCHITECTURE.md` sections 8 and 10):
+
+| module | change |
+|---|---|
+| `emva/persist.py` | Format-1 bundles load as `extras = None` (D15) |
+| `app/storage.py` | `extra_features.csv` is a training file; `Dataset.has_extras` (D16) |
+| `app/validation.py` | `extra_features.csv` against `dataset.json` `features` and the leads (D16); the summary lists the extras |
+| `app/ingest.py` | Review table `feature` / `kind` / `name` columns, `apply_review` builds `[[features]]`, `derived_features_frame`, `features_signature`, `confirm(..., features_confirmed)`, `extras_summary` (D18, D19) |
+| `app/views/upload.py` | The table, the second confirmation, the coverage card's extras card, the file card, the `generic` option (only with extras) and the extras in the pre-training summary |
+| `app/training.py` | `feature_set_options`, `TrainingSummary.extras` (read with `emva.generic.read_extra_features`) |
+| `app/results.py`, `app/ui.py`, `app/views/results.py` | `generic_comparison` / `GenericSection`, cached `ui.generic_section`, the "Generic vs v2" section and leakage screen; scorecard names and references for `x_` columns, top 25 (D20, D21) |
+| `app/scoring.py`, `app/views/score.py` | `source_fields(mapping, bundle)` with extras' levels / number inputs, `number_text`, `extra_names`; the EMVA-form note (D17, D22) |
+
+Screenshots, taken with Playwright against a local Keel (`streamlit run app/main.py`, scratch `DATA_DIR`, a random
+`APP_PASSWORD`) on the real Olist export (`data/external/raw/olist`, not committed), converted with the committed
+`mappings/olist_funnel.toml`. Every number is **on public data** (CC BY-NC-SA 4.0, non-commercial; not for quoting).
+
+- `reports/phase10/01-review-table-extras.png`: the review table after loading the built-in mapping. `landing_page_id`
+  is a field (`utm_content`) and the categorical extra `landing_page` at once; the closed-deal columns are ignored
+  with the mapping's leakage reasons.
+- `reports/phase10/02-both-confirmations.png`: the declared extra and both confirmations ticked; Convert is enabled
+  only with both.
+- `reports/phase10/03-coverage-extras.png`: the coverage card: 3 of 39 signals, and the extras card, 1 extra (0
+  numeric, 1 categorical), design columns fixed at training.
+- `reports/phase10/04-train-generic.png`: the training panel on the saved dataset: Features offers v2, Generic (v2 +
+  extras) and Legacy; the summary with generic: 4,171 training leads (282 won), 3,829 test leads (444 won), 1 extra.
+- `reports/phase10/05-results-generic-vs-v2.png`: the run's "Generic vs v2" on the mature test set: v2 AUC 0.553,
+  generic 0.646 (v2 + 24 extra columns), difference +0.094 [95% CI +0.064, +0.123], bootstrap p 0.000, 3,829 test
+  leads; collinearity PASS (max |corr| 0.716); leakage screen: `landing_page` 25 levels, 24 design columns, training
+  AUC 0.714, not flagged. The same numbers as the standard report above.
+- `reports/phase10/06-results-scorecard-extras.png`: the scorecard, the 25 strongest of 63 signals (24 from the
+  extra), the rest in the "All 63 signals" expander.
+- `reports/phase10/07-score-source-format-extras.png`: one new lead in the source format (origin `organic_search`,
+  `landing_page_id` chosen from the training levels, first contact 2018-04-02): P(close) 14.6%. The amounts are in
+  the source's currency (BRL) although the card formats them as £, and Olist's values are inflated by the outlier
+  noted in Phase 9.
+
+Found in passing, not fixed here (out of scope, Phase 9 behaviour): on any run trained on a converted dataset the EMVA
+form fails with its default session values ("Check the form."), because columns blank on every training lead are
+typed float in the bundle's lead schema and the default landing URL cannot be coerced; the form works with the
+session fields blank. See "Open items".
+
 ## Verification
 
-- Tests: **780 passed, 1 skipped** (`make test`, then compileall) (751 passed + 1 skipped at the start of the phase).
+- Tests: **804 passed, 1 skipped** (`make test`, then compileall) (780 passed + 1 skipped after part (a); 751 passed
+  + 1 skipped at the start of the phase). Part (b) commit 66af85c (extras validation) is not green on its own:
+  `tests/test_ingest.py::test_committed_mapping_converts_its_fixture` validated the converted files without
+  `dataset.json`, which the new rule needs next to `extra_features.csv`; the test is fixed in 8aa73e4.
 - `make baseline`: PASS. AUC 0.814, Brier 0.1006, top-20% wins 0.571, revenue 0.795, weights and scores
   byte-identical between the baseline and emva runs (on simulated data).
 - `python -m emva.eval.report --data data/v1` and `--data data/v2`: byte-identical to the reports saved before the
@@ -963,10 +1057,11 @@ Flagged: none.
 
 ## Open items
 
-- **Keel (part b):** validate `extra_features.csv` (today stored unchecked), offer `generic` on Upload & train, a
-  features-confirmed control in Map & convert (the form only carries the flag through), show the "Generic vs v2"
-  section and the leakage screen, and ask for the extras on the Score page's EMVA form (a form lead scores with every
-  extra `missing`).
+- **Keel, EMVA form on converted runs** (found in part b, Phase 9 behaviour): the default session values fail on a
+  run trained on a converted dataset (all-blank training columns are typed float in the bundle's lead schema).
+  Either coerce text fields by their declared `FieldSpec` type or prefill a converted run's form with blank session
+  fields; needs its own task and a check that `score_leads` still matches the batch run.
+- **Keel, extras on the EMVA form:** not offered (D17); revisit if customers score generic runs by form.
 - The hotel collinearity failure (`distribution_channel=GDS` ~ `agent=195`) and the horizon label's mechanical tie
   to `lead_time` are properties of that dataset under R28; neither is fixed here (no tuning after the numbers).
 - A date-part operation (weekday / month of a date) would allow Olist sign-up timing as an extra; not added.

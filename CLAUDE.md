@@ -214,7 +214,7 @@ single leads through `emva.scoring` and computes its charts with `emva.eval`; it
 | 7 production readiness doc | merged (fa9bc4d) | `phase7-production-doc` | `reports/production.md`, ADR 0017 (Proposed) |
 | 8 hosted app (Keel) | merged (c3da2b0) | `app-ui` | `reports/app.md`, ADR 0018/0019 (Proposed) |
 | 9 dataset converter + per-dataset dates + Keel Map & convert | merged (be2f674) | `claude/epic-edison-onl83z` | `reports/phase9.md`, ADRs 0020-0023 (Proposed) |
-| 10 (a) generic feature set | on branch `phase10-generic-features`, not merged | `phase10-generic-features` | `reports/phase10.md`, ADR 0024 (Proposed) |
+| 10 (a) generic feature set, (b) Keel support | on branch `phase10-generic-features`, not merged | `phase10-generic-features` | `reports/phase10.md`, ADR 0024 (Proposed) |
 
 ## Do not
 

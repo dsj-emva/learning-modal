@@ -2,9 +2,11 @@
 
 - Status: Proposed
 - Date: 2026-09-26
-- Source: Phase 10 (a), `reports/phase10.md` "Orchestrator decisions" D1-D10; `emva/generic.py`,
+- Source: Phase 10 (a), `reports/phase10.md` "Orchestrator decisions" D1-D10 (decisions 1-8), and Phase 10 (b), D15-D22
+  (decisions 9-14, proposed at part b); `emva/generic.py`,
   `emva/feature_spec.py`, `emva/pipeline.py`, `emva/persist.py`, `emva/scoring.py`, `emva/ingest/`,
-  `emva/eval/generic_report.py`, `emva/eval/report.py`, `mappings/*.toml`; branch `phase10-generic-features`.
+  `emva/eval/generic_report.py`, `emva/eval/report.py`, `mappings/*.toml`, `app/` (part b); branch
+  `phase10-generic-features`.
   Amends ADR 0009 (fixed design schema) and ADR 0017 (decision 2: no customer-specific columns)
 
 ## Context
@@ -58,13 +60,36 @@ formula design so that coefficients stay comparable across customers. The user d
    precondition for pooling. A hierarchical model (ADR 0017 decision 3) pools only the fixed columns unless a later
    ADR maps extras across customers.
 
+9. **(b) Old bundles still load.** `load_bundle` reads format 1 (Phase 8-9 runs, e.g. on Railway) as a bundle with
+   `extras = None`, equivalent to its v2 / legacy run; format 2 is written; any other version is refused.
+10. **(b) `extra_features.csv` is a training file** of the dataset store (`app.storage.TRAINING_FILES`), carried only by
+    a converted dataset whose `dataset.json` declares its `features`; `app.validation` checks it (columns = `lead_id`
+    plus the declared names in order, unique `lead_id`, the same leads as `historical_leads.csv` both ways, numeric
+    extras numbers or blank) and refuses the file and the declaration apart.
+11. **(b) Declaring and confirming extras in Keel.** Extras are a `feature` / `kind` / `name` part of the field review
+    table (a column may be a field and a feature at once; derived features are TOML only). A second required
+    confirmation, "Extra features are known when the lead is submitted", appears only with declared features, is
+    keyed by them (any change clears it) and is never carried over from a loaded mapping.
+12. **(b) Training.** Keel offers `generic` only for a dataset with `extra_features.csv`; v2 stays the default.
+13. **(b) Results.** A generic run shows "Generic vs v2" computed with `emva.eval.generic_report.compare` on the
+    selected test set (both models retrained in the server on the same leads, labels and split; refused when the
+    retrained model does not reproduce the run's scores), the generic design's collinearity check and the leakage
+    screen, but not the Phase 10 acceptance verdict (a pre-registered criterion for three public datasets, not a rule
+    for a customer run). Long scorecards show the 25 strongest signals plus an expander.
+14. **(b) Scoring.** The source format carries the extras (a form lists them, with a generic bundle's training levels
+    plus `other` for a categorical extra and a number input for a numeric one; a CSV upload has them as columns). The
+    EMVA form has no inputs for extras and says that a generic run scores them as `missing` there.
+
 ## Consequences
 
 - A converted source with no form, session or enrichment data can still be scored on its own columns, measured
   against v2 on the same rows.
 - Leakage moves from "cannot happen" (no extra columns) to "a person's confirmation plus a screen": a post-outcome
   column that a reviewer wrongly confirms will inflate the numbers; the screen flags only the blatant cases.
-- Bundles written before Phase 10 (format version 1) no longer load; retrain.
+- Bundles written before Phase 10 (format version 1) load as bundles without extras (decision 9), so deployed runs
+  keep scoring; only format 2 carries an encoder.
 - The extras' columns differ per dataset and per run, so their coefficients are not comparable across customers.
-- Open: Keel (part b) must accept `extra_features.csv`, offer `generic` and show the section; date-part operations
-  (weekday, month of a date) are not in the mapping's op set.
+- Keel runs the comparison in the server process: two pipeline fits and a bootstrap per run and test set (cached),
+  seconds on Olist, longer on a dataset the size of the hotel bookings.
+- Open: date-part operations (weekday, month of a date) are not in the mapping's op set; the EMVA form has no inputs
+  for extras.
