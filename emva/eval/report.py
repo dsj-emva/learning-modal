@@ -355,9 +355,10 @@ def build_report(data: str | Path, n_resamples: int = N_RESAMPLES, seed: int = S
 def baseline_or_note(data: str | Path) -> tuple[pd.DataFrame | None, str, str | None]:
     """The frozen baseline's ``(scores, stdout, None)`` on ``data``, or ``(None, "", note)`` saying why it is omitted.
 
-    Omitted when ``data`` carries a ``dataset.json`` (a converted dataset: the baseline script hard-codes the v1
-    snapshot date, test boundary and file format, ADR 0022) or when the script fails; the failure is logged in the
-    note with the last line of its stderr, never dropped.
+    Omitted only when ``data`` carries a ``dataset.json`` (a converted dataset: the baseline script hard-codes the v1
+    snapshot date, test boundary and file format, ADR 0022); the script is then not run. On any other dataset
+    (data/v1, data/v2, uploads in the v1 format) a failing script raises ``RuntimeError`` (``run_baseline``), as
+    before Phase 9: the baseline row is never dropped silently.
     """
     if has_dataset_meta(data):
         return None, "", ("Baseline omitted: this dataset carries its own dates in `dataset.json` (a converted "
@@ -365,14 +366,8 @@ def baseline_or_note(data: str | Path) -> tuple[pd.DataFrame | None, str, str | 
                           "test boundary and file format, so its scores would not be comparable (ADR 0022). The "
                           "paired comparison against it and the check that the legacy labels equal the baseline's "
                           "are omitted too.")
-    try:
-        with tempfile.TemporaryDirectory() as tmp:
-            base, stdout = run_baseline(data, tmp)
-    except RuntimeError as e:
-        last = str(e).strip().splitlines()[-1]
-        return None, "", (f"Baseline omitted: the frozen `baseline/emva_score.py` failed on this dataset ({last}). "
-                          "The paired comparison against it and the check that the legacy labels equal the "
-                          "baseline's are omitted too (ADR 0022).")
+    with tempfile.TemporaryDirectory() as tmp:
+        base, stdout = run_baseline(data, tmp)
     return base, stdout, None
 
 

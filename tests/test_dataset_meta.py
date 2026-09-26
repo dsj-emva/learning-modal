@@ -117,3 +117,19 @@ def test_report_keeps_the_baseline_without_dataset_json_but_drops_missing_rules(
     text = build_report(d, n_resamples=20)
     assert "| baseline |" in text and "| status quo |" not in text
     assert "Status quo omitted" in text and "Baseline omitted" not in text
+
+
+def test_baseline_failure_raises_unless_the_dataset_is_converted(data_v1: Path, tmp_path: Path,
+                                                                 monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only a converted dataset (dataset.json) omits the baseline row; elsewhere a failing script raises (ADR 0022)."""
+    from emva.eval import report
+
+    def fail(data: object, out: object) -> None:
+        raise RuntimeError("baseline failed (1):\nboom")
+
+    monkeypatch.setattr(report, "run_baseline", fail)
+    with pytest.raises(RuntimeError, match="boom"):
+        report.baseline_or_note(_copy_v1(data_v1, tmp_path / "plain", None))
+    base, stdout, note = report.baseline_or_note(
+        _copy_v1(data_v1, tmp_path / "conv", {"as_of": "2026-09-24", "test_from": "2026-05-01"}))
+    assert base is None and stdout == "" and note.startswith("Baseline omitted: this dataset carries its own dates")

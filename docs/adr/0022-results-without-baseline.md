@@ -33,12 +33,16 @@ KPI strip fell back to the baseline whenever there were no rules.
    `dataset.json` next to the training files; `save_dataset` accepts exactly these two extra names. The store's
    own record moves from `dataset.json` to `keel_meta.json`, and `init_root` renames legacy records (only a file
    that parses as a store record), so `dataset.json` means one thing only.
+5. **The standard report (fix round, R34).** `emva.eval.report.baseline_or_note` omits the baseline row only when
+   the dataset carries `dataset.json` (`emva.dataset_meta.has_dataset_meta`). On any other dataset (data/v1,
+   data/v2, a v1-format upload) a failing baseline script raises `RuntimeError`, as before Phase 9, so the row is
+   never dropped silently from a report. The app page keeps decision 1 (a failing script is logged and noted).
 
 ## Consequences
 
 - A converted dataset is never compared with the frozen POC in the app; its judgement is model vs status quo
   (when rules exist) and the model's own CIs, calibration and stability.
 - The model's row is unchanged by the baseline's absence (the same `headline_frame` row; tested).
-- Per-dataset test dates are not yet threaded through the page: `training_base_rate` takes `test_from`
-  (default `TEST_FROM`) so the wiring after `emva/ingest/` lands is a parameter, not a restructure.
+- Per-dataset dates are threaded through the page: `app.results` and `app.training` read `as_of` / `test_from`
+  with `emva.dataset_meta.dataset_dates` (ADR 0020), and `training_base_rate` gets the dataset's `test_from`.
 - Pre-Phase 9 data roots are migrated in place on first start; no manual step on the Railway volume.
