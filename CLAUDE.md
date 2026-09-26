@@ -89,7 +89,7 @@ In a worktree there is no `.venv`: pass the main checkout's interpreter, quoted,
 | `--include-ghosted` | horizon: count leads still New at H as 0 instead of excluding them |
 | `--stalled-as-lost` | horizon: count stalled open deals as 0 instead of censoring them |
 | `--value-cap-percentile P`, `--no-value-cap`, `--value-compression {none,log,sqrt}`, `--value-floor GBP`, `--no-value-floor`, `--value-tiers N` | horizon only (Phase 3): the transform from `value_formula` to `value_at_submit`; default cap p97 + log + floor £25 (ADR 0012). Horizon `scores.csv` also carries `value_at_submit(_ts)`, `value_at_close(_ts)`, `value_at_close_status` |
-| `--feature-set {legacy,v2}` | `v2` (default, Phase 2): `session_missing` / `enrichment_missing` indicators, name enrichment, boilerplate similarity, fixed 39-column design from `V2_LEVELS` (ADR 0009), residual sd estimated. `legacy`: baseline features; with `--label-mode legacy` byte-identical to `baseline/` |
+| `--feature-set {legacy,v2,generic}` | `v2` (default, Phase 2): `session_missing` / `enrichment_missing` indicators, name enrichment, boilerplate similarity, fixed 39-column design from `V2_LEVELS` (ADR 0009), residual sd estimated. `legacy`: baseline features; with `--label-mode legacy` byte-identical to `baseline/`. `generic` (Phase 10, ADR 0024): v2 plus the `x_` columns of a converted dataset's declared extras (`extra_features.csv`, encoding fitted on training leads; refused without it); the report adds "Generic vs v2" |
 
 The report also takes `--strict` (exit 1 when the candidate design fails the collinearity check;
 `python -m emva.eval.collinearity` is always strict).
@@ -214,6 +214,7 @@ single leads through `emva.scoring` and computes its charts with `emva.eval`; it
 | 7 production readiness doc | merged (fa9bc4d) | `phase7-production-doc` | `reports/production.md`, ADR 0017 (Proposed) |
 | 8 hosted app (Keel) | merged (c3da2b0) | `app-ui` | `reports/app.md`, ADR 0018/0019 (Proposed) |
 | 9 dataset converter + per-dataset dates + Keel Map & convert | merged (be2f674) | `claude/epic-edison-onl83z` | `reports/phase9.md`, ADRs 0020-0023 (Proposed) |
+| 10 (a) generic feature set | on branch `phase10-generic-features`, not merged | `phase10-generic-features` | `reports/phase10.md`, ADR 0024 (Proposed) |
 
 ## Do not
 

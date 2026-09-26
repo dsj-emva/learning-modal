@@ -188,6 +188,7 @@ it with the paired bootstrap.
 | 7 production readiness document | merged (fa9bc4d) | `phase7-production-doc` | `reports/production.md`, ADR 0017 (Proposed) |
 | 8 hosted app (Keel) | merged (c3da2b0) | `app-ui` | `reports/app.md`, ADR 0018/0019 (Proposed) |
 | 9 generic dataset converter, per-dataset dates, Keel Map & convert | merged (be2f674) | `claude/epic-edison-onl83z` | `reports/phase9.md`, ADRs 0020-0023 (Proposed) |
+| 10 (a) generic feature set (`--feature-set generic`) | on branch `phase10-generic-features`, not merged | `phase10-generic-features` | `reports/phase10.md`, ADR 0024 (Proposed) |
 
 Open question carried from Phase 1 (not yet ruled): should young `crm_lost` leads be 0 rather than NaN?
 It changes only `scores.csv` today.

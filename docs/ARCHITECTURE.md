@@ -286,3 +286,35 @@ name check that refuses ground-truth files (draft CLI, `Source.file`, `frames_fr
 the name itself inside `emva/eval/` (grep rule). The Phase 4 modules (`rolling`,
 `hardening`, `calibration_decay`, ...) and `emva.troas` still use the constants and run on data/v1 and data/v2 only
 (ADR 0020, consequences).
+
+## 10. Generic feature set (`--feature-set generic`, Phase 10 (a), ADR 0024)
+
+The v2 fixed design plus a converted dataset's declared extra columns. A mapping lists them in `[[features]]`
+(`source` expression, `kind` numeric / categorical, `name`) and a person sets `features_confirmed = true` (they are
+known at submit time); `convert` writes their raw values to `extra_features.csv` and declares them in
+`dataset.json` `features`. `historical_leads.csv` stays the fixed schema.
+
+```mermaid
+flowchart LR
+    MAP["mapping [[features]]<br/>features_confirmed = true"] --> CONV["convert.convert / extra_values"]
+    CONV --> EXF["extra_features.csv<br/>+ dataset.json features"]
+    EXF --> READ["generic.read_extra_features<br/>x_<name> raw columns joined on lead_id"]
+    READ --> FIT["generic.fit_encoder<br/>training leads only: levels >= 30 + other + missing,<br/>5 quantile bins + missing"]
+    FIT --> D["design = v2 39 columns + x_<name>=<level>"]
+    FIT --> B["ModelBundle.extras (format 2)"]
+    B --> SC["emva.scoring: unseen category -> other,<br/>out-of-range number -> edge bin"]
+    D --> REP["emva.eval.report: Generic vs v2<br/>(eval/generic_report: paired AUC, criterion, leakage screen)"]
+```
+
+| module | owns |
+|---|---|
+| `emva/generic.py` | `ExtraFeature`, `ExtraKind`, `FittedExtra` / `GenericEncoder` (`levels`, `design`, `columns`), `fit_encoder`, `numeric_edges`, `bin_labels`, `read_extra_features`, `EXTRA_FEATURES_FILE`, `EXTRA_PREFIX` (`x_`), `OTHER` |
+| `emva/feature_spec.py` | `GENERIC_SPEC` (v2 spec with `extras = True`) |
+| `emva/pipeline.py` | joins the extras, fits the encoder on the train mask, `PipelineResult.extras` |
+| `emva/persist.py` | `ModelBundle.extras`, `FORMAT_VERSION = 2` |
+| `emva/scoring.py` | reads `x_<name>` columns with a generic bundle (absent = missing); ignores `x_` columns a bundle does not use |
+| `emva/ingest/mapping.py` | `FeatureMap`, `[[features]]` / `features_confirmed` in the TOML schema, `check_confirmed` |
+| `emva/ingest/convert.py` | `extra_values`, `extra_features.csv`, `dataset.json` `features`, `x_` columns in `convert_leads` |
+| `emva/ingest/draft.py` | target `feature` + `feature_kind` in the reply schema (`mapping-draft-v2`), `feature_name`; drafts never confirm features |
+| `emva/eval/generic_report.py` | `compare` (paired AUC generic − v2 per test set, the Phase 10 criterion), `leakage_screen` (folded single-feature training AUC, flag > 0.90) |
+| `app/storage.py`, `app/ingest.py` | minimal pass-through only: `extra_features.csv` accepted as metadata, `MappingForm` carries `features` (Keel UI is part b) |
