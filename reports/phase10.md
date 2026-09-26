@@ -183,6 +183,21 @@ Rulings of the fix round (two-axis review, below), recorded in ADR 0024 (decisio
   `generic_report`), ADRs 0009 and 0017 marked "amended by ADR 0024", the D11 note, the hotel footnote, and the code
   nits listed under "Review".
 
+Live draft check (see "Live draft check" below; ADR 0025, Proposed):
+
+- **D34 Key alias.** The cloud session environment does not pass `ANTHROPIC_API_KEY` through, so `emva.env.load_env_var`
+  falls back to `EMVA_ANTHROPIC_API_KEY` (environment, then `.env`) when the real name is unset; the real name wins.
+- **D35 The draft reply names its primary file.** `RESPONSE_SCHEMA` has `primary_file` and `joins` (file + join
+  column) instead of `sources` with "the primary has an empty `join_on`"; the contract refuses a primary that is also
+  joined and a file joined twice. `PROMPT_VERSION` `mapping-draft-v4`. Amends ADR 0021 item 2.
+- **D36 Prompt guidance, then stop.** v3 added two paragraphs (the primary file holds every lead, never a won-only
+  file; `created_at` is the earliest date known at arrival, never a post-outcome date). Prompt iteration stopped at
+  v4, the first version whose three replies pass the contract; the remaining semantic errors (below) are left for
+  the reviewer, as ADR 0021 intends, not prompted away one by one.
+- **D37 The cache keeps every live reply.** `mappings/drafts/draft_cache.json` keeps the v2 and v3 replies (including
+  the three contract failures) next to the v4 replies the drafts are built from: they are the evidence for this
+  section, and keys include the prompt fingerprint, so they are never served for v4.
+
 ## Results (on public data)
 
 Converted with the committed mappings, trained with `python -m emva --feature-set generic` (pipeline defaults: H =
@@ -1105,6 +1120,131 @@ trained on a converted dataset the EMVA form failed with its default session val
 columns blank on every training lead are typed float in the bundle's lead schema and the default landing URL could
 not be coerced.
 
+## Live draft check
+
+The first run of the LLM mapping draft against the real API (pending since Phase 9). Model
+`claude-haiku-4-5-20251001` through `emva.context.agent.make_client` (workspace header), key from
+`EMVA_ANTHROPIC_API_KEY` (D34). Raw data re-downloaded with kagglehub (scratch venv; gitignored, not committed). The
+CRM directory holds five CSVs and a mapping takes at most three, so `products.csv` and `data_dictionary.csv` were moved
+into a subdirectory (`unused/`, not globbed) and the draft saw the same three files as the hand mapping.
+
+```sh
+python -m emva.ingest draft --raw data/external/raw/<name> --out mappings/drafts/<name>.draft.toml \
+    --cache mappings/drafts/draft_cache.json
+```
+
+Committed: `mappings/drafts/{olist,crm_opportunities,hotel_bookings}.draft.toml` (built from the v4 replies,
+`outcome_confirmed = false`, `features_confirmed = false`) and `mappings/drafts/draft_cache.json` (every live reply,
+D37). The hand-written `mappings/*.toml` are unchanged and remain the mappings the Phase 9 / 10 results use.
+
+### Contract results by prompt version
+
+| prompt | Olist | CRM | hotel |
+|---|---|---|---|
+| v2 (as merged) | ok, but primary = the closed-deals file (every lead won) | **ContractError**: no `lead.created_at` (`engage_date` drafted as `contacted_at`) | **ContractError**: no `lead.created_at` (no single date column) |
+| v3 (+ primary file / created_at guidance, D36) | **ContractError**: primary listed first but given `join_on = mql_id`, so no source had an empty `join_on` | ok | ok, but `created_at` = `reservation_status_date` (post-outcome) |
+| v4 (explicit `primary_file`, D35) | ok | ok | ok, `created_at` = `reservation_status_date`, confidence low |
+
+Each failure was logged ("mapping draft broke the contract"), cached as a parse error, raised as `ContractError` on
+the next call and not retried, as designed. The fixes are in code with tests (ead9dd1): the prompt guidance and the
+`primary_file` / `joins` schema (`test_a_draft_names_its_primary_file_and_joins_each_other_file_once`). No reply was
+edited; the drafts are exactly what `draft_mapping` builds from the cached v4 replies.
+
+### Cache hit
+
+The second run of each command was made with `ANTHROPIC_API_KEY`, `EMVA_ANTHROPIC_API_KEY` and
+`ANTHROPIC_WORKSPACE_ID` removed from the environment and `HTTPS_PROXY` / `HTTP_PROXY` pointed at a closed port
+(`127.0.0.1:9`), so any request, and even building a client, would have failed. All three runs wrote their draft, and
+the cache and the three TOMLs were byte-identical (sha256) before and after. Control: a profile not in the cache, run
+the same way, fails with `make_client`'s missing-key `SystemExit`. `tests/test_ingest.py` now checks that the
+committed cache holds one `ok` v4 reply per dataset and that the committed drafts stay unconfirmed.
+
+### Redaction on the real run
+
+The exact user messages were re-rendered (`render_profiles` of the same profiles; each one's hash matches its cache
+key, so it is byte-for-byte the text sent) to scratch files and grepped:
+
+| check | Olist | CRM | hotel |
+|---|---|---|---|
+| emails (`x@y.z`) | 0 | 0 | 0 |
+| IPv4 addresses | 0 | 0 | 0 |
+| phone-like digit runs | 0 (4 hits, all ISO dates) | 0 (4, all dates) | 0 (2, dates) |
+| CRM person names (41 distinct `sales_agent` / `manager` values; full names and every name token as a word) | 0 | 0 | 0 |
+
+`sales_agent` (both files) and `manager` appear only as `<name>` (R39). One over-redaction, by design (ADR 0021:
+errs towards redacting, since a phone column parsed as a number would otherwise leak): the maxima of CRM `revenue`
+(11,698.03) and Olist `declared_monthly_revenue` (50,000,000) reached the model as `<phone>`. Not changed.
+
+### Draft vs hand mapping
+
+**Olist** (`olist.draft.toml` vs `olist_funnel.toml`)
+
+| part | draft | hand | |
+|---|---|---|---|
+| sources | MQL primary, closed deals joined on `mql_id` | same | match |
+| lead_id / created_at / won_at | `mql_id` / `first_contact_date` / `won_date` (high) | same | match |
+| contacted_at | not drafted | `first_contact_date` | reviewer adds (one column, one target) |
+| deal_value | not drafted (`declared_monthly_revenue` drafted as a feature) | `declared_monthly_revenue` (low) | differs |
+| outcome | presence of `won_date` (high) | same, `lost_without_close = "as_of"` | match; the draft's default `error` would refuse every lost lead until the reviewer sets `as_of` (not in the reply schema) |
+| `origin` | copied to `utm_source` verbatim (high) | value map onto `utm_source` / `utm_medium` | differs |
+| `landing_page_id` | feature, categorical (medium) | `utm_content` field and feature `landing_page` | feature matches |
+| extras | 8: `landing_page_id` + 7 closed-deal columns (`lead_type` high; `business_segment`, `business_type`, `lead_behaviour_profile`, `declared_monthly_revenue`, `declared_product_catalog_size` medium; `average_stock` low) | 1: `landing_page` | **differs: the 7 closed-deal extras leak the label** |
+
+The seven closed-deal columns exist only for won leads, so as extras they encode the outcome. The v3/v4 prompt says
+so in words and the model still proposed them (at medium or high confidence). This is the most serious difference in
+the three drafts; the review (and, after training, the missingness screen, D25) must catch it.
+
+**CRM** (`crm_opportunities.draft.toml` vs `crm_opportunities.toml`)
+
+| part | draft | hand | |
+|---|---|---|---|
+| sources | pipeline primary; accounts on `account`, sales teams on `sales_agent` | same | match |
+| lead_id / created_at / close_at / deal_value | `opportunity_id` / `engage_date` / `close_date` / `close_value` (high) | same | match |
+| won_at | not drafted | `close_date` | equivalent (a blank `won_at` dates a Won lead at `close_at`) |
+| contacted_at | not drafted | `engage_date` | reviewer adds |
+| outcome | stage `deal_stage`: Prospecting New, Engaging Contacted, Won, Lost (high) | same map | match |
+| `drop_rows_without_created_at` | false (not in the reply schema) | true | convert refuses the 500 Prospecting rows until the reviewer sets it |
+| `account` | not listed (the reply names it only as the accounts join column; the contract does not require every column) | `opp.account` -> `company_name` | reviewer adds |
+| `office_location` | feature only (low) | `answers.country` field and feature | field differs |
+| extras | 7: `product`, `sector`, `revenue`, `employees`, `year_established` (medium), `office_location`, `regional_office` (low) | 9: the same 7 + `sales_agent`, `manager` | draft ignores the two person-name columns |
+| dates | test_from 2017-10-01 (80% of the engage span) | 2017-07-01 (last ~20% of the mature span) | expected: dates are the reviewer's (ADR 0020) |
+
+The closest of the three. The draft's choice to ignore `sales_agent` / `manager` is the more conservative one (see
+the data-protection open item); the hand mapping keeps them as categories.
+
+**Hotel** (`hotel_bookings.draft.toml` vs `hotel_bookings.toml`)
+
+| part | draft | hand | |
+|---|---|---|---|
+| created_at | `reservation_status_date` (low: "earliest date known for booking creation") | arrival date (from parts) minus `lead_time` | **differs: the draft's date is the check-out or cancellation date, known only after the outcome** |
+| contacted_at / won_at / close_at / deal_value | not drafted | derived expressions; `close_at` = `reservation_status_date` | derived expressions are never drafted (ADR 0021 item 3) |
+| outcome | won_flag `is_canceled`: 0 won, 1 lost (high) | same | match |
+| extras | 21 (all high): the hand list minus `agent`, `company`, arrival month, plus `days_in_waiting_list` | 23 | 20 in common, kinds all agree; names are the column slugs (hand uses shorter names, e.g. `week_nights`) |
+| `days_in_waiting_list` | feature | ignore (known only after booking) | differs |
+| `booking_changes`, `assigned_room_type`, `reservation_status` | ignore (leak) | ignore | match |
+| `country` / `is_repeated_guest` fields | features only | `answers.country` field; value map | fields differ |
+| dates | as_of 2017-09-15, test_from 2017-02-01 (from `reservation_status_date`) | 2017-09-01, 2016-12-01 | follow from the wrong created_at |
+
+The hotel source has no single creation-date column, and a draft cannot propose a derived expression, so the
+contract's "`created_at` is required" forces the model to pick some column. Under v2 it refused (no `created_at`);
+under v3 and v4 it picked the post-outcome status date despite the prompt saying not to. The outcome and the feature
+list are good; the dates must be rewritten by the reviewer.
+
+### Summary
+
+- Outcome and stage map: all three match the hand mappings exactly.
+- Sources and joins: all three match (after D35).
+- Extras: CRM 7 of 9 (conservative on person names), hotel 20 of 23 plus one leaky extra, Olist 1 of 1 plus seven
+  leaky extras.
+- Confidences did not separate right from wrong: the leaky Olist extras were medium or high, the hotel extras all
+  high; only the hotel `created_at` was marked low. The review cannot rely on the confidence column alone.
+- Settings outside the reply schema (`lost_without_close`, `drop_rows_without_created_at`, dates) always need the
+  reviewer; convert refuses rather than guesses when they are wrong.
+
+### Keel
+
+PENDING: the Keel run (live "Draft mapping with AI" press, cache hit, screenshot) is in progress.
+
 ## Review
 
 Two-axis review of parts (a) and (b), then one fix round (rulings D23-D33 above).
@@ -1169,6 +1309,8 @@ extras on the EMVA form (D17, D26); the other items under "Open items".
 - The hotel collinearity failure (`distribution_channel=GDS` ~ `agent=195`) and the horizon label's mechanical tie
   to `lead_time` are properties of that dataset under R28; neither is fixed here (no tuning after the numbers).
 - A date-part operation (weekday / month of a date) would allow Olist sign-up timing as an extra; not added.
-- Live API draft run with the v2 prompt: still pending (no key in this environment).
+- Live API draft run: done (see "Live draft check"). Follow-ups it found: a draft cannot express a derived
+  `created_at` (hotel), won-only columns are still proposed as extras (Olist), and `lost_without_close` /
+  `drop_rows_without_created_at` are outside the reply schema. Each is caught at review or refused by convert.
 - `sales_agent` / `manager` are person names used as categories; fine as model features, but a real customer's
   export would need a data-protection review before training on staff names.

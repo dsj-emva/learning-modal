@@ -997,8 +997,10 @@ with AI" button and `python -m emva.ingest draft`. Those tests check that only p
 unconfirmed and cached, that parse errors are cached and raised, that transport errors are retried and not cached,
 and that the CLI works on a cached reply.
 
-**PENDING (needs `.env`):** one real draft run per dataset, then a second run to confirm the cache hit with no
-request made. After that, compare each draft with its hand-written mapping and commit the reply caches (ADR 0010).
+**Done in Phase 10** (`reports/phase10.md`, "Live draft check"; ADR 0025): one real draft run per dataset, a second
+run served from the cache with no request, a comparison with the hand-written mappings, and the reply cache committed
+(`mappings/drafts/`). The first live run broke the contract on CRM and hotel, and the prompt and schema were fixed
+(prompt v4). The hand-written mappings stay the ones in use.
 
 **Deferred:** X Education (Kaggle lead-scoring dataset). It has no dates, so there is no `created_at`, no split and
 no horizon label.
@@ -1098,8 +1100,7 @@ nit:
 
 Still open (follow-ups, not fixed here):
 
-- **Live API draft run: PENDING.** No API key in this environment; the draft path is covered by fake-client tests
-  only (see "Draft path" above).
+- **Live API draft run:** done in Phase 10 (see "Draft path" above and `reports/phase10.md`, "Live draft check").
 - **Join keys must share a name** in the primary and the joined file; a rename in the mapping would lift this.
 - **`convert_leads` refuses a whole batch on one bad row**, consistent with R25 (refuse, never drop); a per-row
   report for source-format scoring is a follow-up.

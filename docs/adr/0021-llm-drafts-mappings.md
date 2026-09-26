@@ -1,6 +1,6 @@
 # 0021. The LLM only drafts a dataset mapping, from redacted column profiles; a person confirms it and conversion is deterministic
 
-- Status: Proposed
+- Status: Proposed (item 2 amended by ADR 0025: the reply names `primary_file` and `joins`)
 - Date: 2026-09-26
 - Source: Phase 9 (a), `reports/phase9.md`; `emva/ingest/draft.py`, `emva/ingest/profile.py`, `emva/ingest/mapping.py`,
   `app/ingest.py`; branch `claude/epic-edison-onl83z`
@@ -55,8 +55,8 @@ committed cache keyed so that a prompt or model change is a miss.
 - A wrong draft costs review time, not a wrong dataset. The outcome and dates are always a person's decision, and
   every field row keeps its reason and confidence in the TOML, where low-confidence rows are highlighted in Keel.
 - The three committed mappings (`mappings/*.toml`) were written by hand because no API key was available in the
-  Phase 9 environment, and their headers say so. The draft path is so far tested only with a fake client. A real
-  draft run and a cache-hit check are pending (`reports/phase9.md`).
+  Phase 9 environment, and their headers say so. The live draft run and cache-hit check were
+  done in the Phase 10 live draft check (ADR 0025, `reports/phase10.md`).
 - Value maps can be drafted, but only onto schema columns with their listed options. A draft value outside the
   options is refused at conversion (R25), not dropped.
 - ADR 0017 decision 5 (ingestion adapters per CRM platform) becomes a set of mappings: a mapping written once per
