@@ -21,13 +21,13 @@ TOML schema (every key below; unknown keys are refused so typos fail loudly)::
     # join_on = "account"                  # sources after the first: left-joined on this column (same name in the
                                            # primary source; must be unique in this source)
 
-    [lead]                                 # expressions (see below); created_at and won_at are required
+    [lead]                                 # expressions (see below); only created_at is required
     lead_id = "b.booking_id"               # optional: absent = "<name>-000001", ... in primary-source row order
     created_at = { op = "minus_days", args = [{ op = "date_from_parts", args = ["b.arrival_date_year",
                    "b.arrival_date_month", "b.arrival_date_day_of_month"] }, "b.lead_time"] }
     contacted_at = "..."                   # optional: a Contacted CRM row at this time (the lead was worked)
-    won_at = "..."                         # time of the Won CRM row
-    close_at = "b.reservation_status_date" # optional: time of the Lost CRM row
+    won_at = "..."                         # optional: time of the Won CRM row (absent or blank = close_at)
+    close_at = "b.reservation_status_date" # optional: time of the Lost CRM row (and of a Won one without won_at)
     deal_value = { op = "product", args = ["b.adr", { op = "sum", args = ["b.stays_in_weekend_nights",
                    "b.stays_in_week_nights"] }] }
 
@@ -174,10 +174,11 @@ class Source:
 
 @dataclass(frozen=True)
 class LeadColumns:
-    """Where each lead's id and CRM times come from; see the module docstring. ``lead_id`` None = row numbers."""
+    """Where each lead's id and CRM times come from; see the module docstring. ``lead_id`` None = row numbers;
+    ``won_at`` None = a Won lead is dated at its ``close_at``."""
 
     created_at: Expr
-    won_at: Expr
+    won_at: Expr | None = None
     lead_id: Expr | None = None
     contacted_at: Expr | None = None
     close_at: Expr | None = None
@@ -403,7 +404,7 @@ def _str_map(obj: object, where: str) -> dict[str, str]:
 def load_mapping(text: str, require_confirmed: bool = False) -> DatasetMapping:
     """Parse and validate mapping TOML ``text`` (schema in the module docstring).
 
-    Raises ``ValueError`` for invalid TOML, unknown keys, a missing ``created_at`` or ``won_at``, unknown target
+    Raises ``ValueError`` for invalid TOML, unknown keys, a missing ``created_at``, unknown target
     columns, and (``require_confirmed=True``, as ``python -m emva.ingest convert`` loads) ``outcome_confirmed = false``.
     Drafts load with the default so they can be reviewed and saved.
     """
@@ -419,9 +420,8 @@ def load_mapping(text: str, require_confirmed: bool = False) -> DatasetMapping:
     if not isinstance(lead, Mapping):
         raise ValueError("[lead] must be a table")
     _check_keys(lead, LEAD_ROLES, "[lead]")
-    for role in ("created_at", "won_at"):
-        if role not in lead:
-            raise ValueError(f"[lead] has no {role} (required)")
+    if "created_at" not in lead:
+        raise ValueError("[lead] has no created_at (required)")
     sources = []
     for i, s in enumerate(doc["sources"]):
         _check_keys(s, {"name", "file", "join_on"}, f"[[sources]] {i + 1}")

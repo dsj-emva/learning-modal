@@ -59,7 +59,7 @@ DRAFT_CACHE: Path = Path("ingest") / "draft_cache.json"
 BUILTIN_MAPPINGS_DIR: Path = REPO_ROOT / "mappings"
 # Choices in the review table's target column: every schema target, then "ignore".
 TARGET_OPTIONS: tuple[str, ...] = (*TARGETS, IGNORE)
-REQUIRED_ROLES: tuple[str, ...] = ("created_at", "won_at")
+REQUIRED_ROLES: tuple[str, ...] = ("created_at",)
 # The two outcome meanings of a won_flag column (its raw values map to one of these).
 FLAG_MEANINGS: tuple[str, ...] = ("Won", "Lost")
 # Distinct raw values listed for the outcome column's value table (more means the column is not a stage/flag column).
@@ -192,7 +192,7 @@ def form_from_mapping(m: DatasetMapping, frames: Mapping[str, pd.DataFrame] | No
 def mapping_from_form(f: MappingForm) -> DatasetMapping:
     """The ``DatasetMapping`` the form describes, as a draft (``outcome_confirmed = False``; ``confirm`` sets it).
 
-    Raises ``ValueError`` with a plain message for what is missing (``created_at``, ``won_at``, the outcome column, a
+    Raises ``ValueError`` with a plain message for what is missing (``created_at``, the outcome column, a
     join column, the dates) and for anything ``DatasetMapping`` refuses.
     """
     missing = [r for r in REQUIRED_ROLES if f.lead.get(r) is None]

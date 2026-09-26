@@ -20,7 +20,8 @@ dataset store take:
   ``form_variant`` with blanks is refused. ``lead_id`` unmapped = ``<mapping name>-000001``, ... in the primary
   source's row order (rows dropped for a blank ``created_at`` keep their numbers out).
 - ``crm_history.csv``: per lead a ``New`` row at ``created_at``; if the final stage is not New, a ``Contacted`` row at
-  ``contacted_at`` (when mapped and present); then the final stage: ``Won`` at ``won_at`` (with the deal value),
+  ``contacted_at`` (when mapped and present); then the final stage: ``Won`` at ``won_at`` (with the deal value;
+  when ``won_at`` is unmapped or blank, at ``close_at``: a Won lead with neither is refused, listing examples),
   ``Lost`` at ``close_at`` (or at ``as_of`` when ``lost_without_close = "as_of"``), an open stage at ``contacted_at``
   else ``created_at``. Rows of one lead are strictly ordered in time: a row that would not come after the previous one
   is moved to one second after it (the pipeline sorts CRM rows with an unstable sort, so ties could reorder);
@@ -375,7 +376,7 @@ def convert(frames: dict[str, pd.DataFrame], mapping: DatasetMapping) -> dict[st
     Returns the five files plus ``dataset.json`` (module docstring). Raises ``ValueError`` when the mapping is a draft
     (``outcome_confirmed = false``), and for anything the mapping does not cover: a missing file or column, an outcome
     value not mapped, a blank ``created_at`` (unless ``drop_rows_without_created_at``), a blank or repeated lead id, a
-    Won lead without ``won_at``, a Lost lead without ``close_at`` (unless ``lost_without_close = "as_of"``), an event
+    Won lead with neither ``won_at`` nor ``close_at``, a Lost lead without ``close_at`` (unless ``lost_without_close = "as_of"``), an event
     after ``as_of``, or a field value outside its column's type or options.
     """
     check_confirmed(mapping)
@@ -408,11 +409,13 @@ def convert(frames: dict[str, pd.DataFrame], mapping: DatasetMapping) -> dict[st
     blank = pd.Series(pd.NaT, index=raw.index, dtype="datetime64[ns, UTC]")
     contacted = blank if lead.contacted_at is None else _dates(evaluate(lead.contacted_at, raw, "contacted_at"),
                                                                "contacted_at")
-    won_at = _dates(evaluate(lead.won_at, raw, "won_at"), "won_at")
+    won_at = blank if lead.won_at is None else _dates(evaluate(lead.won_at, raw, "won_at"), "won_at")
     close_at = blank if lead.close_at is None else _dates(evaluate(lead.close_at, raw, "close_at"), "close_at")
     won, lost = stage == "Won", stage == "Lost"
+    won_at = won_at.fillna(close_at)  # won_at is optional: a Won lead without one is dated at its close_at
     if (won & won_at.isna()).any():
-        raise ValueError(f"won_at is blank for {_listed(won & won_at.isna(), lead_id)} whose outcome is Won")
+        raise ValueError(f"a Won lead needs a date: won_at and close_at are both blank (or unmapped) for "
+                         f"{_listed(won & won_at.isna(), lead_id)}; map won_at or close_at")
     lost_no_close = lost & close_at.isna()
     if lost_no_close.any():
         if mapping.outcome.lost_without_close == "error":

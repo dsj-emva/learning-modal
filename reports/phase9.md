@@ -60,7 +60,7 @@ On **Upload & train**, section 01 "Map & convert a foreign export":
    `DATA_DIR/ingest/draft_cache.json`), "Use saved mapping" (the `mapping.toml` of an earlier dataset, or a built-in
    one from `mappings/`, with no model call), or "Fill by hand" (every column set to ignore).
 4. **1d Review the mapping.** Set the name, `as_of`, `test_from`, source URL, licence and join columns. Then map
-   the lead columns (created_at and won_at are required), choose the outcome kind and column, and fill the outcome
+   the lead columns (created_at is required; won_at is optional, a win without one is dated at close_at), choose the outcome kind and column, and fill the outcome
    value table. The fields table shows each row's reason and confidence, with low-confidence rows marked for checking.
    Value maps are read-only here. The whole mapping can be edited as TOML, which is where value maps and derived
    expressions are changed.

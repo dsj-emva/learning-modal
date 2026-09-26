@@ -70,8 +70,8 @@ files are joined to it on a shared column.
 
 For every profiled column choose exactly one target:
 - lead.lead_id (unique id of the lead), lead.created_at (when the lead came in: required), lead.contacted_at (when \
-it was first worked), lead.won_at (when it was won: required), lead.close_at (when it was lost), lead.deal_value \
-(amount of a won deal);
+it was first worked), lead.won_at (when it was won; optional), lead.close_at (when it was closed: lost, or won when \
+there is no won_at column), lead.deal_value (amount of a won deal);
 - a schema column (form and tracking fields; answers.<key> are form answers) when the column means the same thing;
 - value_map when the column's values translate into one or more schema columns (list every source value you see, \
 each with the target and value it sets; categorical schema columns only accept their listed options);
@@ -183,9 +183,8 @@ def _build(reply: dict[str, Any], profiles: list[ColumnProfile], name: str, as_o
             fields.append(FieldMap(ref, value_map=vm, review=note))
         else:
             fields.append(FieldMap(ref, target=target, review=note))
-    for role in ("created_at", "won_at"):
-        if role not in roles:
-            raise ContractError(f"no column drafted as {ROLE_PREFIX}{role} (required)")
+    if "created_at" not in roles:
+        raise ContractError(f"no column drafted as {ROLE_PREFIX}created_at (required)")
     o = reply["outcome"]
     outcome = Outcome(o["kind"], _ref(o["file"], o["column"], names, columns),
                       stage_map={e["value"]: e["stage"] for e in o["stage_map"]} if o["kind"] == "stage" else {},
@@ -207,7 +206,7 @@ def check_reply(obj: object, profiles: list[ColumnProfile]) -> dict[str, Any]:
     """``obj`` if it is a reply the profiles support (it builds a valid draft mapping); ``ContractError`` otherwise.
 
     The server enforces the schema's shape and enums; this adds everything the schema cannot say (files and columns
-    exist, one primary source, one column per role, created_at and won_at present, targets not repeated).
+    exist, one primary source, one column per role, created_at present, targets not repeated).
     """
     if not isinstance(obj, dict):
         raise ContractError(f"reply is {type(obj).__name__}, not a JSON object")

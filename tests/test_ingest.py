@@ -292,11 +292,27 @@ def test_presence_outcome_dates_lost_at_as_of_only_when_asked(frames: dict[str, 
     assert json.loads(files["dataset.json"])["lost_dated_at_as_of"] == len(lost)
 
 
+def test_won_at_is_optional_and_a_win_without_one_takes_close_at(frames: dict[str, pd.DataFrame],
+                                                                 mapping: DatasetMapping) -> None:
+    """Spec: "optional won_at". Unmapped, or blank on a row, a Won lead is dated at its close_at (R36)."""
+    text = MAPPING.replace('won_at = "l.closed"\n', "")
+    m = load_mapping(text)
+    assert m.lead.won_at is None and load_mapping(dump_mapping(m)) == m
+    assert convert(frames, m)["crm_history.csv"] == convert(frames, mapping)["crm_history.csv"]
+    leads = frames["leads.csv"]
+    first_win = leads.index[leads.stage == "Closed Won"][0]
+    partial = leads.assign(won=leads.closed.mask(leads.index == first_win, None)).assign(
+        won=lambda d: d.won.where(d.stage == "Closed Won"))
+    m2 = load_mapping(MAPPING.replace('won_at = "l.closed"', 'won_at = "l.won"'))
+    assert convert({**frames, "leads.csv": partial}, m2)["crm_history.csv"] == \
+        convert(frames, mapping)["crm_history.csv"]
+
+
 @pytest.mark.parametrize("change, match", [
     (lambda d: d.assign(stage=d.stage.mask(d.index == 5, "Negotiation")), r"does not cover: \['Negotiation'\]"),
     (lambda d: d.assign(signup=d.signup.mask(d.index == 5, None)), "created_at is blank"),
     (lambda d: d.assign(id=d.id.mask(d.index == 5, "X0000")), "lead_id repeats"),
-    (lambda d: d.assign(closed=d.closed.mask(d.stage == "Closed Won", None)), "won_at is blank"),
+    (lambda d: d.assign(closed=d.closed.mask(d.stage == "Closed Won", None)), "won_at and close_at are both blank"),
     (lambda d: d.assign(closed=d.closed.mask(d.index == d.index[d.stage == "Closed Won"][0], "2026-03-01")),
      "after as_of"),
     (lambda d: d.assign(signup=d.signup.mask(d.index == 5, "last Tuesday")), "not ISO dates"),
@@ -490,6 +506,18 @@ def _reply() -> dict:
                     "stage_map": [{"value": "Closed Won", "stage": "Won"}, {"value": "Closed Lost", "stage": "Lost"}],
                     "won_values": [], "lost_values": [], "reason": "stage column", "confidence": "medium"},
     }
+
+
+def test_a_draft_needs_created_at_but_not_won_at(frames: dict[str, pd.DataFrame]) -> None:
+    from emva.ingest.draft import check_reply
+
+    profiles = profile(frames)
+    reply = _reply()
+    no_won = {**reply, "columns": [c for c in reply["columns"] if c["target"] != "lead.won_at"]}
+    assert check_reply(no_won, profiles) is no_won
+    no_created = {**reply, "columns": [c for c in reply["columns"] if c["target"] != "lead.created_at"]}
+    with pytest.raises(ContractError, match="created_at"):
+        check_reply(no_created, profiles)
 
 
 def message(text: str, stop_reason: str = "end_turn") -> SimpleNamespace:

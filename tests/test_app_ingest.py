@@ -75,7 +75,7 @@ def test_blank_form_starts_with_everything_ignored(frames: dict[str, pd.DataFram
     assert all(f.target == IGNORE for f in form.fields)
     assert len(form.fields) == sum(len(df.columns) for df in frames.values())
     assert ingest.form_toml(form) is None
-    with pytest.raises(ValueError, match="created_at and won_at"):
+    with pytest.raises(ValueError, match=r"choose the column for created_at \(required\)"):
         ingest.mapping_from_form(form)
 
 

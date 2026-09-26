@@ -40,7 +40,7 @@ RAW_SLOTS: list[tuple[str, str, str]] = [
     ("raw_join_2", "Joined file (optional)", "A second joined file (e.g. accounts)."),
 ]
 ROLE_LABELS: dict[str, str] = {
-    "lead_id": "Lead id", "created_at": "Created at *", "contacted_at": "First contacted at", "won_at": "Won at *",
+    "lead_id": "Lead id", "created_at": "Created at *", "contacted_at": "First contacted at", "won_at": "Won at",
     "close_at": "Lost / closed at", "deal_value": "Deal value"}
 OUTCOME_LABELS: dict[str, str] = {"stage": "A column of CRM stages", "won_flag": "A won / lost flag column",
                                   "presence": "Won when a column is filled"}
