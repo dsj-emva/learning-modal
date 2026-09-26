@@ -318,7 +318,7 @@ def _field_table(form: ingest.MappingForm, edited: ingest.MappingForm, v: int) -
                                "source": st.column_config.TextColumn("Source column"),
                                "target": st.column_config.SelectboxColumn("Target", options=[
                                    *ingest.TARGET_OPTIONS, ingest.VALUE_MAP_TARGET], required=True),
-                               "reason": st.column_config.TextColumn("Reason", width="large"),
+                               "reason": st.column_config.TextColumn("Reason", width="medium"),
                                "confidence": st.column_config.SelectboxColumn(
                                    "Confidence", options=["", *CONFIDENCES]),
                                "feature": st.column_config.CheckboxColumn(
@@ -572,7 +572,7 @@ def _train_section() -> None:
     names = [d.name for d in datasets]
     by_name = {d.name: d for d in datasets}
     wanted = st.session_state.get("train_dataset")
-    c1, c2, c3 = st.columns([3, 2, 2], gap="medium")
+    c1, c2, c3 = st.columns([3, 2, 3], gap="medium")
     with c1:
         ds_name = st.selectbox("Dataset", names, index=names.index(wanted) if wanted in names else 0, key="train_ds",
                                format_func=lambda n: f"{n} · {by_name[n].n_leads:,} leads"

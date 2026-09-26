@@ -129,8 +129,9 @@ def load_bundle(path: str | Path) -> ModelBundle:
     """Read a bundle written by ``save_bundle``.
 
     Raises ``ValueError`` if the file is not a bundle or its ``format_version`` is not in ``READABLE_FORMATS``;
-    a format-1 bundle (no ``extras`` field) is returned with ``extras = None`` and its ``format_version`` 1. Warns (``UserWarning``) when it was written with other numpy / pandas / scikit-learn versions, since
-    scores may then differ from the training run's.
+    a format-1 bundle (no ``extras`` field) is returned with ``extras = None`` and its ``format_version`` 1. Warns
+    (``UserWarning``) when it was written with other numpy / pandas / scikit-learn versions, since scores may then
+    differ from the training run's.
     """
     payload = joblib.load(path)
     if not isinstance(payload, dict) or "format_version" not in payload:

@@ -287,7 +287,10 @@ def review_frame(f: MappingForm) -> pd.DataFrame:
 
     def row(source: str, target: str, field_review: Review | None) -> dict[str, object]:
         fm = feats.get(source)
-        shown = field_review if field_review is not None and (target != IGNORE or fm is None) else             (fm.review if fm is not None else Review())
+        if field_review is not None and (target != IGNORE or fm is None):
+            shown = field_review
+        else:
+            shown = fm.review if fm is not None else Review()
         low = shown.confidence == LOW_CONFIDENCE or (fm is not None and fm.review.confidence == LOW_CONFIDENCE)
         return {"source": source, "target": target, "reason": shown.reason, "confidence": shown.confidence or "",
                 "feature": fm is not None, "kind": fm.kind if fm is not None else "",

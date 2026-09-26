@@ -273,7 +273,8 @@ def _col(file: str, column: str, target: str, confidence: str = "high", vm: list
             "reason": "hand-built test reply", "confidence": confidence}
 
 
-def hand_built_reply(created_at: str = "first_contact_date", features: dict[str, tuple[str, str]] | None = None) -> dict:
+def hand_built_reply(created_at: str = "first_contact_date",
+                     features: dict[str, tuple[str, str]] | None = None) -> dict:
     """A reply in the draft contract, written by hand for these tests (not model output). ``features`` proposes
     closed-deal columns as extras: column -> (feature_kind, confidence)."""
     features = features or {}
@@ -347,8 +348,8 @@ def test_draft_with_a_fake_client_then_from_the_cache(tmp_path: Path, frames: di
 
 
 def test_drafted_features_appear_in_the_review_table(tmp_path: Path, frames: dict[str, pd.DataFrame]) -> None:
-    client = FakeClient(reply_message(hand_built_reply(features={"business_segment": ("categorical", "low"),
-                                                                 "declared_product_catalog_size": ("numeric", "high")})))
+    proposed = {"business_segment": ("categorical", "low"), "declared_product_catalog_size": ("numeric", "high")}
+    client = FakeClient(reply_message(hand_built_reply(features=proposed)))
     out = ingest.draft(ingest.profile(frames), tmp_path, "olist_draft", client_factory=lambda: client)
     assert [(f.name, f.kind) for f in out.mapping.features] == [("business_segment", "categorical"),
                                                                 ("declared_product_catalog_size", "numeric")]

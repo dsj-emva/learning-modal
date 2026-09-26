@@ -401,5 +401,5 @@ def describe_transform(bundle: ModelBundle) -> str:
 
 __all__ = ["DEFAULTS", "FormField", "LeadScore", "SECTIONS", "SourceField", "SourceScores", "blank_session_fields",
            "clean_values", "defaults_for", "describe_transform", "extra_names", "form_sections",
-           "frames_from_source_form", "frames_from_source_uploads", "number_text", "run_mapping", "score_form", "score_source", "source_fields",
-           "source_lead_score", "values_from_lead"]
+           "frames_from_source_form", "frames_from_source_uploads", "number_text", "run_mapping", "score_form",
+           "score_source", "source_fields", "source_lead_score", "values_from_lead"]

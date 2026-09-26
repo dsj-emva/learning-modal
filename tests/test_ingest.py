@@ -633,7 +633,7 @@ def test_committed_mapping_converts_its_fixture(name: str) -> None:
     assert m.source_url and m.licence and "BY HAND" in text and "NOT an LLM draft" in text
     raw = FIXTURES / name
     files = convert(frames_from_bytes({s.file: (raw / s.file).read_bytes() for s in m.sources}), m)
-    report = validate_files(_training(files))
+    report = validate_files(files)  # with dataset.json: it declares the extras of extra_features.csv (Phase 10)
     assert [e.message for e in report.errors] == [f"only {report.summary['leads']} leads; training needs at least "
                                                   f"{MIN_LEADS}"]  # fixtures are a few dozen rows
     meta = json.loads(files["dataset.json"])

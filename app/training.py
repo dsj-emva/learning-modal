@@ -219,5 +219,5 @@ def report_available(dataset_path: str | Path) -> bool:
 
 
 __all__ = ["CHILD_ENV_KEYS", "RUN_OUTPUTS", "TrainingConfig", "TrainingSummary", "child_env", "feature_set_options",
-           "finish_run", "parse_summary", "pre_training_summary", "report_available", "report_command", "rules_available",
-           "start_training", "training_command"]
+           "finish_run", "parse_summary", "pre_training_summary", "report_available", "report_command",
+           "rules_available", "start_training", "training_command"]
