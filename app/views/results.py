@@ -9,7 +9,7 @@ import streamlit as st
 
 from app import charts, results, storage, ui
 from app import components as C
-from emva.constants import TEST_FROM
+from emva.dataset_meta import dataset_dates
 
 TEST_SET_LABELS = {"mature": "Mature leads (horizon labels)", "legacy": "Legacy labels (frozen POC)"}
 
@@ -132,7 +132,8 @@ def render() -> None:
 
     ev = ui.evaluation(run.run_id, run.out_dir, run.dataset_path, test_set)
     if ev is None:
-        ui.html(C.callout(f"It needs labelled leads created on or after {TEST_FROM} with both wins and losses.",
+        test_from = dataset_dates(run.dataset_path)[1]
+        ui.html(C.callout(f"It needs labelled leads created on or after {test_from} with both wins and losses.",
                           "warn", lead="This test set is empty for this dataset."))
     else:
         head = ev["headline"]
@@ -179,8 +180,8 @@ def render() -> None:
         with st.expander("Full standard report (baseline vs model vs status quo)"):
             st.markdown(report_text)
     else:
-        st.caption("No standard report for this run (the dataset has no status_quo_rules.json, or the report failed; "
-                   "see the training log).")
+        st.caption("No standard report for this run (the dataset is in the sample's format without "
+                   "status_quo_rules.json, or the report failed; see the training log).")
     if run.dataset == storage.SAMPLE_DATASET_NAME:
         st.caption("Trained on the bundled synthetic sample: every number here is on simulated data.")
 

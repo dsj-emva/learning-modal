@@ -2,10 +2,10 @@
 
 The app trains exactly as an engineer does locally: ``python -m emva --data <dataset> --out <run dir>
 --label-mode M --feature-set F`` (writes ``scores.csv``, ``weights.csv``, ``model.joblib``), then, when the dataset
-has ``status_quo_rules.json``, ``python -m emva.eval.report`` with the same options into ``<run dir>/report.txt``.
-``start_training`` launches ``python -m app.job`` in its own process, which runs those two commands with their
-output streamed to ``train.log`` and then calls ``finish_run``; so a run finishes and is recorded even if nobody
-keeps the browser open, and the Streamlit server never blocks on it.
+has ``status_quo_rules.json`` or is a converted one (``report_available``), ``python -m emva.eval.report`` with the
+same options into ``<run dir>/report.txt``. ``start_training`` launches ``python -m app.job`` in its own process,
+which runs those two commands with their output streamed to ``train.log`` and then calls ``finish_run``; so a run
+finishes and is recorded even if nobody keeps the browser open, and the Streamlit server never blocks on it.
 """
 from __future__ import annotations
 
@@ -18,8 +18,9 @@ from pathlib import Path
 
 import pandas as pd
 
-from app.storage import REPO_ROOT, RULES_FILE, Run, get_run, update_run, utc_now
-from emva.constants import LABEL_SOURCES, TEST_FROM
+from app.storage import REPO_ROOT, RULES_FILE, Run, get_run, is_converted, update_run, utc_now
+from emva.constants import LABEL_SOURCES
+from emva.dataset_meta import dataset_dates
 from emva.eval.bootstrap import N_RESAMPLES
 from emva.eval.report import FROZEN_HORIZON, frozen_test_labels
 from emva.features import FeatureSet
@@ -102,20 +103,22 @@ def pre_training_summary(dataset_path: str | Path, config: TrainingConfig) -> Tr
 
     ``emva.pipeline.build`` (clean, label, featurise) and ``emva.labels.split_masks`` with the config's eligibility,
     exactly as ``emva.pipeline.run``; the mature test set is ``emva.eval.report.frozen_test_labels``. Label counts
-    are per ``label_source`` under the config's label.
-    Raises what ``emva.io.load`` and the label code raise on malformed data (validate first).
+    are per ``label_source`` under the config's label. Labels are read at the dataset's ``as_of`` and split at its
+    ``test_from`` (``emva.dataset_meta.dataset_dates``: a converted dataset's own, else the constants; ADR 0020).
+    Raises what ``emva.io.load``, ``dataset_dates`` and the label code raise on malformed data (validate first).
     """
+    as_of, test_from = dataset_dates(dataset_path)
     L = load(dataset_path)
     labels = config.labels
-    X = build(L, labels, FeatureSet(config.feature_set))
-    train, test = split_masks(X, TEST_FROM, labels.eligible(X))
-    src = X.label_source if "label_source" in X else label_source(X, FROZEN_HORIZON.horizon_days)
+    X = build(L, labels, FeatureSet(config.feature_set), as_of)
+    train, test = split_masks(X, test_from, labels.eligible(X, as_of))
+    src = X.label_source if "label_source" in X else label_source(X, FROZEN_HORIZON.horizon_days, as_of)
     counts = {}
     for s in LABEL_SOURCES:
         m = src == s
         counts[s] = {"leads": int(m.sum()), "wins": int((X.y[m] == 1).sum()), "losses": int((X.y[m] == 0).sum()),
                      "unlabelled": int(X.y[m].isna().sum())}
-    y_mature = frozen_test_labels(L)[3]
+    y_mature = frozen_test_labels(L, as_of, test_from)[3]
     return TrainingSummary(leads=len(L), scored=len(X), train=int(train.sum()),
                            train_wins=int((X.y[train] == 1).sum()), test=int(test.sum()),
                            test_wins=int((X.y[test] == 1).sum()), mature_test=len(y_mature),
@@ -189,10 +192,17 @@ def finish_run(root: str | Path, run_id: str, returncode: int) -> Run:
 
 
 def rules_available(dataset_path: str | Path) -> bool:
-    """True when the dataset has ``status_quo_rules.json`` (the standard report needs it)."""
+    """True when the dataset has ``status_quo_rules.json`` (the status-quo row of the standard report needs it)."""
     return (Path(dataset_path) / RULES_FILE).exists()
 
 
+def report_available(dataset_path: str | Path) -> bool:
+    """True when the job runs the standard report for this dataset: it has ``status_quo_rules.json``, or it is a
+    converted dataset (``dataset.json``), whose report leaves out the baseline and status-quo rows with a note
+    (ADR 0022). A dataset in the v1 format without rules gets no report, as before Phase 9."""
+    return rules_available(dataset_path) or is_converted(dataset_path)
+
+
 __all__ = ["CHILD_ENV_KEYS", "RUN_OUTPUTS", "TrainingConfig", "TrainingSummary", "child_env", "finish_run",
-           "parse_summary", "pre_training_summary", "report_command", "rules_available", "start_training",
-           "training_command"]
+           "parse_summary", "pre_training_summary", "report_available", "report_command", "rules_available",
+           "start_training", "training_command"]

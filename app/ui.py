@@ -14,6 +14,7 @@ import streamlit as st
 from app import components as C
 from app import results, storage
 from app.storage import Run
+from emva.dataset_meta import dataset_dates
 from emva.persist import BUNDLE_FILE, ModelBundle, load_bundle
 
 DATA_DIR_ENV: str = "DATA_DIR"
@@ -96,8 +97,10 @@ def raw_lead(dataset_path: str, lead_id: str) -> pd.Series | None:
 
 @st.cache_data(show_spinner=False)
 def base_rate(run_id: str, out_dir: str, dataset_path: str) -> float:
-    """Win rate of the run's training labels (``results.training_base_rate``)."""
-    return results.training_base_rate(results.load_scores(out_dir), _raw_leads(dataset_path).created_at)
+    """Win rate of the run's training labels (``results.training_base_rate``, split at the dataset's
+    ``test_from``)."""
+    return results.training_base_rate(results.load_scores(out_dir), _raw_leads(dataset_path).created_at,
+                                      dataset_dates(dataset_path)[1])
 
 
 def no_runs_state(message: str) -> None:

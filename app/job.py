@@ -2,8 +2,8 @@
 
 Started by ``app.training.start_training`` with stdout/stderr on the run's ``train.log``. Marks the run
 ``running``, runs ``python -m emva`` (output to the log), then, if training succeeded and the dataset has
-status-quo rules, ``python -m emva.eval.report`` with the same options into ``report.txt`` (its stderr to the
-log), and finally records the outcome with ``app.training.finish_run``. The report is supplementary: if it
+status-quo rules or is a converted dataset (``app.training.report_available``), ``python -m emva.eval.report``
+with the same options into ``report.txt`` (its stderr to the log), and finally records the outcome with ``app.training.finish_run``. The report is supplementary: if it
 fails the run still succeeds, with the failure in the log.
 """
 from __future__ import annotations
@@ -15,7 +15,7 @@ import subprocess
 import sys
 
 from app.storage import Run, get_run, update_run
-from app.training import TrainingConfig, finish_run, report_command, rules_available, training_command
+from app.training import TrainingConfig, finish_run, report_available, report_command, training_command
 from emva.eval.bootstrap import N_RESAMPLES
 
 
@@ -56,14 +56,14 @@ def _train_and_report(root: str, run_id: str, report_resamples: int) -> int:
     _say(f"$ {_display(cmd, run)}")
     rc = subprocess.run(cmd, stdin=subprocess.DEVNULL).returncode
     _say(f"[train] exit code {rc}")
-    if rc == 0 and rules_available(run.dataset_path):
+    if rc == 0 and report_available(run.dataset_path):
         rep = report_command(run.dataset_path, config, n_resamples=report_resamples)
         _say(f"$ {_display(rep, run)} > report.txt")
         with open(run.report_path, "w", encoding="utf-8") as out:
             rrc = subprocess.run(rep, stdout=out, stdin=subprocess.DEVNULL).returncode
         _say(f"[report] exit code {rrc}" + ("" if rrc == 0 else " (the model is fine; the report failed)"))
     elif rc == 0:
-        _say("[report] skipped: the dataset has no status_quo_rules.json")
+        _say("[report] skipped: the dataset has no status_quo_rules.json and was not converted")
     return rc
 
 

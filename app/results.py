@@ -25,6 +25,7 @@ import pandas as pd
 
 from app.storage import DATASET_META_FILE, RULES_FILE, is_converted
 from emva.constants import AS_OF, CATS, CATS_V2_CANDIDATES, TEST_FROM, TOP_FRACTION
+from emva.dataset_meta import dataset_dates
 from emva.eval.bootstrap import N_RESAMPLES, SEED, auc_ci
 from emva.eval.metrics import auc_by_month, calibration_by_decile
 from emva.eval.report import ScoredModel, TestSet, frozen_test_labels, headline_frame, paired_frame, run_baseline
@@ -156,12 +157,14 @@ def evaluate(run_dir: str | Path, dataset: str | Path, test_set: str = "mature",
              leads: pd.DataFrame | None = None) -> Evaluation | None:
     """Join the run's scores to ``test_set`` (``mature`` or ``legacy``) of ``dataset``, with the baseline and status
     quo scored as ``emva.eval.report.build_report`` scores them; None when that test set is empty or has a single
-    class. ``leads`` is ``emva.io.load(dataset)`` if already loaded. Raises ``ValueError`` if a test lead has no score
-    (the run and dataset do not match)."""
+    class. ``leads`` is ``emva.io.load(dataset)`` if already loaded. The test sets and the training base rate use the
+    dataset's own ``as_of`` / ``test_from`` (``emva.dataset_meta.dataset_dates``, ADR 0020). Raises ``ValueError`` if a
+    test lead has no score (the run and dataset do not match) or the dataset's ``dataset.json`` is malformed."""
     if test_set not in TEST_SETS:
         raise ValueError(f"test set must be one of {TEST_SETS}, got {test_set!r}")
+    as_of, test_from = dataset_dates(dataset)
     L = load(dataset) if leads is None else leads
-    X, _, y_a, y_b = frozen_test_labels(L)
+    X, _, y_a, y_b = frozen_test_labels(L, as_of, test_from)
     y = y_b if test_set == "mature" else y_a
     if len(y) == 0 or y.nunique() < 2:
         return None
@@ -181,7 +184,8 @@ def evaluate(run_dir: str | Path, dataset: str | Path, test_set: str = "mature",
     else:
         notes.append(f"The dataset has no {RULES_FILE}, so there is no status-quo row.")
     return Evaluation(name=test_set, test=TestSet(test_set, "", y, L.loc[y.index]), models=models, notes=notes,
-                      base_rate=training_base_rate(s, L.created_at), baseline_missing=baseline_missing)
+                      base_rate=training_base_rate(s, L.created_at, test_from),
+                      baseline_missing=baseline_missing)
 
 
 def standard_table(ev: Evaluation, n_resamples: int = N_RESAMPLES) -> tuple[pd.DataFrame, pd.DataFrame | None]:
