@@ -1,10 +1,11 @@
 """Ingest: load the CSVs, normalise CRM stages, join enrichment, drop bots and repeats.
 
-``load`` is ``baseline/emva_score.py::load`` plus the two CRM timestamps the Phase 1 labels
+``load`` (= ``read_leads`` + ``add_crm_outcomes`` + ``enrich``) is ``baseline/emva_score.py::load`` plus the two CRM timestamps the Phase 1 labels
 need (``won_at``, ``first_contact_at``) and the Phase 2 company-name enrichment (``en_<column>``,
 ``enrichment_source``); ``clean`` is the cleaning block at the top of
 ``baseline/emva_score.py::build``. Neither changes any column the baseline uses: the legacy
-feature set reads the domain-only ``co_<column>`` join, exactly as the baseline.
+feature set reads the domain-only ``co_<column>`` join, exactly as the baseline. ``enrich`` is the part
+that needs no CRM history, shared with single-lead scoring (``emva.scoring``).
 """
 from __future__ import annotations
 
@@ -63,27 +64,29 @@ def match_company_names(names: list[pd.Series], companies: pd.DataFrame) -> pd.S
     return out
 
 
-def load(data: str | Path) -> pd.DataFrame:
-    """Load leads indexed by ``lead_id`` with final CRM stage, deal value, answers and enrichment.
+def read_leads(path: str | Path) -> pd.DataFrame:
+    """Read a ``historical_leads.csv`` file: indexed by ``lead_id``, ``created_at`` parsed as UTC timestamps."""
+    return pd.read_csv(path, parse_dates=["created_at"]).set_index("lead_id")
 
-    Adds ``final_stage``, ``last_change``, ``deal_value``, ``won_at`` (time of the Won stage
-    change, NaT if never Won), ``first_contact_at`` (time of the first change to a recognised
-    stage other than New, NaT if the lead never left New), ``a_<answer>`` for each of
-    ``ANSWER_KEYS``, ``dom`` (normalised company domain), ``co_<column>`` for each of
-    ``ENRICHMENT_COLUMNS`` (domain join only, NaN when the domain is not in companies.csv; this
-    is what the baseline uses), ``enrichment_source`` (``"domain"``, ``"name"`` when the domain
-    misses but the typed ``company_name`` (if the column exists) or ``company`` answer matches a companies.csv name
-    exactly after ``normalise_company_name``, NaN otherwise) and ``en_<column>`` (the domain row,
-    else the name-matched row).
 
-    Raises ``ValueError`` if a lead has more than one Won row (``deal_value`` and ``won_at``
-    would be ambiguous) or companies.csv has no ``company_name`` column.
+def read_companies(data: str | Path) -> pd.DataFrame:
+    """Read ``companies.csv`` from the dataset directory ``data``.
+
+    Raises ``ValueError`` if it has no ``company_name`` column (needed for name enrichment).
     """
-    L = pd.read_csv(f"{data}/historical_leads.csv", parse_dates=["created_at"]).set_index("lead_id")
-    C = pd.read_csv(f"{data}/crm_history.csv", parse_dates=["changed_at"])
     CO = pd.read_csv(f"{data}/companies.csv")
     if "company_name" not in CO:
         raise ValueError(f"{data}/companies.csv has no company_name column (needed for name enrichment)")
+    return CO
+
+
+def add_crm_outcomes(L: pd.DataFrame, C: pd.DataFrame) -> pd.DataFrame:
+    """Add the CRM columns of ``load`` (``final_stage``, ``last_change``, ``deal_value``, ``won_at``,
+    ``first_contact_at``) to ``L`` in place from the raw ``crm_history.csv`` frame ``C``; returns ``L``.
+
+    Raises ``ValueError`` if a lead has more than one Won row.
+    """
+    C = C.copy()
     C["stage_n"] = C.stage.str.lower().map(STAGE)
     C = C.sort_values(["lead_id", "changed_at"])
     multi_won = C[C.stage_n == "Won"].lead_id.duplicated()
@@ -96,13 +99,46 @@ def load(data: str | Path) -> pd.DataFrame:
     L["deal_value"] = won.deal_value
     L["won_at"] = won.changed_at
     L["first_contact_at"] = C[C.stage_n.notna() & (C.stage_n != "New")].groupby("lead_id").changed_at.min()
+    return L
+
+
+def enrich(L: pd.DataFrame, CO: pd.DataFrame) -> pd.DataFrame:
+    """Add the submit-time join columns of ``load`` to ``L`` in place and return it; ``CO`` is not modified.
+
+    Needs only what exists when a lead is submitted (its ``historical_leads.csv`` row and ``companies.csv``),
+    no CRM history, so training (``load``) and single-lead scoring (``emva.scoring``) share it. Adds
+    ``a_<answer>`` for each of ``ANSWER_KEYS``, ``dom``, ``co_<column>``, ``enrichment_source`` and
+    ``en_<column>`` (definitions in ``load``).
+    """
     ans = L.answers.apply(json.loads)
     for k in ANSWER_KEYS:
         L["a_" + k] = ans.apply(lambda d: d.get(k))
-    CO["dom"] = CO.domain.str.lower()
+    CO = CO.assign(dom=CO.domain.str.lower())
     L["dom"] = L.company_domain.str.lower().str.strip()
     L = L.join(CO.set_index("dom")[list(ENRICHMENT_COLUMNS)].add_prefix("co_"), on="dom")
     return _add_name_enrichment(L, CO)
+
+
+def load(data: str | Path) -> pd.DataFrame:
+    """Load leads indexed by ``lead_id`` with final CRM stage, deal value, answers and enrichment.
+
+    ``read_leads`` + ``add_crm_outcomes`` + ``enrich``. Adds ``final_stage``, ``last_change``,
+    ``deal_value``, ``won_at`` (time of the Won stage change, NaT if never Won), ``first_contact_at``
+    (time of the first change to a recognised stage other than New, NaT if the lead never left New),
+    ``a_<answer>`` for each of ``ANSWER_KEYS``, ``dom`` (normalised company domain), ``co_<column>``
+    for each of ``ENRICHMENT_COLUMNS`` (domain join only, NaN when the domain is not in
+    companies.csv; this is what the baseline uses), ``enrichment_source`` (``"domain"``, ``"name"``
+    when the domain misses but the typed ``company_name`` (if the column exists) or ``company``
+    answer matches a companies.csv name exactly after ``normalise_company_name``, NaN otherwise)
+    and ``en_<column>`` (the domain row, else the name-matched row).
+
+    Raises ``ValueError`` if a lead has more than one Won row (``deal_value`` and ``won_at``
+    would be ambiguous) or companies.csv has no ``company_name`` column.
+    """
+    L = read_leads(f"{data}/historical_leads.csv")
+    C = pd.read_csv(f"{data}/crm_history.csv", parse_dates=["changed_at"])
+    CO = read_companies(data)
+    return enrich(add_crm_outcomes(L, C), CO)
 
 
 def _add_name_enrichment(L: pd.DataFrame, CO: pd.DataFrame) -> pd.DataFrame:

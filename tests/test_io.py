@@ -6,8 +6,11 @@ import pytest
 from emva.io import (
     clean,
     company_name_index,
+    enrich,
     flag_bots_and_duplicates,
     load,
+    read_companies,
+    read_leads,
     match_company_names,
     normalise_company_name,
 )
@@ -120,3 +123,21 @@ def test_load_requires_company_names(tmp_path):
     _companies(domain=["a.example"]).drop(columns="company_name").to_csv(tmp_path / "companies.csv", index=False)
     with pytest.raises(ValueError, match="company_name"):
         load(tmp_path)
+
+
+def test_enrich_needs_no_crm_history_and_equals_load(tmp_path):
+    # enrich is the join half of load: a brand-new lead (no CRM rows) gets the same answer and enrichment columns
+    answers = [json.dumps({"country": "UK", "company": "beta gmbh"}), json.dumps({"job_title": "CEO"})]
+    pd.DataFrame({"lead_id": ["L1", "L2"], "created_at": ["2026-01-01T00:00:00Z"] * 2, "answers": answers,
+                  "company_domain": [None, " Acme.Example "]}).to_csv(tmp_path / "historical_leads.csv", index=False)
+    pd.DataFrame({"lead_id": ["L1", "L2"], "stage": ["New"] * 2, "deal_value": [None] * 2,
+                  "changed_at": ["2026-01-01T00:00:00Z"] * 2}).to_csv(tmp_path / "crm_history.csv", index=False)
+    _companies(company_name=["Acme Ltd", "Beta GmbH"], domain=["acme.example", "beta.example"]
+               ).to_csv(tmp_path / "companies.csv", index=False)
+    CO = read_companies(tmp_path)
+    E = enrich(read_leads(tmp_path / "historical_leads.csv"), CO)
+    assert "dom" not in CO  # enrich does not mutate companies
+    assert "final_stage" not in E
+    assert E.enrichment_source.tolist() == ["name", "domain"] and E.a_country.isna().tolist() == [False, True]
+    L = load(tmp_path)
+    pd.testing.assert_frame_equal(E, L[E.columns])

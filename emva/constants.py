@@ -53,6 +53,16 @@ SPECIFIC_TEXT_PATTERN: str = (
 SENIOR_TITLE_PATTERN: str = r"ceo|founder|chief|vp|director|head|owner|partner|president|cmo|cto|cfo"
 MID_TITLE_PATTERN: str = r"manager|lead"
 
+# ``submitted_weekday`` values, Monday first (the last two are the weekend for ``business_hours``).
+WEEKDAYS: tuple[str, ...] = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+# ``business_hours`` counts these ``submitted_weekday`` values as outside business hours.
+WEEKEND: tuple[str, ...] = WEEKDAYS[5:]
+
+# ``channel`` rules: this utm_medium means Meta lead ads; otherwise channel <- utm_source values, first match wins.
+LEAD_ADS_MEDIUM: str = "lead_form"
+CHANNEL_SOURCES: dict[str, tuple[str, ...]] = {"meta": ("facebook", "instagram"), "google": ("google",),
+                                               "linkedin": ("linkedin",), "chatgpt": ("chatgpt",)}
+
 # Form answers extracted from the ``answers`` JSON into ``a_<key>`` columns.
 ANSWER_KEYS: tuple[str, ...] = ("country", "what_to_solve", "job_title", "company_size", "budget", "timeline",
                                  "company")

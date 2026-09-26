@@ -2,10 +2,13 @@
 numpy==2.4.6
 pandas==3.0.6
 scikit-learn==1.9.1
+joblib==1.6.0          # scikit-learn dependency; emva/persist.py writes model.joblib with it
 threadpoolctl==3.7.0  # scikit-learn dependency; emva.eval.hardening runs its many small fits single-threaded
 scipy==1.17.1          # LogisticRegression's lbfgs solver; pinned because it affects coefficients
 anthropic==1.8.0       # emva/context/agent.py (Phase 6 context agent, SDK + structured output)
 httpx2==2.13.1         # anthropic's HTTP layer; tests build SDK error objects with it
 requests==2.34.2       # baseline/context_agent.py (frozen)
 matplotlib==3.10.9     # reports/phase6_power_curve.png (emva/eval/context_harness.py, imported lazily)
+streamlit==1.64.0     # app/ (Phase 8 hosted tool); 1.64 is the first release that installs next to pandas 3.0.6
+plotly==6.9.0          # app/charts.py (results and scoring charts); latest 6.x
 pytest==9.1.1

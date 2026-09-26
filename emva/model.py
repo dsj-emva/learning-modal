@@ -23,13 +23,42 @@ def predict(lr: LogisticRegression, D: pd.DataFrame) -> np.ndarray:
     return lr.predict_proba(D)[:, 1]
 
 
+# Row label of the intercept in ``intercept_row``.
+INTERCEPT: str = "(intercept)"
+
+
+def split_design_column(column: str) -> tuple[str, str]:
+    """``"channel=linkedin"`` -> ``("channel", "linkedin")``; a column without ``=`` (``INTERCEPT``) has level ``""``."""
+    feature, _, level = column.partition("=")
+    return feature, level
+
+
+def _points_table(w: pd.Series) -> pd.DataFrame:
+    """``log_odds`` = ``w``, ``odds_multiplier`` = exp(w), ``points`` (``POINTS_TO_DOUBLE_ODDS`` points = odds double)."""
+    return pd.DataFrame({"log_odds": w, "odds_multiplier": np.exp(w), "points": w * POINTS_TO_DOUBLE_ODDS / np.log(2)})
+
+
+def coefficients(lr: LogisticRegression, columns: pd.Index) -> pd.DataFrame:
+    """Unrounded coefficient table indexed by design column, in ``columns`` order.
+
+    Columns: ``log_odds`` (the coefficient), ``odds_multiplier`` (``exp(log_odds)``) and ``points``
+    (``POINTS_TO_DOUBLE_ODDS`` points = odds of closing double). ``scorecard`` is this table rounded and sorted.
+    """
+    return _points_table(pd.Series(lr.coef_[0], index=columns))
+
+
+def intercept_row(lr: LogisticRegression) -> pd.DataFrame:
+    """The intercept as a one-row ``coefficients``-style table indexed by ``INTERCEPT``."""
+    return _points_table(pd.Series(lr.intercept_[:1], index=[INTERCEPT]))
+
+
 def scorecard(lr: LogisticRegression, columns: pd.Index) -> pd.DataFrame:
     """Return the weights table written to ``weights.csv``, sorted by rounded log-odds.
 
-    Columns: ``log_odds`` (3 dp), ``odds_multiplier`` (2 dp) and ``points`` where
-    ``POINTS_TO_DOUBLE_ODDS`` points = odds of closing double. Rows with equal rounded
-    log-odds come out in an order that depends on numpy's unstable sort (baseline behaviour).
+    ``coefficients`` rounded: ``log_odds`` (3 dp), ``odds_multiplier`` (2 dp) and ``points`` (0 dp).
+    Rows with equal rounded log-odds come out in an order that depends on numpy's unstable sort (baseline
+    behaviour).
     """
-    w = pd.Series(lr.coef_[0], index=columns)
-    return pd.DataFrame({"log_odds": w.round(3), "odds_multiplier": np.exp(w).round(2),
-                         "points": (w * POINTS_TO_DOUBLE_ODDS / np.log(2)).round(0)}).sort_values("log_odds")
+    c = coefficients(lr, columns)
+    return pd.DataFrame({"log_odds": c.log_odds.round(3), "odds_multiplier": c.odds_multiplier.round(2),
+                         "points": c.points.round(0)}).sort_values("log_odds")

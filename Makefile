@@ -2,7 +2,7 @@
 PY ?= .venv/bin/python
 DATA ?= data/v1
 
-.PHONY: baseline report report-full test compile experiment
+.PHONY: baseline report report-full test compile experiment app docker
 
 ## baseline: frozen baseline and emva/ must reproduce the published metrics and weights
 baseline:
@@ -23,9 +23,25 @@ test:
 	$(MAKE) compile
 
 compile:
-	"$(PY)" -m compileall -q emva scripts baseline tests
+	"$(PY)" -m compileall -q emva scripts baseline tests app
 
 ## experiment NAME=...: run a named experiment into runs/NAME/
 experiment:
 	@test -n "$(NAME)" || (echo "usage: make experiment NAME=<name>" && exit 1)
 	"$(PY)" scripts/run_experiments.py "$(NAME)" --data "$(DATA)"
+
+## app: run the Streamlit app locally on :8501, data under DATA_DIR (default runs/app)
+DATA_DIR ?= runs/app
+app: export DATA_DIR := $(DATA_DIR)
+app:
+	mkdir -p "$(DATA_DIR)"
+	"$(PY)" -m streamlit run app/main.py --server.port 8501
+
+## docker APP_PASSWORD=...: build learning-modal:local and run it on :8080, data in runs/docker-data
+## (the password is passed through the environment, never echoed or put on the docker command line)
+docker:
+	@test -n "$(APP_PASSWORD)" || (echo "usage: make docker APP_PASSWORD=<password>" && exit 1)
+	docker build -t learning-modal:local .
+	mkdir -p runs/docker-data
+	@echo "docker run --rm -p 8080:8080 -e PORT=8080 -e APP_PASSWORD -v runs/docker-data:/data learning-modal:local"
+	@APP_PASSWORD="$(APP_PASSWORD)" docker run --rm -p 8080:8080 -e PORT=8080 -e APP_PASSWORD -v "$(CURDIR)/runs/docker-data:/data" learning-modal:local

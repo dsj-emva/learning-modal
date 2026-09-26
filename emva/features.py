@@ -36,13 +36,16 @@ import pandas as pd
 from emva.boilerplate import is_boilerplate
 from emva.constants import (
     CATS_V2_CANDIDATES,
+    CHANNEL_SOURCES,
     COPY_PASTE_PREFIXES,
     FREE,
+    LEAD_ADS_MEDIUM,
     MID_TITLE_PATTERN,
     MISSING,
     SENIOR_TITLE_PATTERN,
     SPECIFIC_TEXT_PATTERN,
     VAGUE,
+    WEEKEND,
 )
 
 
@@ -120,12 +123,8 @@ def channel(utm_medium: pd.Series, utm_source: pd.Series) -> np.ndarray:
     lead_form medium -> ``meta_leadads``; facebook/instagram -> ``meta``; google -> ``google``;
     linkedin -> ``linkedin``; chatgpt -> ``chatgpt``; anything else (incl. missing) -> ``organic_direct``.
     """
-    med, src = utm_medium, utm_source
-    return np.select(
-        [med == "lead_form", src.isin(["facebook", "instagram"]), src == "google", src == "linkedin", src == "chatgpt"],
-        ["meta_leadads", "meta", "google", "linkedin", "chatgpt"],
-        "organic_direct",
-    )
+    conditions = [utm_medium == LEAD_ADS_MEDIUM] + [utm_source.isin(src) for src in CHANNEL_SOURCES.values()]
+    return np.select(conditions, ["meta_leadads", *CHANNEL_SOURCES], "organic_direct")
 
 
 def email_type(email_l: pd.Series) -> np.ndarray:
@@ -164,7 +163,7 @@ def add_features(X: pd.DataFrame) -> pd.DataFrame:
     X["sessions_3plus"] = np.where(X.sessions_before_convert >= 3, "yes", "no")
     X["viewed_pricing"] = np.where(X.viewed_pricing == True, "yes", "no")  # noqa: E712
     X["search_term"] = search_term(X.channel, X.utm_term)
-    wk = ~X.submitted_weekday.isin(["Saturday", "Sunday"]) & X.local_submit_hour.between(9, 17)
+    wk = ~X.submitted_weekday.isin(WEEKEND) & X.local_submit_hour.between(9, 17)
     X["business_hours"] = np.where(wk & ~lead_ads, "wkday_9-18", "outside")
     X["ip_country"] = np.where(X.ip_country.notna() & (X.ip_country != X.a_country), "mismatch", "match")
     X["ip_type"] = np.where(X.is_datacenter_ip == True, "dc", "residential")  # noqa: E712
@@ -221,7 +220,7 @@ def add_features_v2(X: pd.DataFrame) -> pd.DataFrame:
     X["viewed_pricing"] = _or_reference(no_session, "viewed_pricing",
                                         np.where(X.viewed_pricing == True, "yes", "no"))  # noqa: E712
     X["search_term"] = search_term(X.channel, X.utm_term)
-    wk = ~X.submitted_weekday.isin(["Saturday", "Sunday"]) & X.local_submit_hour.between(9, 17)
+    wk = ~X.submitted_weekday.isin(WEEKEND) & X.local_submit_hour.between(9, 17)
     X["business_hours"] = _or_reference(no_session, "business_hours", np.where(wk, "wkday_9-18", "outside"))
     X["ip_country"] = _or_reference(no_session, "ip_country",
                                     np.where(X.ip_country.notna() & X.a_country.notna()

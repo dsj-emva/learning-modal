@@ -132,30 +132,59 @@ def _counts(y: pd.Series) -> str:
     return f"{int((y == 1).sum())} / {int((y == 0).sum())} / {int(y.isna().sum())}"
 
 
+def headline_frame(ts: TestSet, models: list[ScoredModel], n_resamples: int = N_RESAMPLES,
+                   seed: int = SEED) -> pd.DataFrame:
+    """The standard table's headline for one test definition, numeric, one row per model in ``models`` order.
+
+    Columns: ``model``, ``auc`` / ``auc_lo`` / ``auc_hi`` (percentile bootstrap), ``brier`` (NaN for a model without
+    p), ``top20_wins`` (ranked by p, or value without p), ``top20_revenue_p`` (same ranking) and
+    ``top20_revenue_value`` (ranked by p×value); recorded revenue. ``standard_sections`` formats it; the app shows it.
+    """
+    y, ids, revenue = ts.y, ts.ids, ts.revenue
+    rows = []
+    for m in models:
+        s = m.rank_score(ids)
+        ci = auc_ci(y.values, s, n_resamples, seed=seed)
+        rows.append({"model": m.name, "auc": ci.point, "auc_lo": ci.lo, "auc_hi": ci.hi,
+                     "brier": np.nan if m.p is None else brier_score_loss(y, np.clip(m.p.loc[ids], 0, 1)),
+                     "top20_wins": top_share(y, s), "top20_revenue_p": top_share(revenue, s),
+                     "top20_revenue_value": top_share(revenue, m.value.loc[ids].values)})
+    return pd.DataFrame(rows)
+
+
+def paired_frame(ts: TestSet, models: list[ScoredModel], n_resamples: int = N_RESAMPLES,
+                 seed: int = SEED) -> pd.DataFrame:
+    """Paired bootstrap AUC comparison of each of ``models[1:]`` against ``models[0]`` (the baseline) on shared
+    resamples: ``model``, ``auc_diff``, ``diff_lo``, ``diff_hi``, ``p_value``."""
+    y, ids = ts.y, ts.ids
+    rows = []
+    for m in models[1:]:
+        c = paired_auc(y.values, models[0].rank_score(ids), m.rank_score(ids), n_resamples, seed=seed)
+        rows.append({"model": m.name, "auc_diff": c.diff.point, "diff_lo": c.diff.lo, "diff_hi": c.diff.hi,
+                     "p_value": c.p_value})
+    return pd.DataFrame(rows, columns=["model", "auc_diff", "diff_lo", "diff_hi", "p_value"])
+
+
 def standard_sections(ts: TestSet, models: list[ScoredModel], n_resamples: int, seed: int) -> list[str]:
     """The standard table (ground rule 3) for one test definition, as markdown lines under ``##``/``###`` headings."""
     y, ids, revenue = ts.y, ts.ids, ts.revenue
     out: list[str] = [f"## {ts.title}", "", ts.description, "", "### Headline", ""]
-    head = []
-    for m in models:
-        s = m.rank_score(ids)
-        ci = auc_ci(y.values, s, n_resamples, seed=seed)
-        head.append({
-            "model": m.name,
-            "AUC [95% CI]": f"{ci.point:.3f} [{ci.lo:.3f}, {ci.hi:.3f}]",
-            "Brier": "n/a" if m.p is None else f"{brier_score_loss(y, np.clip(m.p.loc[ids], 0, 1)):.4f}",
-            "top-20% wins": _fmt_num(top_share(y, s)),
-            "top-20% revenue (by p)": _fmt_num(top_share(revenue, s)),
-            "top-20% revenue (by p×value)": _fmt_num(top_share(revenue, m.value.loc[ids].values)),
-        })
-    out += [md_table(pd.DataFrame(head)), "", "### Paired AUC comparison vs baseline", ""]
+    h = headline_frame(ts, models, n_resamples, seed)
+    head = pd.DataFrame({
+        "model": h.model,
+        "AUC [95% CI]": [f"{a:.3f} [{lo:.3f}, {hi:.3f}]" for a, lo, hi in zip(h.auc, h.auc_lo, h.auc_hi)],
+        "Brier": ["n/a" if np.isnan(b) else f"{b:.4f}" for b in h.brier],
+        "top-20% wins": h.top20_wins.map(_fmt_num),
+        "top-20% revenue (by p)": h.top20_revenue_p.map(_fmt_num),
+        "top-20% revenue (by p×value)": h.top20_revenue_value.map(_fmt_num),
+    })
+    out += [md_table(head), "", "### Paired AUC comparison vs baseline", ""]
 
-    paired = []
-    for m in models[1:]:
-        c = paired_auc(y.values, models[0].rank_score(ids), m.rank_score(ids), n_resamples, seed=seed)
-        paired.append({"model": m.name, "AUC − baseline": f"{c.diff.point:+.3f}",
-                       "95% CI": f"[{c.diff.lo:+.3f}, {c.diff.hi:+.3f}]", "bootstrap p": f"{c.p_value:.3f}"})
-    out += [md_table(pd.DataFrame(paired)), "", "### Calibration by decile of p", ""]
+    pf = paired_frame(ts, models, n_resamples, seed)
+    paired = pd.DataFrame({"model": pf.model, "AUC − baseline": [f"{d:+.3f}" for d in pf.auc_diff],
+                           "95% CI": [f"[{lo:+.3f}, {hi:+.3f}]" for lo, hi in zip(pf.diff_lo, pf.diff_hi)],
+                           "bootstrap p": [f"{p:.3f}" for p in pf.p_value]})
+    out += [md_table(paired), "", "### Calibration by decile of p", ""]
 
     cal = None
     for m in models:

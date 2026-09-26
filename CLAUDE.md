@@ -73,13 +73,14 @@ make test          # pytest (193 passed at the Phase 1 merge, ~60 s) then compil
 make report        # standard report on data/v1, both test definitions
 make report-full   # Phase 4 hardening + standard report, data/v2 + data/v1 -> reports/phase4.md; how later phases inherit Phase 4 (R16, ADR 0013); ~10 min uncached, cached in runs/phase4/
 make experiment NAME=horizon   # runs/NAME/ outputs + report; names in scripts/run_experiments.py
+APP_PASSWORD=... make app      # Keel (the hosted tool) on :8501, data under DATA_DIR (default runs/app)
 ```
 
 In a worktree there is no `.venv`: pass the main checkout's interpreter, quoted, e.g.
 `make PY="<main checkout>/.venv/bin/python" baseline`. `DATA=data/v2` points make targets at v2.
 
 **Pipeline CLI** (`python -m emva --data data/v1 --out DIR [--context FILE] [--margin 1.0]`, writes
-`weights.csv` and `scores.csv`):
+`weights.csv` and `scores.csv`, and now also `model.joblib`, the `emva.persist.ModelBundle` that `emva.scoring` loads):
 
 | flag | meaning |
 |---|---|
@@ -151,10 +152,17 @@ emva/eval/           bootstrap, metrics, regression, status_quo, report, label_s
                      collinearity, feature_selection, phase2_study, value_report (value transforms, click-ID coverage),
                      context_harness; Phase 4: hardening (entry point), rolling, subsampling, ceiling (reads
                      ground truth), calibration_decay, regularisation, interactions
+app/                 Keel, the hosted internal tool (Phase 8; docs/ARCHITECTURE.md section 8, reports/app.md):
+                     storage, validation, training + job, results, scoring, auth (pure) and main/ui/views/theme (Streamlit)
 scripts/             check_baseline (make baseline), run_experiments, generate_data_v1, ground_truth_report, compare_to_v1
 tests/               pytest, one file per module + integration; conftest runs v1 in legacy and horizon mode
 reports/             one write-up per task; docs/ context layer (this set of files); docs/platform_contract.md (upload design)
 ```
+
+**Hosted app.** `streamlit run app/main.py` (Keel) behind a shared `APP_PASSWORD`, data under `DATA_DIR`.
+It trains with the same CLI (`python -m emva` then `python -m emva.eval.report`, via `python -m app.job`), scores
+single leads through `emva.scoring` and computes its charts with `emva.eval`; it never reads ground truth
+(uploads named `ground_truth*` are refused by name). Tests: `tests/test_app_*.py` (~35 s, one shared trained run).
 
 ## Engineering standards
 
@@ -187,6 +195,7 @@ reports/             one write-up per task; docs/ context layer (this set of fil
 | 4 evaluation hardening | merged (3e374e8) | `phase4-eval-hardening` | `reports/phase4.md` |
 | 6 context agent v2 | merged (9e3dfae) | `phase6-context-agent` | `reports/phase6.md` |
 | 7 production readiness doc | merged (fa9bc4d) | `phase7-production-doc` | `reports/production.md`, ADR 0017 (Proposed) |
+| 8 hosted app (Keel) | on branch `app-ui`, not merged | `app-ui` | `reports/app.md`, ADR 0018/0019 (Proposed) |
 
 ## Do not
 

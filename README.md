@@ -85,6 +85,43 @@ With every option off the generator's v1 output is byte-identical (pinned in `te
 The context agent (`python -m emva.context.agent`, needs `ANTHROPIC_API_KEY`) writes a CSV that
 `python -m emva --context FILE` uses for the context-layer ablation.
 
+## Run the app locally
+
+```sh
+make app                                  # Streamlit on http://localhost:8501, data under runs/app (DATA_DIR=...)
+make docker APP_PASSWORD=<password>       # builds learning-modal:local, serves http://localhost:8080, data in runs/docker-data
+```
+
+The app needs `APP_PASSWORD` (shared password gate); `ANTHROPIC_API_KEY` / `ANTHROPIC_WORKSPACE_ID` are optional
+(context agent). The image (`Dockerfile`) runs as uid 1000, ships `data/v1/` as the demo dataset without its
+`ground_truth*` files (`.dockerignore`), and starts via `scripts/serve.sh`.
+
+## Deploy to Railway
+
+Project `learning-modal`, environment `production`, service `app` (ids in `docs/deploy.md`).
+
+1. **Source:** service `app` -> Settings -> Source: GitHub repo `dsj-emva/learning-modal`, branch `app-ui`
+   (switch to `main` after merge), root `/`. The `Dockerfile` at the root is used for the build.
+2. **Deploy settings** (already set on the service; `railway.toml` records the same values, but Railway no
+   longer reads config-as-code files for new services): start command `sh /app/scripts/serve.sh`,
+   healthcheck `/_stcore/health` (timeout 120 s), restart on failure (5 retries), 1 replica.
+3. **Volume:** `app-data` mounted at `/data` (datasets, runs and models survive redeploys).
+4. **Variables:** `DATA_DIR=/data`, `PORT=8080`, `PYTHONUNBUFFERED=1` are set. Add in the dashboard
+   (Variables tab; paste values, never commit them):
+   - `APP_PASSWORD`: the shared login password.
+   - `ANTHROPIC_API_KEY` and `ANTHROPIC_WORKSPACE_ID`: the key is not workspace-scoped, so every request must
+     carry the `anthropic-workspace-id` header; `emva/context/agent.py` reads both through `emva/env.py`
+     (ADR 0010). The agent refuses to run without `ANTHROPIC_WORKSPACE_ID`.
+   - `RAILWAY_RUN_UID=0`: Railway mounts volumes owned by root, so the uid-1000 image cannot write `/data`.
+     With this set the container starts as root, `scripts/serve.sh` chowns `/data` and drops to uid 1000
+     before starting Streamlit; without it `serve.sh` exits with an explanatory error.
+5. **Domain:** Settings -> Networking -> Generate Domain (port 8080).
+6. **First run:** open the domain, log in with `APP_PASSWORD`, and on "Upload & train" upload the CRM exports
+   (`historical_leads.csv`, `crm_history.csv`, `companies.csv`, optionally `people.csv`, which the model never
+   reads) plus the optional `status_quo_rules.json`, which the status-quo benchmark and the standard report need;
+   `data/v1/` has samples, and the bundled sample can be trained without uploading. Validate, save, train, then
+   open "Model results".
+
 ## Context for agents and engineers
 
 Start with [CLAUDE.md](CLAUDE.md), then [docs/CONTEXT.md](docs/CONTEXT.md) (glossary, headline numbers), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (data flow, module ownership) and [docs/adr/](docs/adr/) (every orchestrator ruling).

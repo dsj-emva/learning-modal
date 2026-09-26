@@ -28,7 +28,7 @@ flowchart TD
 | step | owner | notes |
 |---|---|---|
 | constants | `emva/constants.py` | `AS_OF` 2026-09-24 UTC, `TEST_FROM` 2026-05-01, `STALLED_DAYS`/`GHOSTED_DAYS` 90, `HORIZON_DAYS` 120, `CATS` (feature → reference level, also design column order), `LR_C` 0.5, `POINTS_TO_DOUBLE_ODDS` 20, `TOP_FRACTION` 0.2 |
-| load | `emva/io.py::load` | Raises on a lead with two Won rows. Enrichment columns are NaN when the domain is not in `companies.csv` |
+| load | `emva/io.py::load` | `read_leads` + `add_crm_outcomes` + `enrich` (the submit-time half: answers, domain and name enrichment, no CRM history; reused by `emva.scoring`). Raises on a lead with two Won rows. Enrichment columns are NaN when the domain is not in `companies.csv` |
 | clean | `emva/io.py::clean` | Bots and duplicates are dropped before labelling; 9,311 of 10,000 v1 leads remain |
 | labels | `emva/labels.py` | Two definitions side by side; see section 2 |
 | features | `emva/features.py` | `FeatureSet` switch (section 2). Legacy `add_features`: `text_cat` (regex + three copy-paste prefixes + `VAGUE` list), `seniority` (title regex), `channel` (UTM rules). v2 `add_features_v2`: `session_absent` / `session_missing`, `enrichment_missing`, `text_cat_v2`; `V2_DROPPED` (plan 2.6) |
@@ -41,6 +41,8 @@ flowchart TD
 | tROAS | `emva/troas.py` | `python -m emva.troas`: conversions per campaign per 30 days / week at submit and close stage vs Google (30 / 30 days) and Meta (50 / week) thresholds (verify) |
 | orchestration | `emva/pipeline.py` | `PipelineResult` (X, masks, design, weights, summary, labels, messages); `scores()` adds horizon label columns only in horizon mode (ADR 0007) |
 | CLI | `emva/__main__.py`, `emva/cli.py` | `cli.py` holds the label flags and `--feature-set`, shared with the report and `eval.collinearity` |
+| persist | `emva/persist.py` | Phase 8, ADR 0018 (Proposed). `ModelBundle` (feature set, `LabelConfig`, margin, design and value columns, allowed levels, fitted LR, `DealValueModel`, `FittedValueTransform` or None, scorecard, raw lead schema, provenance); `save_bundle` / `load_bundle` (joblib; refuses another `format_version`, warns on library version drift). `python -m emva --out DIR` writes `DIR/model.joblib` |
+| scoring | `emva/scoring.py` | Phase 8, ADR 0018. `score_leads(bundle, leads, data)` scores new leads through the training functions (needs `data/.../companies.csv`); `points_breakdown` (intercept + active design columns, sums to logit p); `submit_time_fields()` (`FieldSpec` per form input, allowed values from `constants`/`features`); `lead_from_form(fields)`. Unknown level raises `UnknownLevelError`; bots/duplicates flagged within the batch, not dropped |
 | context | `emva/context/` | Phase 6 (ADR 0014), see section 7. `card.py` (the only lead facts the agent sees), `contract.py` (enum judgments + reason, JSON schema, `validate`), `agent.py` (SDK runtime), `cache.py` (reply cache), `features.py` (`ctx_<judgment>` fixed-schema dummies; legacy `context_logit` kept for baseline byte identity) |
 
 `emva/pipeline.py` imports `emva.eval.metrics.summary`; `metrics.py` is kept apart from `report.py` to
@@ -212,3 +214,34 @@ A brief edit changes `brief_hash`, so every lead is a cache miss: `--dry-run` re
 cached brief hashes without calling; the real run then produces a new judgments file, and the context
 weights are refit by the next `python -m emva --context` (weights are never carried across stamps).
 
+
+## 8. Hosted app (`app/`, Phase 8)
+
+Keel, the internal Streamlit tool (`streamlit run app/main.py`; `make app` locally, `scripts/serve.sh` in the
+image). It reuses the pipeline; it never re-implements a label, feature, metric or score. Pure modules import
+without Streamlit; UI modules are thin.
+
+```mermaid
+flowchart LR
+    UP["Upload & train page"] --> VAL["app.validation.validate_files"] --> STORE["app.storage.save_dataset<br/>DATA_DIR/datasets/NAME"]
+    UP --> PRE["app.training.pre_training_summary<br/>pipeline.build + labels.split_masks"]
+    UP --> START["app.training.start_training"] --> JOB["python -m app.job"]
+    JOB --> CLI["python -m emva --data --out<br/>scores, weights, model.joblib"]
+    JOB --> REP["python -m emva.eval.report<br/>report.txt"]
+    JOB --> REG["app.training.finish_run<br/>registry.json"]
+    RES["Model results page"] --> FR["app.results<br/>report.frozen_test_labels, eval.metrics,<br/>eval.bootstrap, value_report.scale_stats"]
+    SC["Score a lead page"] --> AD["app.scoring.score_form"] --> ES["emva.scoring<br/>lead_from_form, score_leads, points_breakdown"]
+```
+
+| module | owns |
+|---|---|
+| `app/storage.py` | Data root layout; `list_runs` marks a `running` run failed when its job process is gone (pid + command-line check) (`datasets/<name>/`, `runs/<run_id>/`, `registry.json`), `Dataset` / `Run`, slug names, the training-file allow-list (a `ground_truth*` name is refused by name, never opened), atomic JSON writes under an `fcntl` lock, the read-only bundled sample (`data/v1`, training files only) |
+| `app/validation.py` | `validate_files` -> `ValidationReport(errors, warnings, summary)` of `Issue(file, column, message, rows)`; required columns derived from `emva.scoring.submit_time_fields` and what `emva.io` / `emva.eval.status_quo` read; never raises on user input |
+| `app/training.py`, `app/job.py` | `TrainingConfig` (label mode, feature set), the CLI and report argv, `pre_training_summary`, `start_training` (spawns the job, output to `train.log`), `finish_run` (parses the printed summary), `reconcile` (a vanished job becomes `failed`). The job runs the CLI, then the report when the dataset has rules, then records the outcome itself, so a run completes with no browser open |
+| `app/results.py` | Results-page frames from `scores.csv` / `weights.csv` (round-trip float parsing) + the dataset: `evaluate` (frozen mature or legacy test set; the report's baseline, model and status-quo `ScoredModel`s), `standard_table` (`emva.eval.report.headline_frame` / `paired_frame`), `calibration`, `auc_month` (bootstrap CI per month), `scorecard` (plain feature names), `value_distribution`, `training_base_rate`. Nothing is scraped from `report.txt` |
+| `app/scoring.py` | Form sections, labels and defaults over `submit_time_fields` (session fields default to a typical visit, because a blank one sets `session_missing`), `values_from_lead`, `score_form`, `describe_transform` |
+| `app/auth.py` | `expected_password` (`APP_PASSWORD`; unset or blank = refuse), `check_password` (`hmac.compare_digest`) |
+| `app/main.py`, `app/ui.py`, `app/views/` | Entrypoint (gate, sidebar, `st.navigation`), cached loaders (`st.cache_data` for evaluation frames, `st.cache_resource` for bundles), the three pages |
+| `app/theme.py`, `app/components.py`, `app/charts.py`, `.streamlit/config.toml` | Identity: palette, fonts, the one stylesheet; escaped HTML components (KPI cards, pills, file cards, result card, tables); the shared Plotly template |
+
+Ground truth: `grep -rn "ground_truth" app/` returns only `storage.FORBIDDEN_PREFIX`, the name check.
