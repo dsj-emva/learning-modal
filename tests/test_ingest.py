@@ -657,3 +657,57 @@ def test_cli_draft_uses_the_cache_next_to_the_output(tmp_path: Path, frames: dic
     assert text.startswith("# DRAFT by claude-haiku-4-5-20251001")
     m = load_mapping(text)
     assert m.name == "fixture_draft" and not m.outcome_confirmed
+
+
+# --- ground rule 2: the converter never reads evaluation-only files ------------------------------------------------
+
+def test_is_evaluation_only_matches_ground_truth_names_only() -> None:
+    from emva.eval.evaluation_only import is_evaluation_only
+
+    assert is_evaluation_only("ground_truth_labels.csv") and is_evaluation_only("data/v1/Ground_Truth.md")
+    assert not is_evaluation_only("historical_leads.csv") and not is_evaluation_only("truth_ground.csv")
+
+
+def test_source_file_must_be_a_plain_csv_name_and_not_ground_truth(mapping: DatasetMapping) -> None:
+    from emva.ingest.mapping import Source
+
+    assert Source("x", "Leads.CSV").file == "Leads.CSV"
+    for bad, match in [("../leads.csv", "plain file name"), ("sub/leads.csv", "plain file name"),
+                       ("..\\leads.csv", "plain file name"), ("", "plain file name"), ("leads.txt", ".csv file"),
+                       ("ground_truth_labels.csv", "evaluation-only")]:
+        with pytest.raises(ValueError, match=match):
+            Source("x", bad)
+    with pytest.raises(ValueError, match="evaluation-only"):
+        load_mapping(MAPPING.replace('file = "leads.csv"', 'file = "ground_truth_labels.csv"'))
+
+
+def test_frames_from_bytes_refuses_ground_truth() -> None:
+    with pytest.raises(ValueError, match="evaluation-only"):
+        frames_from_bytes({"leads.csv": b"a\n1\n", "ground_truth_labels.csv": b"a\n1\n"})
+
+
+def test_cli_draft_refuses_ground_truth_and_more_than_three_files(tmp_path: Path) -> None:
+    from emva.ingest.__main__ import main
+
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    (raw / "leads.csv").write_text("a\n1\n")
+    (raw / "ground_truth_labels.csv").write_text("a\n1\n")
+    with pytest.raises(SystemExit, match="ground_truth_labels.csv"):
+        main(["draft", "--raw", str(raw), "--out", str(tmp_path / "d.toml")])
+    (raw / "ground_truth_labels.csv").unlink()
+    for i in range(3):
+        (raw / f"extra{i}.csv").write_text("a\n1\n")
+    with pytest.raises(SystemExit, match="1 to 3 sources"):
+        main(["draft", "--raw", str(raw), "--out", str(tmp_path / "d.toml")])
+    assert not (tmp_path / "d.toml").exists()
+
+
+def test_cli_score_refuses_a_ground_truth_file(tmp_path: Path) -> None:
+    from emva.ingest.__main__ import main
+
+    (tmp_path / "mapping.toml").write_text(MAPPING)
+    (tmp_path / "ground_truth_labels.csv").write_text("id\nx\n")
+    with pytest.raises(SystemExit, match="evaluation-only"):
+        main(["score", "--mapping", str(tmp_path / "mapping.toml"), "--raw", str(tmp_path / "ground_truth_labels.csv"),
+              "--run", str(tmp_path)])

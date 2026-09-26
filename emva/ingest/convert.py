@@ -50,6 +50,7 @@ import pandas as pd
 from emva.constants import ANSWER_KEYS
 from emva.dataset_meta import DATASET_META_FILE, FORMAT_KEY, FORMAT_VERSION, parse_as_of
 from emva.design import fixed_design
+from emva.eval.evaluation_only import is_evaluation_only
 from emva.features import CATS_V2, SESSION_INPUTS, add_features_v2
 from emva.ingest.mapping import (
     ANSWER_PREFIX,
@@ -118,8 +119,12 @@ _MONTHS = {**{m.lower(): i for i, m in enumerate(calendar.month_name) if m},
 def frames_from_bytes(files: dict[str, bytes]) -> dict[str, pd.DataFrame]:
     """Raw CSVs (file name -> bytes) as frames with every cell read as text (the form ``convert`` expects).
 
-    pandas' default missing markers (empty, ``NA``, ``NULL``, ``NaN``, ...) become blanks.
+    pandas' default missing markers (empty, ``NA``, ``NULL``, ``NaN``, ...) become blanks. Raises ``ValueError``
+    for an evaluation-only ground-truth file name (``emva.eval.evaluation_only``; ground rule 2) without parsing it.
     """
+    refused = sorted(n for n in files if is_evaluation_only(n))
+    if refused:
+        raise ValueError(f"refused {refused}: evaluation-only ground-truth files are never converted (ground rule 2)")
     return {name: pd.read_csv(io.BytesIO(content), dtype=str) for name, content in files.items()}
 
 

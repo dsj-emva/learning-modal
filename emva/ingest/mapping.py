@@ -74,9 +74,11 @@ import re
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from pathlib import PurePath
 
 from emva.constants import ANSWER_KEYS, STAGE
 from emva.dataset_meta import check_test_from, parse_as_of
+from emva.eval.evaluation_only import is_evaluation_only
 
 # historical_leads.csv header, in file order (the v1 format; the converter writes exactly these columns).
 LEAD_COLUMNS: tuple[str, ...] = (
@@ -99,6 +101,8 @@ STAGES: tuple[str, ...] = ("New", "Contacted", "Qualified", "Demo booked", "Prop
 assert set(STAGES) == set(STAGE.values())
 OPEN_OR_NEW: tuple[str, ...] = tuple(s for s in STAGES if s not in ("Won", "Lost"))
 
+# A mapping reads 1 to this many source files (the first is the primary one).
+MAX_SOURCES: int = 3
 COLUMN_OP: str = "column"
 # op -> (minimum, maximum) number of arguments; None = no maximum.
 OPS: dict[str, tuple[int, int | None]] = {"date_from_parts": (3, 3), "minus_days": (2, 2), "product": (2, None),
@@ -153,6 +157,19 @@ class Source:
     name: str
     file: str
     join_on: str | None = None
+
+    def __post_init__(self) -> None:
+        """Refuse a ``file`` that is not a plain ``.csv`` file name (no directory part, no ``..``) and an
+        evaluation-only ground-truth file (``emva.eval.evaluation_only``; ground rule 2): the converter reads
+        ``<raw dir>/<file>`` and must never reach outside that directory or open ground truth."""
+        f = self.file
+        if not isinstance(f, str) or not f or PurePath(f).name != f or "\\" in f or f in (".", ".."):
+            raise ValueError(f"source {self.name!r}: file {f!r} must be a plain file name (no directory part)")
+        if PurePath(f).suffix.lower() != ".csv":
+            raise ValueError(f"source {self.name!r}: file {f!r} must be a .csv file")
+        if is_evaluation_only(f):
+            raise ValueError(f"source {self.name!r}: {f!r} is an evaluation-only ground-truth file; a mapping never "
+                             "reads ground truth (ground rule 2)")
 
 
 @dataclass(frozen=True)
@@ -268,8 +285,8 @@ class DatasetMapping:
         """Validate names, sources and joins, column references, targets, dates and review keys."""
         if not _SLUG.match(self.name):
             raise ValueError(f"mapping name {self.name!r} must be letters, digits, '_' or '-'")
-        if not 1 <= len(self.sources) <= 3:
-            raise ValueError(f"a mapping has 1 to 3 sources, got {len(self.sources)}")
+        if not 1 <= len(self.sources) <= MAX_SOURCES:
+            raise ValueError(f"a mapping has 1 to {MAX_SOURCES} sources, got {len(self.sources)}")
         names = [s.name for s in self.sources]
         if len(set(names)) != len(names) or any(not _SLUG.match(n) for n in names):
             raise ValueError(f"source names must be unique slugs without dots, got {names}")
@@ -535,5 +552,5 @@ def dump_mapping(m: DatasetMapping, header: str = "") -> str:
 
 
 __all__ = ["ANSWER_PREFIX", "CONFIDENCES", "DatasetMapping", "Expr", "FieldMap", "IGNORE", "LEAD_COLUMNS",
-           "LEAD_ROLES", "LeadColumns", "OPS", "OUTCOME_KINDS", "Outcome", "Review", "STAGES", "Source", "TARGETS",
+           "LEAD_ROLES", "LeadColumns", "MAX_SOURCES", "OPS", "OUTCOME_KINDS", "Outcome", "Review", "STAGES", "Source", "TARGETS",
            "check_confirmed", "dump_mapping", "load_mapping"]

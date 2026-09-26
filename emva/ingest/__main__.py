@@ -4,9 +4,9 @@
   python -m emva.ingest convert --mapping FILE.toml --raw DIR --out DIR
   python -m emva.ingest score --mapping FILE.toml --raw FILE_OR_DIR --run RUN_DIR [--data DATASET_DIR] [--out FILE]
 
-``draft`` profiles every ``*.csv`` in ``--raw`` (``emva.ingest.profile``), asks Claude Haiku for a draft mapping
-(``emva.ingest.draft``; needs ``ANTHROPIC_API_KEY`` and ``ANTHROPIC_WORKSPACE_ID``, ADR 0010, unless the reply is
-cached) and writes it with ``outcome_confirmed = false``. The reply cache defaults to ``.draft_cache.json`` next to
+``draft`` profiles every ``*.csv`` in ``--raw`` (``emva.ingest.profile``; 1 to 3 files, and an evaluation-only
+ground-truth file is refused, never read), asks Claude Haiku for a draft mapping (``emva.ingest.draft``; needs
+``ANTHROPIC_API_KEY`` and ``ANTHROPIC_WORKSPACE_ID``, ADR 0010, unless the reply is cached) and writes it with ``outcome_confirmed = false``. The reply cache defaults to ``.draft_cache.json`` next to
 ``--out`` (commit it with the mapping so the draft is reproducible without the API). A person reviews the draft,
 fixes it, and sets ``outcome_confirmed = true``.
 
@@ -35,9 +35,10 @@ import pandas as pd
 
 from emva.context.agent import MODEL_ID, make_client
 from emva.context.cache import ReplyCache
+from emva.eval.evaluation_only import is_evaluation_only
 from emva.ingest.convert import COMPANIES_COLUMNS, convert, convert_leads, frames_from_bytes
 from emva.ingest.draft import draft_mapping, is_cached, source_name
-from emva.ingest.mapping import dump_mapping, load_mapping
+from emva.ingest.mapping import MAX_SOURCES, dump_mapping, load_mapping
 from emva.ingest.profile import profile
 from emva.persist import BUNDLE_FILE, load_bundle
 from emva.scoring import score_leads
@@ -47,12 +48,24 @@ DRAFT_HEADER = ("DRAFT by {model} from column profiles of {raw} (no rows were se
                 "expressions where needed, check the outcome, then set outcome_confirmed = true.")
 
 
+def _refuse_evaluation_only(paths: list[Path]) -> None:
+    """``SystemExit`` naming every evaluation-only ground-truth file among ``paths`` (ground rule 2); none is read."""
+    refused = [p.name for p in paths if is_evaluation_only(p.name)]
+    if refused:
+        raise SystemExit(f"refused {refused}: evaluation-only ground-truth files are never read by the converter "
+                         "(ground rule 2); give a directory holding only the source CSVs")
+
+
 def _draft(a: argparse.Namespace) -> None:
     """``draft`` subcommand."""
     raw = Path(a.raw)
     files = sorted(raw.glob("*.csv"))
     if not files:
         raise SystemExit(f"no .csv files in {raw}")
+    _refuse_evaluation_only(files)
+    if len(files) > MAX_SOURCES:
+        raise SystemExit(f"{raw} holds {len(files)} .csv files; a mapping has 1 to {MAX_SOURCES} sources: give a "
+                         f"directory holding only the source files ({[f.name for f in files]})")
     frames = frames_from_bytes({f.name: f.read_bytes() for f in files})
     out = Path(a.out)
     cache = ReplyCache(a.cache or out.parent / ".draft_cache.json")
@@ -95,6 +108,7 @@ def _score(a: argparse.Namespace) -> None:
     primary = mapping.sources[0].file
     folder = raw.parent if raw.is_file() else raw
     paths = {f: (raw if raw.is_file() and f == primary else folder / f) for f in needed}
+    _refuse_evaluation_only(list(paths.values()))
     missing = [str(p) for p in paths.values() if not p.is_file()]
     if missing:
         raise SystemExit(f"missing source file(s) {missing}")
@@ -114,7 +128,7 @@ def _score(a: argparse.Namespace) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
-    """Parse arguments and run ``draft`` or ``convert`` (module docstring)."""
+    """Parse arguments and run ``draft``, ``convert`` or ``score`` (module docstring)."""
     logging.basicConfig(level=logging.WARNING)
     ap = argparse.ArgumentParser(prog="python -m emva.ingest")
     sub = ap.add_subparsers(dest="command", required=True)

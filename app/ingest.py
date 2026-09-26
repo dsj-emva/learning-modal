@@ -36,6 +36,7 @@ from emva.ingest.mapping import (
     CONFIDENCES,
     IGNORE,
     LEAD_ROLES,
+    MAX_SOURCES,
     OUTCOME_KINDS,
     STAGES,
     TARGETS,
@@ -53,7 +54,7 @@ from emva.ingest.profile import ColumnProfile, profile
 
 log = logging.getLogger(__name__)
 
-MAX_RAW_FILES: int = 3
+MAX_RAW_FILES: int = MAX_SOURCES
 DRAFT_CACHE: Path = Path("ingest") / "draft_cache.json"
 BUILTIN_MAPPINGS_DIR: Path = REPO_ROOT / "mappings"
 # Choices in the review table's target column: every schema target, then "ignore".
