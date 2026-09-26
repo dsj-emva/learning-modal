@@ -552,5 +552,6 @@ def dump_mapping(m: DatasetMapping, header: str = "") -> str:
 
 
 __all__ = ["ANSWER_PREFIX", "CONFIDENCES", "DatasetMapping", "Expr", "FieldMap", "IGNORE", "LEAD_COLUMNS",
-           "LEAD_ROLES", "LeadColumns", "MAX_SOURCES", "OPS", "OUTCOME_KINDS", "Outcome", "Review", "STAGES", "Source", "TARGETS",
+           "LEAD_ROLES", "LeadColumns", "MAX_SOURCES", "OPS", "OUTCOME_KINDS", "Outcome", "Review", "STAGES", "Source",
+           "TARGETS",
            "check_confirmed", "dump_mapping", "load_mapping"]

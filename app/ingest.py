@@ -29,7 +29,7 @@ from app.validation import ValidationReport, validate_files
 from emva.context.agent import MODEL_ID, make_client
 from emva.context.cache import ReplyCache
 from emva.context.contract import ContractError
-from emva.ingest.convert import convert, frames_from_bytes
+from emva.ingest.convert import DERIVED_COUNTS, convert, frames_from_bytes
 from emva.ingest.draft import draft_mapping, is_cached, source_name
 from emva.ingest.mapping import (
     COLUMN_OP,
@@ -499,6 +499,12 @@ def coverage_summary(meta: Mapping[str, object]) -> CoverageSummary:
     return CoverageSummary(status.count("data"), status.count("constant"), status.count("unfilled"), len(status))
 
 
+def derived_counts(meta: Mapping[str, object]) -> list[tuple[str, int, str]]:
+    """The non-zero counts of values the conversion derived or adjusted (``emva.ingest.convert.DERIVED_COUNTS``), as
+    ``(dataset.json key, count, what it means)`` in that order, for the coverage card's "Derived during conversion"."""
+    return [(k, int(meta.get(k, 0)), what) for k, what in DERIVED_COUNTS.items() if meta.get(k, 0)]
+
+
 def coverage_frame(meta: Mapping[str, object]) -> pd.DataFrame:
     """``dataset.json``'s ``coverage`` as a table: design column, status, mapped inputs, leads with a 1."""
     return pd.DataFrame([{"column": c["column"], "status": c["status"], "inputs": ", ".join(c["inputs_mapped"]),
@@ -507,7 +513,8 @@ def coverage_frame(meta: Mapping[str, object]) -> pd.DataFrame:
 
 __all__ = ["BUILTIN_MAPPINGS_DIR", "Conversion", "CoverageSummary", "DRAFT_CACHE", "DraftOutcome", "MappingChoice",
            "MappingForm", "NO_KEY_MESSAGE", "PLACEHOLDER_DATES", "TARGET_OPTIONS", "apply_outcome", "apply_review",
-           "blank_form", "column_values", "confirm", "convert_raw", "coverage_frame", "coverage_summary", "draft", "draft_cache",
-           "draft_is_cached", "expr_text", "form_from_mapping", "form_from_toml", "form_toml", "is_plain",
-           "load_choice", "mapping_choices", "mapping_from_form", "meanings", "missing_files", "outcome_frame",
-           "profile", "profile_frame", "raw_frames", "review_frame", "value_map_frame", "with_join", "with_role"]
+           "blank_form", "column_values", "confirm", "convert_raw", "coverage_frame", "coverage_summary",
+           "derived_counts", "draft", "draft_cache", "draft_is_cached", "expr_text", "form_from_mapping",
+           "form_from_toml", "form_toml", "is_plain", "load_choice", "mapping_choices", "mapping_from_form", "meanings",
+           "missing_files", "outcome_frame", "profile", "profile_frame", "raw_frames", "review_frame",
+           "value_map_frame", "with_join", "with_role"]

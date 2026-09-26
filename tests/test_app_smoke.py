@@ -158,6 +158,7 @@ def test_map_convert_validate_save_with_a_saved_mapping(monkeypatch: pytest.Monk
     assert not at.exception, at.exception
     page = _text(at)
     assert "fills " in page and " of 39 signals" in page and "Check results" in page and "Save as a dataset" in page
+    assert "Derived during conversion" in page and "Lost leads without close_at" in "\n".join(t.value for t in at.text)
     at.text_input(key="dataset_name").input("olist-smoke")
     next(b for b in at.button if b.label == "Save dataset").click()
     at.run()

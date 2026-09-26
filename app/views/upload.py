@@ -391,6 +391,10 @@ def _coverage(meta: dict) -> None:
         C.kpi("Unfilled", str(cov.unfilled), "no source column mapped"),
         C.kpi("Leads", f"{meta['leads']:,}", ", ".join(f"{k} {v:,}" for k, v in meta["final_stage_counts"].items()),
               note=f"as_of {meta['as_of']} · test from {meta['test_from']}")]))
+    derived = ingest.derived_counts(meta)
+    if derived:
+        st.markdown("**Derived during conversion** (counts in dataset.json)")
+        st.text("\n".join(f"{n:,}  {what}" for _, n, what in derived))
     with st.expander("Coverage by signal"):
         st.dataframe(ingest.coverage_frame(meta), hide_index=True, width="stretch", column_config={
             "column": st.column_config.TextColumn("Signal (design column)"),

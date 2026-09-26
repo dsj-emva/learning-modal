@@ -6,13 +6,14 @@
 
 ``draft`` profiles every ``*.csv`` in ``--raw`` (``emva.ingest.profile``; 1 to 3 files, and an evaluation-only
 ground-truth file is refused, never read), asks Claude Haiku for a draft mapping (``emva.ingest.draft``; needs
-``ANTHROPIC_API_KEY`` and ``ANTHROPIC_WORKSPACE_ID``, ADR 0010, unless the reply is cached) and writes it with ``outcome_confirmed = false``. The reply cache defaults to ``.draft_cache.json`` next to
-``--out`` (commit it with the mapping so the draft is reproducible without the API). A person reviews the draft,
-fixes it, and sets ``outcome_confirmed = true``.
+``ANTHROPIC_API_KEY`` and ``ANTHROPIC_WORKSPACE_ID``, ADR 0010, unless the reply is cached) and writes it with
+``outcome_confirmed = false``. The reply cache defaults to ``.draft_cache.json`` next to ``--out`` (commit it with
+the mapping so the draft is reproducible without the API). A person reviews the draft, fixes it, and sets
+``outcome_confirmed = true``.
 
 ``convert`` reads the source files a confirmed mapping names from ``--raw`` and writes the five training files,
 ``dataset.json`` and a copy of the mapping (``mapping.toml``) into ``--out``; it refuses a draft. It prints the
-coverage summary.
+coverage summary and every count of derived or adjusted values (``emva.ingest.convert.DERIVED_COUNTS``).
 
 ``score`` scores new leads given in the source format: ``--raw`` is a CSV of primary-source rows (other source files
 the mapping's submit-time part needs are read from the same directory) or a directory holding the source files. The
@@ -36,7 +37,7 @@ import pandas as pd
 from emva.context.agent import MODEL_ID, make_client
 from emva.context.cache import ReplyCache
 from emva.eval.evaluation_only import is_evaluation_only
-from emva.ingest.convert import COMPANIES_COLUMNS, convert, convert_leads, frames_from_bytes
+from emva.ingest.convert import COMPANIES_COLUMNS, DERIVED_COUNTS, convert, convert_leads, frames_from_bytes
 from emva.ingest.draft import draft_mapping, is_cached, source_name
 from emva.ingest.mapping import MAX_SOURCES, dump_mapping, load_mapping
 from emva.ingest.profile import profile
@@ -98,6 +99,11 @@ def _convert(a: argparse.Namespace) -> None:
     print(f"wrote {meta['leads']} leads to {out} (as_of {meta['as_of']}, test_from {meta['test_from']}); "
           f"final stages {meta['final_stage_counts']}; design columns: {status.get('data', 0)} with data, "
           f"{status.get('constant', 0)} constant, {status.get('unfilled', 0)} unfilled of {len(meta['coverage'])}")
+    print("derived during conversion (dataset.json):")
+    for key, what in DERIVED_COUNTS.items():
+        print(f"  {key} = {meta[key]}: {what}")
+    if meta["crm_times_reordered"]:
+        print(f"  reordered leads, e.g. {meta['crm_times_reordered_ids']}")
 
 
 def _score(a: argparse.Namespace) -> None:

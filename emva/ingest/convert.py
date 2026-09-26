@@ -26,7 +26,8 @@ dataset store take:
   else ``created_at``. Rows of one lead are strictly ordered in time: a row that would not come after the previous one
   is moved to one second after it (the pipeline sorts CRM rows with an unstable sort, so ties could reorder);
   ``dataset.json`` counts rows moved off a tie (``crm_ties_separated``, e.g. ``contacted_at`` = ``created_at``) and rows
-  that were earlier than the previous one (``crm_times_reordered``, e.g. a win dated before the lead). Every event
+  that were earlier than the previous one (``crm_times_reordered``, e.g. a win dated before the lead; the first
+  ``REORDERED_IDS_LISTED`` of their lead ids in ``crm_times_reordered_ids``). Every event
   must be at or before ``as_of`` (a later event means
   ``as_of`` is wrong: refused). A non-positive deal value is left blank (``log`` of the value model is undefined) and
   counted.
@@ -81,6 +82,18 @@ DEFAULT_FORM_VARIANT: str = "A"
 TIMESTAMP_FORMAT: str = "%Y-%m-%dT%H:%M:%SZ"
 MIN_STEP: pd.Timedelta = pd.Timedelta(seconds=1)
 MAX_LISTED: int = 5
+# Lead ids of reordered CRM rows kept in dataset.json (``crm_times_reordered_ids``; app.validation warns with them).
+REORDERED_IDS_LISTED: int = 10
+# dataset.json counts of values the conversion derived or adjusted, with what each means: the CLI prints every one,
+# Keel's coverage card lists the non-zero ones ("Derived during conversion").
+DERIVED_COUNTS: dict[str, str] = {
+    "rows_dropped_without_created_at": "rows dropped for a blank created_at (drop_rows_without_created_at)",
+    "placeholder_emails": "placeholder emails <lead_id>@unmapped.invalid (email unmapped or blank)",
+    "lost_dated_at_as_of": "Lost leads without close_at dated at as_of (lost_without_close = \"as_of\")",
+    "non_positive_deal_values_blanked": "non-positive deal values of Won leads left blank",
+    "crm_ties_separated": "CRM rows at the same time as the previous one, moved 1 s later",
+    "crm_times_reordered": "CRM rows dated before the previous one (e.g. a win before created_at), moved 1 s after it",
+}
 
 _FIELDS = {f.name if f.source == "column" else ANSWER_PREFIX + f.name: f for f in submit_time_fields()}
 # historical_leads columns the scoring path does not read but whose v1 values are True/False or numbers.
@@ -376,8 +389,8 @@ def convert(frames: dict[str, pd.DataFrame], mapping: DatasetMapping) -> dict[st
     Returns the five files plus ``dataset.json`` (module docstring). Raises ``ValueError`` when the mapping is a draft
     (``outcome_confirmed = false``), and for anything the mapping does not cover: a missing file or column, an outcome
     value not mapped, a blank ``created_at`` (unless ``drop_rows_without_created_at``), a blank or repeated lead id, a
-    Won lead with neither ``won_at`` nor ``close_at``, a Lost lead without ``close_at`` (unless ``lost_without_close = "as_of"``), an event
-    after ``as_of``, or a field value outside its column's type or options.
+    Won lead with neither ``won_at`` nor ``close_at``, a Lost lead without ``close_at`` (unless
+    ``lost_without_close = "as_of"``), an event after ``as_of``, or a field value outside its column's type or options.
     """
     check_confirmed(mapping)
     as_of = parse_as_of(mapping.as_of)
@@ -448,6 +461,7 @@ def convert(frames: dict[str, pd.DataFrame], mapping: DatasetMapping) -> dict[st
     prev_raw = t_contact.fillna(created)
     ties = int((t_contact == created).sum() + (final_t == prev_raw).sum())
     reordered = int((t_contact < created).sum() + (final_t < prev_raw).sum())
+    reordered_ids = list(lead_id[(t_contact < created) | (final_t < prev_raw)][:REORDERED_IDS_LISTED])
     parts = [pd.DataFrame({"lead_id": lead_id, "stage": "New", "deal_value": np.nan, "changed_at": created, "o": 0}),
              pd.DataFrame({"lead_id": lead_id, "stage": "Contacted", "deal_value": np.nan, "changed_at": t_contact_adj,
                            "o": 1})[own_contact],
@@ -469,7 +483,7 @@ def convert(frames: dict[str, pd.DataFrame], mapping: DatasetMapping) -> dict[st
             "final_stage_counts": {k: int(v) for k, v in stage.value_counts().sort_index().items()},
             "placeholder_emails": placeholders, "lost_dated_at_as_of": int(lost_no_close.sum()),
             "non_positive_deal_values_blanked": int(non_positive.sum()), "crm_ties_separated": ties,
-            "crm_times_reordered": reordered,
+            "crm_times_reordered": reordered, "crm_times_reordered_ids": reordered_ids,
             "mapped_targets": mapped, "coverage": coverage(files, mapped)}
     files[DATASET_META_FILE] = (json.dumps(meta, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
     return files
@@ -495,5 +509,6 @@ def coverage(files: dict[str, bytes], mapped_targets: list[str]) -> list[dict[st
     return rows
 
 
-__all__ = ["COMPANIES_COLUMNS", "CRM_COLUMNS", "FEATURE_INPUTS", "PEOPLE_COLUMNS", "PLACEHOLDER_DOMAIN", "convert",
+__all__ = ["COMPANIES_COLUMNS", "CRM_COLUMNS", "DERIVED_COUNTS", "FEATURE_INPUTS", "PEOPLE_COLUMNS", "PLACEHOLDER_DOMAIN",
+           "convert",
            "convert_leads", "coverage", "evaluate", "frames_from_bytes", "join_sources"]

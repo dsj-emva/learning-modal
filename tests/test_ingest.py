@@ -308,6 +308,24 @@ def test_won_at_is_optional_and_a_win_without_one_takes_close_at(frames: dict[st
         convert(frames, mapping)["crm_history.csv"]
 
 
+def test_a_win_before_the_lead_is_moved_counted_listed_and_warned(frames: dict[str, pd.DataFrame],
+                                                                  mapping: DatasetMapping) -> None:
+    """R37: the conversion keeps going, but dataset.json names the leads and validation warns with them."""
+    leads = frames["leads.csv"]
+    win = leads.index[leads.stage == "Closed Won"][0]
+    early = (pd.Timestamp(leads.signup[win]) - pd.Timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    files = convert({**frames, "leads.csv": leads.assign(closed=leads.closed.mask(leads.index == win, early))}, mapping)
+    meta = json.loads(files["dataset.json"])
+    assert meta["crm_times_reordered"] == 1 and meta["crm_times_reordered_ids"] == [leads.id[win]]
+    C = _csv(files, "crm_history.csv")
+    rows = C[C.lead_id == leads.id[win]]
+    assert list(rows.stage) == ["New", "Contacted", "Won"] and rows.changed_at.is_monotonic_increasing
+    report = validate_files({**files, "mapping.toml": MAPPING.encode()})
+    warned = [w for w in report.warnings if w.file == "crm_history.csv" and w.column == "changed_at"]
+    assert len(warned) == 1 and leads.id[win] in warned[0].message and "before" in warned[0].message
+    assert json.loads(convert(frames, mapping)["dataset.json"])["crm_times_reordered_ids"] == []
+
+
 @pytest.mark.parametrize("change, match", [
     (lambda d: d.assign(stage=d.stage.mask(d.index == 5, "Negotiation")), r"does not cover: \['Negotiation'\]"),
     (lambda d: d.assign(signup=d.signup.mask(d.index == 5, None)), "created_at is blank"),
@@ -621,11 +639,17 @@ def test_committed_mapping_converts_its_fixture(name: str) -> None:
     assert len(meta["coverage"]) == 39 and meta["mapping"] == name
 
 
-def test_cli_convert_writes_the_dataset_and_refuses_a_draft(tmp_path: Path) -> None:
+def test_cli_convert_writes_the_dataset_and_refuses_a_draft(tmp_path: Path,
+                                                            capsys: pytest.CaptureFixture[str]) -> None:
     from emva.ingest.__main__ import main
 
     main(["convert", "--mapping", str(REPO / "mappings" / "olist_funnel.toml"), "--raw",
           str(FIXTURES / "olist_funnel"), "--out", str(tmp_path / "out")])
+    printed = capsys.readouterr().out
+    from emva.ingest.convert import DERIVED_COUNTS
+
+    meta = json.loads((tmp_path / "out" / "dataset.json").read_text())
+    assert all(f"{k} = {meta[k]}: " in printed for k in DERIVED_COUNTS) and meta["lost_dated_at_as_of"] > 0
     assert {p.name for p in (tmp_path / "out").iterdir()} == {
         "historical_leads.csv", "crm_history.csv", "companies.csv", "people.csv", "dataset.json", "mapping.toml"}
     draft = tmp_path / "draft.toml"

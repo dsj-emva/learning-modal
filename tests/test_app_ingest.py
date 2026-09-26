@@ -171,6 +171,10 @@ def test_convert_raw_adds_the_confirmed_mapping_and_validates() -> None:
     assert cov.total == 39 == cov.data + cov.constant + cov.unfilled and cov.data >= 1
     frame = ingest.coverage_frame(conv.meta)
     assert len(frame) == 39 and (frame.status == "data").sum() == cov.data
+    derived = ingest.derived_counts(conv.meta)
+    assert derived and all(n > 0 and conv.meta[k] == n for k, n, _ in derived)
+    keys = [k for k, _, _ in derived]
+    assert "lost_dated_at_as_of" in keys and "crm_times_reordered" not in keys
 
 
 # --- drafting: fake client, no API ------------------------------------------------------------------------------------

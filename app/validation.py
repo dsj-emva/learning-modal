@@ -20,7 +20,8 @@
   ``form_variant`` needs a base value.
 - **dataset.json** (a converted dataset's metadata, ``emva.ingest.convert``): optional; the rules of
   ``emva.dataset_meta.parse_dataset_meta`` (a JSON object with a valid ``as_of`` and ``test_from``). When present,
-  its ``as_of`` is the snapshot date the "dated after the snapshot" warning uses (ADR 0020), else ``AS_OF``.
+  its ``as_of`` is the snapshot date the "dated after the snapshot" warning uses (ADR 0020), else ``AS_OF``; CRM
+  rows the converter had to reorder (``crm_times_reordered``) are a warning naming example lead ids.
 - **mapping.toml** (the confirmed mapping a converted dataset came from): optional; it must load with
   ``emva.ingest.load_mapping`` and have ``outcome_confirmed = true``. Each of the two without the other is a note.
 
@@ -332,12 +333,19 @@ def _check_rules(c: _Checker, content: bytes) -> dict | None:
 
 def _check_meta(c: _Checker, content: bytes) -> pd.Timestamp | None:
     """``dataset.json`` by the rules of ``emva.dataset_meta.parse_dataset_meta``; its ``as_of``, or None (and an
-    error) when it is unusable."""
+    error) when it is unusable. CRM rows the converter moved because they were dated before the previous row of
+    their lead (``crm_times_reordered``, e.g. a win before created_at) become a warning with example lead ids."""
     try:
         meta = parse_dataset_meta(content.decode("utf-8"))
     except (UnicodeDecodeError, ValueError) as e:
         c.error(DATASET_META_FILE, None, str(e))
         return None
+    reordered = meta.get("crm_times_reordered", 0)
+    if reordered:
+        ids = meta.get("crm_times_reordered_ids", [])
+        c.warn(CRM_FILE, "changed_at", f"{reordered} CRM event(s) were dated before the previous event of their lead "
+                                       "(e.g. a win before the lead was created); the conversion moved each to 1 s "
+                                       f"after it. Check the source dates, e.g. leads {ids}")
     return parse_as_of(meta["as_of"])
 
 
