@@ -1,16 +1,30 @@
-"""Page: Upload & train. Validate CRM exports, save them as a dataset, and train a model on any dataset."""
+"""Page: Upload & train. Map and convert a foreign export (or upload files in EMVA's format), validate, save them as
+a dataset, and train a model on any dataset."""
 from __future__ import annotations
 
+import hashlib
 import sys
+from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
-from app import charts, storage, training, ui
+from app import charts, ingest, storage, training, ui
 from app import components as C
 from app.storage import StorageError
 from app.validation import ValidationReport, validate_files
+from emva.ingest.draft import source_name
+from emva.ingest.mapping import (
+    CONFIDENCES,
+    LEAD_ROLES,
+    LOST_WITHOUT_CLOSE,
+    OUTCOME_KINDS,
+    DatasetMapping,
+    dump_mapping,
+)
+from emva.ingest.profile import ColumnProfile
 
 SLOTS: list[tuple[str, str, str]] = [
     (storage.LEADS_FILE, "Leads", "One row per form submission, with the answers JSON and on-site session."),
@@ -19,6 +33,21 @@ SLOTS: list[tuple[str, str, str]] = [
     (storage.PEOPLE_FILE, "People", "Contact enrichment. Optional: the model never reads it."),
     (storage.RULES_FILE, "Status-quo rules", "Optional JSON: today's bucket values, for the benchmark."),
 ]
+# Raw-file slots of Map & convert: the primary file (one row per lead) first, then up to two joined files.
+RAW_SLOTS: list[tuple[str, str, str]] = [
+    ("raw_primary", "Primary file", "One row per lead (e.g. the leads, MQL or opportunities export)."),
+    ("raw_join_1", "Joined file (optional)", "Joined to the primary file on a shared column (e.g. closed deals)."),
+    ("raw_join_2", "Joined file (optional)", "A second joined file (e.g. accounts)."),
+]
+ROLE_LABELS: dict[str, str] = {
+    "lead_id": "Lead id", "created_at": "Created at *", "contacted_at": "First contacted at", "won_at": "Won at *",
+    "close_at": "Lost / closed at", "deal_value": "Deal value"}
+OUTCOME_LABELS: dict[str, str] = {"stage": "A column of CRM stages", "won_flag": "A won / lost flag column",
+                                  "presence": "Won when a column is filled"}
+LOST_LABELS: dict[str, str] = {"error": "Refuse the conversion", "as_of": "Date the Lost row at as_of"}
+# Session-state keys of Map & convert (prefix mc_) and of the shared check / save steps.
+MC_SIG, MC_FORM, MC_VERSION, MC_MSG, MC_CONV = "mc_sig", "mc_form", "mc_version", "mc_msg", "mc_conv"
+VALIDATION, VALIDATED_FILES, VALIDATED_ORIGIN = "validation", "validated_files", "validated_origin"
 LABEL_MODES = {"horizon": "Horizon", "legacy": "Legacy (POC)"}
 FEATURE_SETS = {"v2": "v2", "legacy": "Legacy (POC)"}
 PROCS_KEY, ACTIVE_KEY = "training_procs", "active_run"
@@ -47,8 +76,11 @@ def _collect() -> tuple[dict[str, bytes], list[str]]:
 
 def _render_report(report: ValidationReport, provided: set[str]) -> None:
     """Per-file cards with errors and warnings, then the preview summary."""
-    names = [n for n, _, _ in SLOTS] + sorted({i.file for i in report.errors} - {n for n, _, _ in SLOTS})
-    labels = {n: lbl for n, lbl, _ in SLOTS}
+    slots = [n for n, _, _ in SLOTS]
+    meta = [n for n in storage.METADATA_FILES if n in provided or report.for_file(n) != ([], [])]
+    names = slots + meta + sorted({i.file for i in report.errors} - set(slots) - set(meta))
+    labels = {n: lbl for n, lbl, _ in SLOTS} | {storage.MAPPING_FILE: "Confirmed mapping",
+                                                 storage.DATASET_META_FILE: "Converter metadata (dates, coverage)"}
     left, right = st.columns(2, gap="medium")
     for i, name in enumerate(names):
         errors, warnings = report.for_file(name)
@@ -69,30 +101,391 @@ def _render_report(report: ValidationReport, provided: set[str]) -> None:
                                 width="stretch", key="stage_chart")
 
 
+# --- 01 Map & convert ------------------------------------------------------------------------------------------------
+
+def _raw_uploads() -> tuple[dict[str, bytes], list[str]]:
+    """The raw-file slots: file name -> bytes (primary first), plus refused ground-truth-looking names."""
+    files: dict[str, bytes] = {}
+    refused: list[str] = []
+    cols = st.columns(3, gap="medium")
+    for (key, label, help_text), col in zip(RAW_SLOTS, cols):
+        with col:
+            up = st.file_uploader(label, type=["csv"], key=key, help=help_text)
+        if up is None:
+            continue
+        if up.name.lower().startswith(storage.FORBIDDEN_PREFIX):
+            refused.append(up.name)
+        elif up.name in files:
+            with col:
+                ui.html(C.callout("is already uploaded in another slot.", "warn", lead=up.name))
+        else:
+            files[up.name] = up.getvalue()
+    return files, refused
+
+
+def _signature(files: dict[str, bytes]) -> tuple[tuple[str, str], ...]:
+    """Names and content hashes of the raw files, in slot order (a change resets the mapping under review)."""
+    return tuple((n, hashlib.sha256(b).hexdigest()) for n, b in files.items())
+
+
+@st.cache_data(show_spinner="Reading and profiling the files…", max_entries=4)
+def _parsed(sig: tuple[tuple[str, str], ...], _files: dict[str, bytes]) -> tuple[dict[str, pd.DataFrame],
+                                                                                 list[ColumnProfile]]:
+    """The raw frames and their column profiles (cached by ``sig``, the files' names and hashes)."""
+    frames = ingest.raw_frames(_files)
+    return frames, ingest.profile(frames)
+
+
+def _set_form(form: ingest.MappingForm, kind: str, text: str, lead: str = "") -> None:
+    """Replace the mapping under review (new widget keys) and the message about where it came from."""
+    st.session_state[MC_FORM] = form
+    st.session_state[MC_VERSION] = st.session_state.get(MC_VERSION, 0) + 1
+    st.session_state[MC_MSG] = (kind, text, lead)
+    st.session_state.pop(MC_CONV, None)
+
+
+def _reset_mapping() -> None:
+    """Forget the mapping under review and its conversion (the raw files changed)."""
+    for k in (MC_FORM, MC_MSG, MC_CONV):
+        st.session_state.pop(k, None)
+    if st.session_state.get(VALIDATED_ORIGIN) == "convert":
+        for k in (VALIDATION, VALIDATED_FILES, VALIDATED_ORIGIN):
+            st.session_state.pop(k, None)
+
+
+def _start_buttons(root: Path, frames: dict[str, pd.DataFrame], profiles: list[ColumnProfile]) -> None:
+    """Three ways to start the mapping: an AI draft, a saved or built-in mapping, or the table by hand."""
+    ui.html(C.section("Start the mapping", "Draft one with AI from the column profile (never the rows), load a "
+                      "mapping saved with an earlier dataset from the same source (no model call), or fill the "
+                      "table by hand.", step="1c"))
+    a, b, c = st.columns([2, 3, 2], gap="medium", vertical_alignment="bottom")
+    cached = ingest.draft_is_cached(profiles, root)
+    with a:
+        if st.button("Draft mapping with AI", icon=":material/auto_awesome:", key="mc_draft", width="stretch"):
+            with st.spinner("Drafting the mapping from the column profile…"):
+                out = ingest.draft(profiles, root, source_name(next(iter(frames))))
+            if out.mapping is not None:
+                form = ingest.form_from_mapping(out.mapping, frames, out.origin)
+                if out.dates_note:
+                    form = replace(form, as_of="", test_from="")
+                _set_form(form, "warn" if out.dates_note else "info",
+                          (out.dates_note or "") + " Every row is a proposal: review targets, the outcome and the "
+                          "dates, then confirm.", lead=out.origin + ".")
+            else:
+                _set_form(ingest.blank_form(frames), "warn", out.error or "",
+                          lead="No draft; the table is ready to fill by hand.")
+        st.caption("A cached draft exists for these columns: no model call." if cached else
+                   "Sends the column profile (names, types, redacted examples) to Claude Haiku.")
+    with b:
+        choices = ingest.mapping_choices(root)
+        by_key = {ch.key: ch for ch in choices}
+        key = st.selectbox("Use saved mapping", list(by_key), key="mc_choice", index=None,
+                           placeholder="Choose a saved or built-in mapping", format_func=lambda k: by_key[k].label)
+    with c:
+        if st.button("Load mapping", icon=":material/upload_file:", key="mc_load", disabled=key is None,
+                     width="stretch"):
+            try:
+                m = ingest.load_choice(by_key[key])
+            except ValueError as e:
+                st.session_state[MC_MSG] = ("bad", str(e), "This mapping file is not valid.")
+            else:
+                missing = ingest.missing_files(m, frames)
+                if missing:
+                    st.session_state[MC_MSG] = (
+                        "bad", f"It reads {', '.join(missing)}, which is not uploaded (files are matched by name; "
+                        f"uploaded: {', '.join(frames)}).", "This mapping does not fit these files.")
+                else:
+                    _set_form(ingest.form_from_mapping(m, frames, by_key[key].label), "info",
+                              "No model call. Review it against these files, then confirm.",
+                              lead=f"Loaded {by_key[key].label}.")
+        if st.button("Fill by hand", icon=":material/edit_note:", key="mc_blank", width="stretch"):
+            _set_form(ingest.blank_form(frames), "info", "Every column starts as ignore.",
+                      lead="Empty mapping.")
+
+
+def _text_inputs(form: ingest.MappingForm, v: int) -> ingest.MappingForm:
+    """Name, dates, source URL and licence."""
+    c1, c2, c3 = st.columns(3, gap="medium")
+    name = c1.text_input("Mapping name", form.name, key=f"mc_name_{v}", help="Letters, digits, _ and -.")
+    as_of = c2.text_input("as_of (snapshot date) *", form.as_of, key=f"mc_asof_{v}", placeholder="2018-11-15",
+                          help="The date the outcomes were read at; every event must be on or before it.")
+    test_from = c3.text_input("test_from (train/test boundary) *", form.test_from, key=f"mc_testfrom_{v}",
+                              placeholder="2018-03-01", help="Leads created on or after it are the test set; "
+                              "frozen for this dataset once saved.")
+    c4, c5, c6 = st.columns(3, gap="medium")
+    url = c4.text_input("Source URL", form.source_url, key=f"mc_url_{v}")
+    licence = c5.text_input("Licence", form.licence, key=f"mc_licence_{v}")
+    with c6:
+        drop = st.checkbox("Drop rows without created_at", form.drop_rows_without_created_at, key=f"mc_drop_{v}",
+                           help="Otherwise a blank created_at refuses the conversion.")
+    return replace(form, name=name.strip(), as_of=as_of.strip(), test_from=test_from.strip(), source_url=url.strip(),
+                   licence=licence.strip(), drop_rows_without_created_at=drop)
+
+
+def _pick(label: str, options: list[str], current: str, key: str, help_text: str | None = None) -> str:
+    """A select box over column references with a "not mapped" first option; returns the choice ("" = none)."""
+    opts = ["", *options] if current in options or not current else ["", current, *options]
+    return st.selectbox(label, opts, index=opts.index(current), key=key, help=help_text,
+                        format_func=lambda o: "— not mapped —" if o == "" else o)
+
+
+def _review_note(form: ingest.MappingForm, key: str) -> None:
+    """The draft's or reviewer's reason and confidence for a lead role or the outcome, as a caption."""
+    r = form.review.get(key)
+    if r is not None and (r.reason or r.confidence):
+        st.caption(f"{r.confidence or 'no'} confidence · {r.reason}")
+
+
+def _lead_and_outcome(form: ingest.MappingForm, edited: ingest.MappingForm, frames: dict[str, pd.DataFrame],
+                      v: int) -> ingest.MappingForm:
+    """Join columns, the lead columns and the outcome."""
+    refs = form.refs()
+    f = edited
+    joined = list(form.sources[1:])
+    if joined:
+        cols = st.columns(len(joined), gap="medium")
+        for s, col in zip(joined, cols):
+            with col:
+                options = list(frames[s.file].columns) if s.file in frames else [s.join_on]
+                j = _pick(f"{s.file} joins on", options, s.join_on or "", f"mc_join_{v}_{s.name}",
+                          "A column with the same name in the primary file; unique in this file.")
+                f = ingest.with_join(f, s.file, j)
+    st.markdown("**Lead columns** (* required)")
+    cols = st.columns(3, gap="medium")
+    for i, role in enumerate(LEAD_ROLES):
+        e = form.lead.get(role)
+        with cols[i % 3]:
+            if ingest.is_plain(e):
+                ref = _pick(ROLE_LABELS[role], refs, e.column if e is not None else "", f"mc_role_{v}_{role}")
+                f = ingest.with_role(f, role, ref)
+            else:
+                st.text_input(ROLE_LABELS[role], ingest.expr_text(e), key=f"mc_role_{v}_{role}", disabled=True,
+                              help="A derived expression: edit it in the TOML below.")
+            _review_note(form, role)
+    st.markdown("**Outcome** (how a lead's final CRM stage is read)")
+    c1, c2, c3 = st.columns(3, gap="medium")
+    kind = c1.selectbox("Outcome kind", list(OUTCOME_KINDS), index=list(OUTCOME_KINDS).index(form.outcome_kind),
+                        format_func=OUTCOME_LABELS.get, key=f"mc_okind_{v}")
+    with c2:
+        column = _pick("Outcome column *", refs, form.outcome_column, f"mc_ocol_{v}")
+    lost = c3.selectbox("A Lost lead without a close date", list(LOST_WITHOUT_CLOSE),
+                        index=list(LOST_WITHOUT_CLOSE).index(form.lost_without_close), format_func=LOST_LABELS.get,
+                        key=f"mc_olost_{v}")
+    _review_note(form, "outcome")
+    table = None
+    if kind in ("stage", "won_flag") and column:
+        same = kind == form.outcome_kind and column == form.outcome_column
+        base = replace(f, outcome_kind=kind, outcome_column=column,
+                       outcome_values=form.outcome_values if same else {})
+        values, truncated = ingest.outcome_frame(frames, base)
+        if truncated:
+            ui.html(C.callout(f"{column} has more than {ingest.MAX_OUTCOME_VALUES} distinct values; is it really "
+                              "an outcome column?", "warn"))
+        st.caption("Give every raw value its meaning (\"\" is a blank cell). A value left without one is refused "
+                   "by the conversion if it occurs." if kind == "stage" else
+                   "Mark each raw value Won or Lost (\"\" is a blank cell).")
+        table = st.data_editor(values, key=f"mc_ovalues_{v}_{kind}_{column}", hide_index=True, num_rows="dynamic",
+                               width="stretch", column_config={
+                                   "value": st.column_config.TextColumn("Raw value"),
+                                   "meaning": st.column_config.SelectboxColumn(
+                                       "Meaning", options=["", *ingest.meanings(kind)])})
+    try:
+        return ingest.apply_outcome(f, kind, column, table, lost)
+    except ValueError as e:
+        ui.html(C.callout(str(e), "bad"))
+        return replace(f, outcome_kind=kind, outcome_column=column, lost_without_close=lost)
+
+
+def _field_table(form: ingest.MappingForm, edited: ingest.MappingForm, v: int) -> ingest.MappingForm:
+    """The review table of field rows (low-confidence rows highlighted) and the read-only value maps."""
+    st.markdown("**Fields** (one row per uploaded column; ignore = not used)")
+    rf = ingest.review_frame(form)
+    low = rf.source[rf.check != ""].tolist()
+    styled = rf.style.apply(lambda r: ["background-color: rgba(214, 150, 40, 0.22)" if r.check else ""] * len(r),
+                            axis=1)
+    table = st.data_editor(styled, key=f"mc_fields_{v}", hide_index=True, width="stretch",
+                           height=min(38 + 35 * len(rf), 460), disabled=["source", "check"], column_config={
+                               "source": st.column_config.TextColumn("Source column"),
+                               "target": st.column_config.SelectboxColumn("Target", options=list(
+                                   ingest.TARGET_OPTIONS), required=True),
+                               "reason": st.column_config.TextColumn("Reason", width="large"),
+                               "confidence": st.column_config.SelectboxColumn(
+                                   "Confidence", options=["", *CONFIDENCES]),
+                               "check": st.column_config.TextColumn("Check", width="small")})
+    if low:
+        ui.html(C.callout(", ".join(low), "warn", lead="Low confidence, check these rows:"))
+    try:
+        edited = ingest.apply_review(edited, table)
+    except ValueError as e:
+        ui.html(C.callout(str(e), "bad"))
+    vm = ingest.value_map_frame(form)
+    if not vm.empty:
+        st.markdown("**Value maps** (read-only here; edit them as TOML below)")
+        st.dataframe(vm, hide_index=True, width="stretch", height=min(38 + 35 * len(vm), 320))
+    return edited
+
+
+def _toml_editor(edited: ingest.MappingForm, frames: dict[str, pd.DataFrame]) -> None:
+    """The whole mapping as TOML text, editable; "Apply TOML" loads it into the form (``load_mapping`` checks it)."""
+    text = ingest.form_toml(edited)
+    with st.expander("Edit the whole mapping as TOML (value maps, derived expressions)"):
+        st.caption("The schema is in emva/ingest/mapping.py. Applying replaces the form above.")
+        start = text if text is not None else ("# The form is not complete yet; complete it above or paste a whole "
+                                               "mapping here.\n")
+        digest = hashlib.sha256(start.encode("utf-8")).hexdigest()[:12]
+        new = st.text_area("Mapping TOML", start, height=320, key=f"mc_toml_{digest}", label_visibility="collapsed")
+        if st.button("Apply TOML", icon=":material/check:", key="mc_toml_apply"):
+            try:
+                form = ingest.form_from_toml(new, frames)
+            except ValueError as e:
+                st.session_state[MC_MSG] = ("bad", str(e), "The TOML was not applied.")
+            else:
+                _set_form(form, "info", "Review it, then confirm.", lead="TOML applied.")
+            st.rerun()
+
+
+def _convert_step(root: Path, mapping: DatasetMapping | None, error: str | None,
+                  frames: dict[str, pd.DataFrame]) -> None:
+    """Confirm the outcome mapping, convert, and show the coverage card; the result goes to the check step."""
+    ui.html(C.section("Confirm and convert", "The conversion is deterministic code: every value comes from a "
+                      "mapped column or a documented rule, and anything the mapping does not cover is refused.",
+                      step="1e"))
+    if mapping is None:
+        ui.html(C.callout(error or "", "warn", lead="The mapping is not complete:"))
+        return
+    toml = dump_mapping(mapping)
+    digest = hashlib.sha256(toml.encode("utf-8")).hexdigest()[:12]
+    ok = st.checkbox("Outcome mapping confirmed: I checked which leads count as won and lost, and the dates.",
+                     key=f"mc_confirm_{digest}")
+    if st.button("Convert", type="primary", icon=":material/transform:", key="mc_convert", disabled=not ok):
+        try:
+            with st.spinner("Converting…"):
+                conv = ingest.convert_raw(frames, ingest.confirm(mapping),
+                                          datetime.now(timezone.utc).date().isoformat())
+        except ValueError as e:
+            st.session_state.pop(MC_CONV, None)
+            ui.html(C.callout(str(e), "bad", lead="The conversion refused these files:"))
+            return
+        st.session_state[MC_CONV] = (digest, conv)
+        st.session_state[VALIDATION] = conv.report
+        st.session_state[VALIDATED_FILES] = conv.files
+        st.session_state[VALIDATED_ORIGIN] = "convert"
+    held = st.session_state.get(MC_CONV)
+    if held is None:
+        return
+    if held[0] != digest:
+        ui.html(C.callout("Convert again before saving.", "warn", lead="The mapping changed since the conversion."))
+        return
+    _coverage(held[1].meta)
+
+
+def _coverage(meta: dict) -> None:
+    """The coverage card: how many of the model's signals the converted data fill."""
+    cov = ingest.coverage_summary(meta)
+    ui.html(C.section("Coverage", "Which of the model's input signals (design columns of the v2 features) the "
+                      "converted leads fill. Unfilled signals are blank on every lead, so the model cannot use them."))
+    ui.html(C.kpi_row([
+        C.kpi("Signals with data", f"{cov.data} of {cov.total}", "vary across leads",
+              note=f"fills {cov.data} of {cov.total} signals"),
+        C.kpi("Constant", str(cov.constant), "mapped, but the same on every lead"),
+        C.kpi("Unfilled", str(cov.unfilled), "no source column mapped"),
+        C.kpi("Leads", f"{meta['leads']:,}", ", ".join(f"{k} {v:,}" for k, v in meta["final_stage_counts"].items()),
+              note=f"as_of {meta['as_of']} · test from {meta['test_from']}")]))
+    with st.expander("Coverage by signal"):
+        st.dataframe(ingest.coverage_frame(meta), hide_index=True, width="stretch", column_config={
+            "column": st.column_config.TextColumn("Signal (design column)"),
+            "status": st.column_config.TextColumn("Status"),
+            "inputs": st.column_config.TextColumn("Mapped inputs"),
+            "leads_with_1": st.column_config.NumberColumn("Leads with it", format="%d"),
+            "leads": st.column_config.NumberColumn("Leads", format="%d")})
+
+
+def _map_section() -> None:
+    """Step 1: raw CSVs -> column profile -> mapping (AI draft, saved, or by hand) -> review -> confirm -> convert."""
+    ui.html(C.section("Map & convert a foreign export", "Bring 1-3 CSVs in any layout (a CRM, a Kaggle dataset). "
+                      "Map their columns onto the lead schema, confirm the outcome, and convert them into the "
+                      "model's format. Nothing is stored until you save.", step="01"))
+    ui.html(C.section("Raw files", "The primary file has one row per lead; joined files add columns to it.",
+                      step="1a"))
+    root = ui.data_root()
+    files, refused = _raw_uploads()
+    if refused:
+        ui.html(C.callout(f"Refused {', '.join(refused)}: evaluation-only ground-truth files are never accepted.",
+                          "bad"))
+    if not files:
+        st.session_state.pop(MC_SIG, None)
+        _reset_mapping()
+        return
+    sig = _signature(files)
+    if st.session_state.get(MC_SIG) != sig:
+        st.session_state[MC_SIG] = sig
+        _reset_mapping()
+    try:
+        frames, profiles = _parsed(sig, files)
+    except ValueError as e:
+        ui.html(C.callout(str(e), "bad", lead="Cannot read the files."))
+        return
+    ui.html(C.section("Column profile", "What the drafter sees: per column its type, share missing, distinct "
+                      "values and, for low-cardinality columns, redacted examples. Rows are never sent.", step="1b"))
+    st.dataframe(ingest.profile_frame(profiles), hide_index=True, width="stretch", height=260, column_config={
+        "missing": st.column_config.NumberColumn("Missing", format="percent"),
+        "distinct": st.column_config.NumberColumn("Distinct", format="%d")})
+    _start_buttons(root, frames, profiles)
+    msg = st.session_state.get(MC_MSG)
+    if msg:
+        ui.html(C.callout(msg[1], msg[0], lead=msg[2]))
+    form: ingest.MappingForm | None = st.session_state.get(MC_FORM)
+    if form is None:
+        return
+    v = st.session_state.get(MC_VERSION, 0)
+    ui.html(C.section("Review the mapping", f"Started from: {form.origin}. Check every target, the lead columns, "
+                      "the outcome and the dates.", step="1d"))
+    edited = _text_inputs(form, v)
+    edited = _lead_and_outcome(form, edited, frames, v)
+    edited = _field_table(form, edited, v)
+    _toml_editor(edited, frames)
+    try:
+        mapping, error = ingest.mapping_from_form(edited), None
+    except ValueError as e:
+        mapping, error = None, str(e)
+    _convert_step(root, mapping, error, frames)
+
+
+# --- 02 files in EMVA's format, 03 check, 04 save ----------------------------------------------------------------
+
 def _upload_section() -> None:
-    """Step 1 and 2: upload, validate, save."""
-    ui.html(C.section("Add your CRM exports", "Drop in the exports; nothing is stored until you validate and save. "
-                      "Column names must match the sample data (data/v1).", step="01"))
+    """Step 2: upload files in EMVA's format and validate them."""
+    ui.html(C.section("Or add exports in EMVA's format", "Already in the sample's format (data/v1)? Drop the files "
+                      "in here instead.", step="02"))
     files, refused = _collect()
-    provided = set(files)
     if st.button("Validate files", type="primary", icon=":material/fact_check:", disabled=not (files or refused),
                  key="validate"):
-        st.session_state["validation"] = validate_files({**files, **{n: b"" for n in refused}})
-        st.session_state["validated_files"] = files
-    report: ValidationReport | None = st.session_state.get("validation")
+        st.session_state[VALIDATION] = validate_files({**files, **{n: b"" for n in refused}})
+        st.session_state[VALIDATED_FILES] = files
+        st.session_state[VALIDATED_ORIGIN] = "upload"
+        st.session_state["validated_refused"] = refused
+    if st.session_state.get(VALIDATED_ORIGIN) == "upload" and st.session_state.get(VALIDATED_FILES) != files:
+        ui.html(C.callout("Validate again before saving.", "warn", lead="The files changed since the last check."))
+        st.session_state.pop(VALIDATION, None)
+
+
+def _check_and_save() -> None:
+    """Steps 3 and 4: the check results of the converted or uploaded files, then save them as a dataset."""
+    report: ValidationReport | None = st.session_state.get(VALIDATION)
     if report is None:
         return
-    if st.session_state.get("validated_files") != files:
-        ui.html(C.callout("Validate again before saving.", "warn", lead="The files changed since the last check."))
-        return
-    ui.html(C.section("Check results", "Errors (red) must be fixed in the export; notes (amber) are worth a look "
-                      "but do not block training.", step="02"))
-    _render_report(report, provided | set(refused))
+    files: dict[str, bytes] = st.session_state[VALIDATED_FILES]
+    converted = st.session_state.get(VALIDATED_ORIGIN) == "convert"
+    ui.html(C.section("Check results", ("The converted files, checked like any upload. " if converted else "")
+                      + "Errors (red) must be fixed; notes (amber) are worth a look but do not block training.",
+                      step="03"))
+    _render_report(report, set(files) | set(st.session_state.get("validated_refused", []) if not converted else []))
     if not report.ok:
         ui.html(C.callout("before this can be saved.", "bad", lead=f"{len(report.errors)} problem(s) to fix"))
         return
     ui.html(C.section("Save as a dataset", "Give it a short name, e.g. crm-2026-09. Lower-case letters, digits, "
-                      "- and _.", step="03"))
+                      "- and _." + (" The confirmed mapping and dataset.json are saved with it." if converted
+                                    else ""), step="04"))
     with st.form("save_dataset", border=False):
         c1, c2 = st.columns([3, 1], vertical_alignment="bottom")
         name = c1.text_input("Dataset name", placeholder="crm-2026-09", key="dataset_name")
@@ -104,7 +497,8 @@ def _upload_section() -> None:
             ui.html(C.callout(str(e), "bad"))
         else:
             st.session_state["train_dataset"] = ds.name
-            st.session_state.pop("validation", None)
+            for k in (VALIDATION, VALIDATED_FILES, VALIDATED_ORIGIN):
+                st.session_state.pop(k, None)
             st.toast(f"Saved {ds.name}: {ds.n_leads:,} leads", icon=":material/check_circle:")
             st.rerun()
 
@@ -118,7 +512,7 @@ def _summary(dataset_path: str, label_mode: str, feature_set: str, _stamp: str) 
 def _train_section() -> None:
     """Step 4: choose a dataset and options, see what training will use, train and follow the log."""
     ui.html(C.section("Train a model", "Runs the same command as a local training run and keeps every run, so "
-                      "you can compare them on the results page.", step="04"))
+                      "you can compare them on the results page.", step="05"))
     root = ui.data_root()
     datasets = storage.list_datasets(root)
     names = [d.name for d in datasets]
@@ -236,9 +630,12 @@ def _history(root: Path) -> None:
 def render() -> None:
     """The page."""
     ui.html(C.page_header("Upload & train", "Bring your CRM data",
-                          "Check your exports against what the model needs, keep them as a named dataset, and train "
-                          "a model on it (or on the bundled sample) with live progress."))
+                          "Convert an export in any layout (or upload one in the model's format), check it against "
+                          "what the model needs, keep it as a named dataset, and train a model on it (or on the "
+                          "bundled sample) with live progress."))
+    _map_section()
     _upload_section()
+    _check_and_save()
     _train_section()
 
 

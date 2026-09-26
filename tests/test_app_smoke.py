@@ -111,3 +111,106 @@ def test_score_page_prefills_a_dataset_lead(monkeypatch: pytest.MonkeyPatch, app
     next(b for b in at.button if b.label == "Score this lead").click()
     at.run()
     assert not at.exception and "Chance this lead closes" in _text(at)
+
+
+# --- Map & convert and the source-format score page (Phase 9) --------------------------------------------------------
+
+def _upload_raw(at: AppTest, files: dict[str, bytes]) -> AppTest:
+    """Put ``files`` (primary first) into the Map & convert slots and rerun."""
+    for (name, content), key in zip(files.items(), ("raw_primary", "raw_join_1", "raw_join_2")):
+        at.file_uploader(key=key).upload(name, content, "text/csv")
+    return at.run()
+
+
+def _no_model_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail the test if the page tries to build an Anthropic client (every path here must work without one)."""
+    from app import ingest
+
+    def refuse() -> None:
+        raise AssertionError("the app must not call the model in this test")
+    monkeypatch.setattr(ingest, "make_client", refuse)
+
+
+def _confirm_and_convert(at: AppTest) -> AppTest:
+    next(c for c in at.checkbox if c.key and c.key.startswith("mc_confirm_")).check().run()
+    at.button(key="mc_convert").click()
+    return at.run()
+
+
+def test_map_convert_validate_save_with_a_saved_mapping(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Raw Olist-shaped CSVs -> the committed hand-written mapping -> confirm -> convert -> check -> save, no model."""
+    from app import ingest, storage
+    from conftest import olist_raw
+
+    _no_model_call(monkeypatch)
+    at = _sign_in(_app(monkeypatch, tmp_path), "letmein")
+    at.switch_page("views/upload.py").run()
+    at = _upload_raw(at, olist_raw())
+    assert not at.exception, at.exception
+    assert "Column profile" in _text(at) and "Start the mapping" in _text(at)
+    at.selectbox(key="mc_choice").select("builtin:olist_funnel").run()
+    at.button(key="mc_load").click().run()
+    assert not at.exception, at.exception
+    assert "Loaded olist_funnel" in _text(at) and "Review the mapping" in _text(at)
+    assert at.button(key="mc_convert").disabled  # not before the outcome mapping is confirmed
+    at = _confirm_and_convert(at)
+    assert not at.exception, at.exception
+    page = _text(at)
+    assert "fills " in page and " of 39 signals" in page and "Check results" in page and "Save as a dataset" in page
+    at.text_input(key="dataset_name").input("olist-smoke")
+    next(b for b in at.button if b.label == "Save dataset").click()
+    at.run()
+    assert not at.exception, at.exception
+    saved = Path(storage.get_dataset(tmp_path, "olist-smoke").path)
+    assert {"mapping.toml", "dataset.json", "historical_leads.csv"} <= {p.name for p in saved.iterdir()}
+    assert ingest.mapping_choices(tmp_path)[0].key == "saved:olist-smoke"  # offered for the next export
+
+
+def test_fill_by_hand_then_apply_a_hand_written_toml(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from conftest import REPO, olist_raw
+
+    _no_model_call(monkeypatch)
+    at = _sign_in(_app(monkeypatch, tmp_path), "letmein")
+    at.switch_page("views/upload.py").run()
+    at = _upload_raw(at, olist_raw())
+    at.button(key="mc_blank").click().run()
+    assert not at.exception, at.exception
+    assert "Empty mapping" in _text(at) and "The mapping is not complete" in _text(at)
+    at.text_area[0].input("name = ").run()
+    at.button(key="mc_toml_apply").click().run()
+    assert "The TOML was not applied" in _text(at) and "not valid TOML" in _text(at)
+    at.text_area[0].input((REPO / "mappings" / "olist_funnel.toml").read_text(encoding="utf-8")).run()
+    at.button(key="mc_toml_apply").click().run()
+    assert not at.exception, at.exception
+    assert "TOML applied" in _text(at)
+    at = _confirm_and_convert(at)
+    assert not at.exception and "of 39 signals" in _text(at)
+
+
+def test_draft_button_uses_a_cached_draft(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A cached draft (put there by a fake client with a hand-built reply) loads with no client at all."""
+    from app import ingest
+    from conftest import olist_raw
+    from test_app_ingest import FakeClient, hand_built_reply, reply_message
+
+    files = olist_raw()
+    profiles = ingest.profile(ingest.raw_frames(files))
+    root = tmp_path / "root"
+    assert ingest.draft(profiles, root, "seed", lambda: FakeClient(reply_message(hand_built_reply()))).mapping
+    _no_model_call(monkeypatch)
+    at = _sign_in(_app(monkeypatch, root), "letmein")
+    at.switch_page("views/upload.py").run()
+    at = _upload_raw(at, files)
+    assert "A cached draft exists" in "\n".join(c.value for c in at.caption)
+    at.button(key="mc_draft").click().run()
+    assert not at.exception, at.exception
+    page = _text(at)
+    assert "from the draft cache" in page and "Low confidence, check these rows" in page
+
+
+def test_raw_ground_truth_upload_is_refused(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    at = _sign_in(_app(monkeypatch, tmp_path), "letmein")
+    at.switch_page("views/upload.py").run()
+    at = _upload_raw(at, {"ground_truth_labels.csv": b"lead_id,y\nL1,1\n"})
+    assert not at.exception and "Refused ground_truth_labels.csv" in _text(at)
+    assert "Column profile" not in _text(at)
