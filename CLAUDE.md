@@ -124,7 +124,7 @@ A dataset directory with `dataset.json` uses its own `as_of` / `test_from` in th
 without it the constants apply, so data/v1 and data/v2 are unchanged.
 
 **LLM access (ADR 0010).** `.env` at the repo root (gitignored, never committed, never printed) holds
-`ANTHROPIC_API_KEY` and `ANTHROPIC_WORKSPACE_ID`. The key is not workspace-scoped, so every client must
+`ANTHROPIC_API_KEY` (or, where a host strips that name, `EMVA_ANTHROPIC_API_KEY`; `emva.env.ENV_ALIASES`) and `ANTHROPIC_WORKSPACE_ID`. The key is not workspace-scoped, so every client must
 send the `anthropic-workspace-id` header. Model for all LLM calls: `claude-haiku-4-5-20251001`.
 Responses are cached on disk and the caches are committed; never fabricate LLM output.
 
