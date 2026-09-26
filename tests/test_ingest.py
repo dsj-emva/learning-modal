@@ -408,6 +408,9 @@ def _leaky_frames() -> dict[str, pd.DataFrame]:
         "ip_address": [IPS[i % 3] for i in range(n)],
         "comment": [f"call me on {PHONES[i % 3]} or mail {EMAILS[i % 2]} from {IPS[i % 3]}" for i in range(n)],
         "contact_name": [["Ann Lee", "Bob Smith"][i % 2] for i in range(n)],
+        "manager": [["Cara Losch", "Dustin Brinkmann", "Rocco Neubert"][i % 3] for i in range(n)],
+        "handler": [["Summer Sewald", "Celia Rouche"][i % 2] for i in range(n)],  # caught by value
+        "hotel": [["City Hotel", "Resort Hotel"][i % 2] for i in range(n)],
         "stage": ["Won", "Lost"] * 6,
         "created": ["2025-01-0%d" % (1 + i % 9) for i in range(n)],
         "amount": [str(1000 + i) for i in range(n)],
@@ -418,15 +421,41 @@ def _leaky_frames() -> dict[str, pd.DataFrame]:
 def test_no_email_phone_ip_or_name_ever_reaches_a_profile() -> None:
     profiles = profile(_leaky_frames())
     text = render_profiles(profiles)
-    for secret in [*EMAILS, *PHONES, *IPS, "Ann Lee", "Bob Smith", "447700900000", "@acme"]:
+    for secret in [*EMAILS, *PHONES, *IPS, "Ann Lee", "Bob Smith", "Cara Losch", "Dustin Brinkmann", "Rocco Neubert",
+                   "Summer Sewald", "Celia Rouche", "447700900000", "@acme"]:
         assert secret not in text, secret
     by = {p.name: p for p in profiles}
+    assert by["manager"].examples == by["handler"].examples == (NAME_TOKEN,)
+    assert set(by["hotel"].examples) == {"City Hotel", "Resort Hotel"}  # a shared word: not people
     assert by["comment"].examples and all("<email>" in e and "<phone>" in e and "<ip>" in e
                                           for e in by["comment"].examples)
     assert by["contact_name"].examples == (NAME_TOKEN,)
     assert set(by["stage"].examples) == {"Won", "Lost"} and by["stage"].type == "text"
     assert by["created"].type == "date" and by["created"].min == "2025-01-01"
     assert by["amount"].type == "number" and by["amount"].max == "1011"
+
+
+def test_person_columns_by_name() -> None:
+    from emva.ingest.profile import is_person_column
+
+    person = ["name", "first_name", "firstName", "contact", "contact_name", "manager", "managers", "seller",
+              "assigned_to", "created_by", "assignee", "owner", "sdr", "sales_rep", "sales_agent", "buyer", "employee",
+              "author", "lead", "team_head", "account_manager", "account_owner", "company_contact", "customer"]
+    other = ["company_name", "product_name", "hotel", "lead_id", "lead_type", "lead_time", "lead_source", "seller_id",
+             "sdr_id", "customer_type", "owner_status", "lead_behaviour_profile", "origin", "deal_stage", "sector",
+             "market_segment", "created_at", "subsidiary_of"]
+    assert [c for c in person if not is_person_column(c)] == []
+    assert [c for c in other if is_person_column(c)] == []
+
+
+def test_name_like_values_are_redacted_unless_the_name_rules_it_out() -> None:
+    from emva.ingest.profile import looks_like_names, redact_as_names
+
+    assert looks_like_names(["Cara Losch", "Dustin Brinkmann", "Mary-Ann O'Neil Smith"])
+    assert not looks_like_names(["City Hotel", "Resort Hotel"])  # last words repeat
+    assert not looks_like_names(["paid_search", "social", "Direct Traffic"]) and not looks_like_names([])
+    assert redact_as_names("subsidiary", ["Acme Corporation", "Bubba Gump"])  # fail safe: companies may read as names
+    assert not redact_as_names("deposit_type", ["No Deposit", "Non Refund", "Refundable"])
 
 
 def test_high_cardinality_columns_get_no_examples() -> None:

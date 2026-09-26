@@ -4,8 +4,10 @@ A ``ColumnProfile`` holds a column's file and name, inferred type, share missing
 date or number column, and up to ``max_examples`` example values, only for low-cardinality columns
 (``MAX_DISTINCT_FOR_EXAMPLES`` distinct values or fewer). Full rows are never sent. Every example, min and max passes
 through ``redact``: emails, phone-like digit runs and IP addresses anywhere in a value become ``<email>``, ``<phone>``,
-``<ip>``; a text column whose name suggests a person's name (``is_person_column``) gets no examples, only ``<name>``.
-Redaction errs towards over-redacting (a long number reads as a phone number).
+``<ip>``; a text column whose name suggests a person's name (``is_person_column``: ``first_name``, ``manager``,
+``account_owner``, ``assigned_to``) or whose values look like people's names (``looks_like_names``: "Cara Losch")
+gets no examples, only ``<name>``. Redaction errs towards over-redacting (a long number reads as a phone number, a
+two-word company name such as "Acme Corporation" may read as a person's name).
 """
 from __future__ import annotations
 
@@ -30,14 +32,29 @@ _IPV6 = re.compile(r"(?<![0-9A-Za-z:])[0-9A-Fa-f]{0,4}(?::[0-9A-Fa-f]{0,4}){2,7}
 _PHONE_CANDIDATE = re.compile(r"\+?\(?\d[\d\s().\-/]*\d")
 _ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}(\s\d{1,2})?$")
 MIN_PHONE_DIGITS: int = 7
-# Column-name tokens that mark a person's name (a column is redacted to <name> when any token matches).
+# Column-name tokens that mark a person (``is_person_column``): when one is the last token of the name, or the whole
+# name, the column is redacted to <name>. A plural ("managers") counts too.
 PERSON_NAME_TOKENS: frozenset[str] = frozenset({
     "name", "firstname", "lastname", "surname", "fullname", "forename", "contact", "person", "agent", "owner",
-    "rep", "salesperson", "customer", "client", "guest", "user", "username"})
-# ...unless the name clearly names something else ("company_name", "product_name", "customer_type", ...).
+    "rep", "salesperson", "customer", "client", "guest", "user", "username", "manager", "seller", "assignee",
+    "assigned", "sdr", "buyer", "employee", "author", "lead", "head"})
+# A last token that says the column holds something about a person, not the person ("lead_id", "customer_type",
+# "lead_time", "owner_status"): never a name column, by name or by value.
+TRAILING_NON_PERSON_TOKENS: frozenset[str] = frozenset({
+    "id", "ids", "type", "time", "date", "status", "source", "code", "count", "number", "stage", "segment", "score"})
+# A last token after a verb that points at a person ("assigned_to", "created_by").
+BY_TO_TOKENS: frozenset[str] = frozenset({"to", "by"})
+# Qualifiers that make "<qualifier>_name" the name of something else ("company_name", "product_name", "hotel_name").
+# Only ``name`` is qualified this way: any other person token as the last token wins ("account_manager").
 NON_PERSON_TOKENS: frozenset[str] = frozenset({
     "company", "account", "business", "product", "campaign", "page", "domain", "file", "hotel", "type", "segment",
-    "id", "count", "number", "country", "city", "brand", "group", "team", "office", "stage", "status"})
+    "id", "count", "number", "country", "city", "brand", "group", "team", "office", "stage", "status", "event",
+    "project", "deal", "opportunity", "channel", "plan", "region", "store", "site", "org", "organisation",
+    "organization", "firm", "series", "list", "form", "source", "template", "field", "column", "table"})
+# A value that looks like a person's name: 2-3 capitalised words ("Cara Losch", "Mary-Ann O'Neil").
+_NAME_VALUE = re.compile(r"^[A-Z][a-z'’-]+(?: [A-Z][a-z'’-]+){1,2}$")
+# Share of a text column's distinct values that must look like names for the column to be redacted by value.
+NAME_VALUE_SHARE: float = 0.5
 _BOOL_TEXT = frozenset({"true", "false", "yes", "no", "t", "f", "y", "n"})
 
 
@@ -85,16 +102,55 @@ def redact(value: str) -> str:
     return _PHONE_CANDIDATE.sub(_phone, out)
 
 
-def _tokens(column: str) -> set[str]:
-    """Lower-case tokens of a column name (split on non-letters and camelCase)."""
+def _tokens(column: str) -> list[str]:
+    """Lower-case tokens of a column name in order (split on non-letters and camelCase)."""
     spaced = re.sub(r"([a-z])([A-Z])", r"\1 \2", column)
-    return set(re.split(r"[^a-z]+", spaced.lower())) - {""}
+    return [t for t in re.split(r"[^a-z]+", spaced.lower()) if t]
+
+
+def _is_person_token(t: str) -> bool:
+    """True for a ``PERSON_NAME_TOKENS`` token or its plural."""
+    return t in PERSON_NAME_TOKENS or (t.endswith("s") and t[:-1] in PERSON_NAME_TOKENS)
 
 
 def is_person_column(column: str) -> bool:
-    """True when the column name suggests a person's name (``first_name``, ``contact``, ``sales_agent``, ...)."""
+    """True when the column name suggests a person's name.
+
+    The last token decides: a ``TRAILING_NON_PERSON_TOKENS`` token means no (``lead_id``, ``customer_type``,
+    ``lead_time``); ``to`` / ``by`` after another token means yes (``assigned_to``, ``created_by``); ``name`` means yes
+    unless the token before it is a ``NON_PERSON_TOKENS`` qualifier (``first_name`` yes, ``company_name`` no); any
+    other person token means yes (``manager``, ``sales_agent``, ``account_manager``, ``company_contact``). A person
+    token elsewhere in the name does not count (``lead_behaviour_profile``).
+    """
     t = _tokens(column)
-    return bool(t & PERSON_NAME_TOKENS) and not t & NON_PERSON_TOKENS
+    if not t or t[-1] in TRAILING_NON_PERSON_TOKENS:
+        return False
+    if t[-1] in BY_TO_TOKENS:
+        return len(t) > 1
+    if t[-1] in ("name", "names"):
+        return len(t) == 1 or t[-2] not in NON_PERSON_TOKENS
+    return _is_person_token(t[-1])
+
+
+def looks_like_names(values: list[str]) -> bool:
+    """True when at least ``NAME_VALUE_SHARE`` of the distinct ``values`` are 2-3 capitalised words and their last
+    words never repeat (surnames differ; "Resort Hotel" / "City Hotel" share a word, so they are not names)."""
+    distinct = sorted(set(values))
+    names = [v for v in distinct if _NAME_VALUE.match(v)]
+    if not names or len(names) < NAME_VALUE_SHARE * len(distinct):
+        return False
+    last = [v.rsplit(" ", 1)[1] for v in names]
+    return len(set(last)) == len(last)
+
+
+def redact_as_names(column: str, values: list[str]) -> bool:
+    """True when a text column's examples must be replaced by ``<name>``: its name suggests a person
+    (``is_person_column``), or its name does not rule one out and its values look like names (``looks_like_names``).
+    Errs towards redacting: a company name like "Acme Corporation" may read as a person's name."""
+    if is_person_column(column):
+        return True
+    t = _tokens(column)
+    return not (t and t[-1] in TRAILING_NON_PERSON_TOKENS) and looks_like_names(values)
 
 
 def infer_type(values: pd.Series) -> str:
@@ -129,7 +185,7 @@ def profile_column(file: str, name: str, s: pd.Series, max_examples: int = MAX_E
     elif kind == "date":
         d = pd.to_datetime(present, format="ISO8601", utc=True)
         lo, hi = d.min().date().isoformat(), d.max().date().isoformat()
-    if kind == "text" and is_person_column(name):
+    if kind == "text" and redact_as_names(name, present.tolist() if distinct <= MAX_DISTINCT_FOR_EXAMPLES else []):
         examples: tuple[str, ...] = (NAME_TOKEN,) if distinct else ()
     elif distinct <= MAX_DISTINCT_FOR_EXAMPLES:
         counts = present.value_counts()
@@ -146,5 +202,5 @@ def profile(frames: dict[str, pd.DataFrame], max_examples: int = MAX_EXAMPLES) -
     return [profile_column(file, str(col), df[col], max_examples) for file, df in frames.items() for col in df.columns]
 
 
-__all__ = ["ColumnProfile", "MAX_DISTINCT_FOR_EXAMPLES", "is_person_column", "infer_type", "profile",
-           "profile_column", "redact"]
+__all__ = ["ColumnProfile", "MAX_DISTINCT_FOR_EXAMPLES", "infer_type", "is_person_column", "looks_like_names",
+           "profile", "profile_column", "redact", "redact_as_names"]
