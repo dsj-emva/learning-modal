@@ -278,16 +278,16 @@ def label_sections(X: pd.DataFrame, legacy_y: pd.Series, test_a: TestSet, test_b
         "created_at (NaN if younger and not Won). horizon y = won_within_h with ghosted-at-H leads excluded and "
         "stalled leads censored (the default training and test label).", "",
         md_table(pd.DataFrame(rows)), "",
-        f"Mature = created_at + {FROZEN_HORIZON.horizon_days} days <= {as_of.isoformat()}: the latest mature lead was created "
-        f"{last.isoformat()}. Train = created before {test_from} (all mature); test = created on or after {test_from}.",
+        f"Mature = created_at + {FROZEN_HORIZON.horizon_days} days <= {as_of.isoformat()}: the latest mature lead was "
+        f"created {last.isoformat()}. Train = created before {test_from} (all mature); test = created on or after {test_from}.",
         "",
         md_table(sizes), "",
         f"Candidate trained with: `{candidate_labels.describe()}`.", "",
     ]
 
 
-def ghosted_share_section(X: pd.DataFrame, legacy_y: pd.Series, test_a: TestSet,
-                          models: list[ScoredModel], as_of: pd.Timestamp = AS_OF, test_from: str = TEST_FROM) -> list[str]:
+def ghosted_share_section(X: pd.DataFrame, legacy_y: pd.Series, test_a: TestSet, models: list[ScoredModel],
+                          as_of: pd.Timestamp = AS_OF, test_from: str = TEST_FROM) -> list[str]:
     """Share of ghosted and of still-New leads in the bottom decile of each model's p, on several populations
     (maturity at ``as_of``, test window from ``test_from``)."""
     mature = is_mature(X, FROZEN_HORIZON.horizon_days, as_of)

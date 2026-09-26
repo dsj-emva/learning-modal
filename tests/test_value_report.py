@@ -70,3 +70,19 @@ def test_transform_table_refuses_zero_revenue_and_zero_baseline_capture(v1_horiz
     inverted = pd.Series(np.where(rev > 0, 0.0, 1.0), index=ids)
     with pytest.raises(ValueError, match="captures no revenue"):
         transform_table(v1_horizon, ids, rev, inverted.reindex(v1_horizon.X.index, fill_value=1.0))
+
+
+def test_without_a_baseline_unfittable_transforms_are_reported_not_raised(v1_horizon):
+    """A converted dataset (no baseline, ADR 0022) can give a constant score: tiers cannot be fitted on it, which the
+    table says instead of raising; with a baseline the same failure still raises."""
+    X = v1_horizon.X.assign(value_formula=5.0)
+    flat = type(v1_horizon)(**{**v1_horizon.__dict__, "X": X})
+    ids = X.index[v1_horizon.test]
+    table, raw = transform_table(flat, ids, None, None)
+    assert "baseline (identity)" not in set(table.value) and len(table) == len(REPORT_TRANSFORMS)
+    tiers = table[table.value.str.contains("tiers")]
+    assert len(tiers) == 2 and tiers.p1.str.startswith("not fitted:").all()
+    with pytest.raises(ValueError, match="tiers"):
+        transform_table(flat, ids, None, X.value_formula)
+    lines = value_report_sections(flat, [("t", _revenue(v1_horizon, ids))], None)
+    assert any("Not computed: the criterion is defined against the baseline" in line for line in lines)

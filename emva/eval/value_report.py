@@ -78,7 +78,9 @@ def transform_table(result: PipelineResult, ids: pd.Index, revenue: pd.Series | 
     ``ids``) the table adds top-20% capture, ties at the cut, retention vs the baseline's capture and value /
     revenue. Also returns, per transform row, the raw numbers the acceptance check needs. Raises ``ValueError``
     when the test set has no recorded revenue or the baseline captures none of it (ratios undefined). Without a
-    baseline (a converted dataset, ADR 0022) the "vs baseline" column and the retention numbers are left out.
+    baseline (a converted dataset, ADR 0022) the "vs baseline" column and the retention numbers are left out, and a
+    transform that cannot be fitted on the candidate's values (e.g. tiers over a constant score) gets a row saying
+    why instead of raising.
     """
     X, tr = result.X, result.train
     rows: list[dict[str, str]] = []
@@ -92,9 +94,18 @@ def transform_table(result: PipelineResult, ids: pd.Index, revenue: pd.Series | 
             if base_capture <= 0:
                 raise ValueError("the baseline captures no revenue in its top 20%; retention vs baseline is undefined")
     entries = [] if baseline_value is None else [("baseline (identity)", baseline_value.loc[ids].values)]
-    entries += [(f"candidate: {t.describe()}", t.fit(X.value_formula[tr]).apply(X.value_formula.loc[ids]))
-                for t in REPORT_TRANSFORMS]
+    for t in REPORT_TRANSFORMS:
+        try:
+            entries.append((f"candidate: {t.describe()}", t.fit(X.value_formula[tr]).apply(X.value_formula.loc[ids])))
+        except ValueError as e:
+            if baseline_value is not None:
+                raise
+            entries.append((f"candidate: {t.describe()}", f"not fitted: {e}"))
     for name, v in entries:
+        if isinstance(v, str):
+            rows.append({"value": name, "p1": v})
+            raw.append({})
+            continue
         row = {"value": name, **_scale_cells(v)}
         stats = scale_stats(v)
         if revenue is not None:
@@ -161,8 +172,8 @@ def value_report_sections(result: PipelineResult, tests: Sequence[tuple[str, pd.
            "monotone, so capture moves only through ties at the cut.", ""]
     all_ids = result.X.index
     all_table, all_raw = transform_table(result, all_ids, None, baseline_value)
-    verdicts: dict[str, list[bool]] = {t.describe(): [s["max_over_median"] < MAX_OVER_MEDIAN_TARGET] for t, s in
-                                       zip(REPORT_TRANSFORMS, all_raw)}
+    verdicts: dict[str, list[bool]] = {} if baseline_value is None else {
+        t.describe(): [s["max_over_median"] < MAX_OVER_MEDIAN_TARGET] for t, s in zip(REPORT_TRANSFORMS, all_raw)}
     for title, revenue in tests:
         if baseline_value is None and revenue.sum() <= 0:
             out += [f"### {title}", "", "No recorded revenue on this test set: capture is undefined.", ""]
