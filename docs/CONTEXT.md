@@ -189,6 +189,7 @@ it with the paired bootstrap.
 | 8 hosted app (Keel) | merged (c3da2b0) | `app-ui` | `reports/app.md`, ADR 0018/0019 (Proposed) |
 | 9 generic dataset converter, per-dataset dates, Keel Map & convert | merged (be2f674) | `claude/epic-edison-onl83z` | `reports/phase9.md`, ADRs 0020-0023 (Proposed) |
 | 10 (a) generic feature set (`--feature-set generic`), (b) Keel support, live mapping-draft check | merged (febc0a3) | `phase10-generic-features` | `reports/phase10.md`, ADRs 0024-0025 (Proposed) |
+| Keel QA fix round (M1-M4, M6) | merged (ac53fb4) | `keel-fix-scoring`, `keel-fix-claims`, `keel-fix-leak-warning` | `reports/keel-fixes.md`, ADR 0026 (Proposed) |
 | 11 target-customer steering (plan item) | planned, not started | `phase11-target-steering` | `REBUILD_PLAN.md` Phase 11 |
 
 Open question carried from Phase 1 (not yet ruled): should young `crm_lost` leads be 0 rather than NaN?

@@ -325,3 +325,15 @@ flowchart LR
 | `app/training.py` | (b) `feature_set_options`, the extras in the pre-training summary |
 | `app/results.py`, `app/views/results.py` | (b) "Generic vs v2" (`generic_comparison`: `generic_report.compare`, collinearity, leakage and missingness screen) and the scorecard's `x_` rows |
 | `app/scoring.py`, `app/views/score.py` | (b) source-format inputs for extras; EMVA form: extras blank, with a note; (fix round) `missing_unseen` / `blank_unseen`: a warning per blank extra that no training lead had missing (it scores as the reference level) |
+
+## 11. Keel QA fix round (ADR 0026)
+
+| module | change |
+|---|---|
+| `emva/scoring.py` | `UnknownLevelError.problems` (one `LevelProblem` per offending feature, all at once); public `featurise` / `level_problems` (check levels without scoring) |
+| `emva/ingest/mapping.py`, `emva/dataset_meta.py` | optional `currency` (ISO 4217) in the mapping and `dataset.json`; `dataset_currency(data)`: GBP without `dataset.json`, the declared code, or None (unknown) |
+| `emva/ingest/convert.py` | `convert_leads` requires `created_at` on every new lead; `convert` writes `currency` and `outcome_fill_gaps` (`outcome_fill_gaps`, `fill_gap_text`: fields and extras whose filled share differs by >= 0.5 between Won and Lost) |
+| `app/components.py`, `app/charts.py` | `money(x, currency)` / `money_format` / `currency_note`: the one money formatter |
+| `app/results.py`, `app/views/results.py` | `constant_columns` (design columns with no variance on the run's training rows, rebuilt without fitting), `constant_note`; the scorecard leaves them out |
+| `app/scoring.py`, `app/views/score.py`, `app/ui.py` | `example_for` / `Example` (a legacy run whose built-in example is refused starts from a training lead), `form_problem_lines` / `source_problem_lines` (unseen levels by form field), `breakdown` (constant columns folded into the starting score, 0-point rows dropped, displayed parts add up), required `created_at` in the source form, the run's currency |
+| `app/validation.py`, `app/views/upload.py` | `outcome_fill_gaps` as notes and an amber warning after Convert; the Currency input in the mapping review |
