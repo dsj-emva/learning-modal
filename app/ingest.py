@@ -18,7 +18,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from urllib.parse import urlparse
@@ -147,9 +147,11 @@ def raw_frames(files: Mapping[str, bytes]) -> dict[str, pd.DataFrame]:
 
 
 def profile_frame(profiles: list[ColumnProfile]) -> pd.DataFrame:
-    """The column profiles as a table for the page (one row per column; examples joined)."""
+    """The column profiles as a table for the page (one row per column; examples joined; min / max "" where the
+    column has none, since Streamlit shows a missing cell as "None")."""
     return pd.DataFrame([{"file": p.file, "column": p.name, "type": p.type, "missing": p.share_missing,
-                          "distinct": p.distinct, "min": p.min, "max": p.max, "examples": ", ".join(p.examples)}
+                          "distinct": p.distinct, "min": p.min if p.min is not None else "",
+                          "max": p.max if p.max is not None else "", "examples": ", ".join(p.examples)}
                          for p in profiles])
 
 
@@ -302,6 +304,18 @@ def review_frame(f: MappingForm) -> pd.DataFrame:
     rows = [row(r.source, r.target, r.review) for r in f.target_rows]
     rows += [row(src, VALUE_MAP_TARGET if src in value_mapped else IGNORE, None) for src in feats if src not in listed]
     return pd.DataFrame(rows, columns=list(REVIEW_COLUMNS))
+
+
+# A selectbox column of st.data_editor shows an empty-string cell as a grey "None"; a single space shows blank, and
+# ``_cell`` strips it back to "" when the edited table is read.
+EDITOR_BLANK: str = " "
+
+
+def editor_blanks(frame: pd.DataFrame, columns: Iterable[str]) -> pd.DataFrame:
+    """``frame`` with "" in ``columns`` (selectbox columns of a table editor) replaced by ``EDITOR_BLANK``; give the
+    columns ``EDITOR_BLANK`` in place of "" among their options."""
+    cols = list(columns)
+    return frame.assign(**{c: frame[c].replace("", EDITOR_BLANK) for c in cols})
 
 
 def _cell(v: object) -> str:
@@ -694,7 +708,8 @@ def coverage_frame(meta: Mapping[str, object]) -> pd.DataFrame:
                           "leads_with_1": c["leads_with_1"], "leads": c["leads"]} for c in meta["coverage"]])
 
 
-__all__ = ["BUILTIN_MAPPINGS_DIR", "Conversion", "CoverageSummary", "DRAFT_CACHE", "DraftOutcome", "ExtrasSummary",
+__all__ = ["BUILTIN_MAPPINGS_DIR", "Conversion", "CoverageSummary", "DRAFT_CACHE", "DraftOutcome", "EDITOR_BLANK",
+           "ExtrasSummary", "editor_blanks",
            "FEATURE_KINDS", "MappingChoice", "MappingForm", "NO_KEY_MESSAGE", "PLACEHOLDER_DATES", "TARGET_OPTIONS",
            "VALUE_MAP_TARGET", "apply_outcome", "apply_review", "blank_form", "column_values", "confirm", "convert_raw",
            "coverage_frame", "coverage_summary", "default_feature_name", "derived_counts", "derived_features",

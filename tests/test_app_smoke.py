@@ -56,6 +56,10 @@ def test_empty_root_shows_empty_states(monkeypatch: pytest.MonkeyPatch, tmp_path
     at = _sign_in(_app(monkeypatch, tmp_path / "fresh"), "letmein")
     assert not at.exception and "Nothing trained yet" in _text(at)
     assert (tmp_path / "fresh" / "registry.json").exists()  # layout created on first start
+    at.switch_page("views/upload.py").run()
+    # nothing validated yet: the check and save steps are not shown, so training is step 03, not 05 (c4)
+    assert not at.exception and '<span class="step">03</span>Train a model' in _text(at)
+    assert "05" not in "".join(m.value for m in at.markdown if 'class="step"' in m.value)
 
 
 def test_every_page_renders_with_a_trained_run(monkeypatch: pytest.MonkeyPatch, app_trained) -> None:

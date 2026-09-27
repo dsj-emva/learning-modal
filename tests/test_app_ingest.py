@@ -121,6 +121,23 @@ def test_review_table_flags_low_confidence_and_applies_edits(frames: dict[str, p
         ingest.apply_review(form, table)
 
 
+def test_blank_cells_show_blank_in_the_page_tables(frames: dict[str, pd.DataFrame]) -> None:
+    """Profile min / max are "" where a column has none, and the review table's blank selectbox cells go to the editor
+    as EDITOR_BLANK and come back as blank: none of them shows as "None" (c4)."""
+    prof = ingest.profile_frame(ingest.profile(frames))
+    assert prof["min"].notna().all() and prof["max"].notna().all() and (prof["min"] == "").any()
+    form = ingest.form_from_mapping(_olist(), frames)
+    table = ingest.review_frame(form)
+    shown = ingest.editor_blanks(table, ("confidence", "kind"))
+    assert "" not in set(shown.confidence) | set(shown.kind) and ingest.EDITOR_BLANK in set(shown.kind)
+    assert shown.drop(columns=["confidence", "kind"]).equals(table.drop(columns=["confidence", "kind"]))
+    assert ingest.apply_review(form, shown) == ingest.apply_review(form, table)
+    values, _ = ingest.outcome_frame(frames, form)
+    shown_values = ingest.editor_blanks(values, ("meaning",))
+    assert ingest.apply_outcome(form, form.outcome_kind, form.outcome_column, shown_values, form.lost_without_close) \
+        == ingest.apply_outcome(form, form.outcome_kind, form.outcome_column, values, form.lost_without_close)
+
+
 def test_review_table_edits_the_extra_features(frames: dict[str, pd.DataFrame]) -> None:
     """Phase 10 (b): the review table's feature / kind / name columns declare the generic feature set's extras."""
     form = ingest.form_from_mapping(_olist(), frames)

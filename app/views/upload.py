@@ -60,8 +60,9 @@ def _collect() -> tuple[dict[str, bytes], list[str]]:
     (passed to validation under their own name so they are refused without being parsed)."""
     files: dict[str, bytes] = {}
     refused: list[str] = []
-    cols = st.columns(3, gap="medium")
     for i, (name, label, help_text) in enumerate(SLOTS):
+        if i % 3 == 0:  # a row of columns per three slots: read row by row wide, and in SLOTS order when stacked
+            cols = st.columns(3, gap="medium")
         with cols[i % 3]:
             up = st.file_uploader(f"{label} · {name}", type=[Path(name).suffix[1:]], key=f"up_{name}", help=help_text)
             if up is None:
@@ -291,11 +292,11 @@ def _lead_and_outcome(form: ingest.MappingForm, edited: ingest.MappingForm, fram
         st.caption("Give every raw value its meaning (\"\" is a blank cell). A value left without one is refused "
                    "by the conversion if it occurs." if kind == "stage" else
                    "Mark each raw value Won or Lost (\"\" is a blank cell).")
-        table = st.data_editor(values, key=f"mc_ovalues_{v}_{kind}_{column}", hide_index=True, num_rows="dynamic",
+        table = st.data_editor(ingest.editor_blanks(values, ("meaning",)), key=f"mc_ovalues_{v}_{kind}_{column}", hide_index=True, num_rows="dynamic",
                                width="stretch", column_config={
                                    "value": st.column_config.TextColumn("Raw value"),
                                    "meaning": st.column_config.SelectboxColumn(
-                                       "Meaning", options=["", *ingest.meanings(kind)])})
+                                       "Meaning", options=[ingest.EDITOR_BLANK, *ingest.meanings(kind)])})
     try:
         return ingest.apply_outcome(f, kind, column, table, lost)
     except ValueError as e:
@@ -312,7 +313,7 @@ def _field_table(form: ingest.MappingForm, edited: ingest.MappingForm, v: int) -
                "columns known when the lead is submitted: an outcome column here leaks the label. A column can be a "
                "field and a feature at once. Reason and confidence describe the field when it has a target, else "
                "the feature.")
-    rf = ingest.review_frame(form)
+    rf = ingest.editor_blanks(ingest.review_frame(form), ("confidence", "kind"))
     low = rf.source[rf.check != ""].tolist()
     styled = rf.style.apply(lambda r: ["background-color: rgba(214, 150, 40, 0.22)" if r.check else ""] * len(r),
                             axis=1)
@@ -323,10 +324,11 @@ def _field_table(form: ingest.MappingForm, edited: ingest.MappingForm, v: int) -
                                    *ingest.TARGET_OPTIONS, ingest.VALUE_MAP_TARGET], required=True),
                                "reason": st.column_config.TextColumn("Reason", width="medium"),
                                "confidence": st.column_config.SelectboxColumn(
-                                   "Confidence", options=["", *CONFIDENCES]),
+                                   "Confidence", options=[ingest.EDITOR_BLANK, *CONFIDENCES]),
                                "feature": st.column_config.CheckboxColumn(
                                    "Feature", help="An extra feature of the generic feature set"),
-                               "kind": st.column_config.SelectboxColumn("Kind", options=["", *ingest.FEATURE_KINDS]),
+                               "kind": st.column_config.SelectboxColumn(
+                                   "Kind", options=[ingest.EDITOR_BLANK, *ingest.FEATURE_KINDS]),
                                "name": st.column_config.TextColumn(
                                    "Feature name", help="Lower-case letters, digits and _; blank = from the column"),
                                "check": st.column_config.TextColumn("Check", width="small")})
@@ -529,11 +531,13 @@ def _upload_section() -> None:
         st.session_state.pop(VALIDATION, None)
 
 
-def _check_and_save() -> None:
-    """Steps 3 and 4: the check results of the converted or uploaded files, then save them as a dataset."""
+def _check_and_save() -> int:
+    """Steps 3 and 4: the check results of the converted or uploaded files, then save them as a dataset. Returns how
+    many of the two steps are shown (0 before anything is validated, 1 while there are errors), so the training step
+    is numbered next."""
     report: ValidationReport | None = st.session_state.get(VALIDATION)
     if report is None:
-        return
+        return 0
     files: dict[str, bytes] = st.session_state[VALIDATED_FILES]
     converted = st.session_state.get(VALIDATED_ORIGIN) == "convert"
     ui.html(C.section("Check results", ("The converted files, checked like any upload. " if converted else "")
@@ -542,7 +546,7 @@ def _check_and_save() -> None:
     _render_report(report, set(files) | set(st.session_state.get("validated_refused", []) if not converted else []))
     if not report.ok:
         ui.html(C.callout("before this can be saved.", "bad", lead=f"{len(report.errors)} problem(s) to fix"))
-        return
+        return 1
     ui.html(C.section("Save as a dataset", "Give it a short name, e.g. crm-2026-09. Lower-case letters, digits, "
                       "- and _." + (" The confirmed mapping and dataset.json are saved with it." if converted
                                     else ""), step="04"))
@@ -562,6 +566,7 @@ def _check_and_save() -> None:
                 st.session_state.pop(k, None)
             st.toast(f"Saved {ds.name}: {ds.n_leads:,} leads", icon=":material/check_circle:")
             st.rerun()
+    return 2
 
 
 @st.cache_data(show_spinner="Counting training and test leads…")
@@ -570,10 +575,11 @@ def _summary(dataset_path: str, label_mode: str, feature_set: str, _stamp: str) 
     return training.pre_training_summary(dataset_path, training.TrainingConfig(label_mode, feature_set))
 
 
-def _train_section() -> None:
-    """Step 4: choose a dataset and options, see what training will use, train and follow the log."""
+def _train_section(step: int) -> None:
+    """Step ``step`` (after the check and save steps shown): choose a dataset and options, see what training will use,
+    train and follow the log."""
     ui.html(C.section("Train a model", "Runs the same command as a local training run and keeps every run, so "
-                      "you can compare them on the results page.", step="05"))
+                      "you can compare them on the results page.", step=f"{step:02d}"))
     root = ui.data_root()
     datasets = storage.list_datasets(root)
     names = [d.name for d in datasets]
@@ -701,8 +707,7 @@ def render() -> None:
                           "bundled sample) with live progress."))
     _map_section()
     _upload_section()
-    _check_and_save()
-    _train_section()
+    _train_section(3 + _check_and_save())
 
 
 render()
