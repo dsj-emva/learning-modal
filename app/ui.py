@@ -23,6 +23,8 @@ from emva.persist import BUNDLE_FILE, ModelBundle, load_bundle
 DATA_DIR_ENV: str = "DATA_DIR"
 DEFAULT_DATA_DIR: str = "runs/app"
 SELECTED_RUN_KEY: str = "selected_run"
+# Prefix of the plain session keys that mirror widget values across page switches (``restore`` / ``keep``).
+KEPT_PREFIX: str = "kept:"
 
 
 def html(markup: str) -> None:
@@ -144,11 +146,32 @@ def base_rate(run_id: str, out_dir: str, dataset_path: str) -> float:
                                       dataset_dates(dataset_path)[1])
 
 
+def restore(key: str, default: object, options: list | None = None) -> None:
+    """Before rendering the widget ``key`` (without its own default): set its value to the one it last had, else
+    ``default``. Streamlit deletes the state of a widget whose page is not shown, so ``keep`` mirrors each value into
+    a plain session key (``KEPT_PREFIX`` + ``key``) that survives page switches; a value no longer among ``options``
+    falls back to ``default``."""
+    value = st.session_state[key] if key in st.session_state else st.session_state.get(KEPT_PREFIX + key, default)
+    st.session_state[key] = value if options is None or value in options else default
+
+
+def keep(key: str) -> None:
+    """After rendering the widget ``key``: mirror its value for ``restore``."""
+    st.session_state[KEPT_PREFIX + key] = st.session_state[key]
+
+
+def forget_kept(prefix: str) -> None:
+    """Drop the mirrored values (``keep``) of every widget key starting with ``prefix``."""
+    for k in [k for k in st.session_state if isinstance(k, str) and k.startswith(KEPT_PREFIX + prefix)]:
+        del st.session_state[k]
+
+
 def no_runs_state(message: str) -> None:
     """The empty state shown when there is nothing to display yet, with a link to the upload page."""
     html(C.empty_state("Nothing trained yet", message))
     st.page_link("views/upload.py", label="Upload data and train a model", icon=":material/arrow_forward:")
 
 
-__all__ = ["bundle", "base_rate", "constant_columns", "currency", "data_root", "evaluation", "example", "generic_section",
-           "has_bundle", "html", "no_runs_state", "pick_run", "raw_lead", "run_constant_columns", "run_label"]
+__all__ = ["bundle", "base_rate", "constant_columns", "currency", "data_root", "evaluation", "example", "forget_kept",
+           "generic_section", "has_bundle", "html", "keep", "no_runs_state", "pick_run", "raw_lead", "restore",
+           "run_constant_columns", "run_label"]

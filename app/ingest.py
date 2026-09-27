@@ -304,6 +304,13 @@ def review_frame(f: MappingForm) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=list(REVIEW_COLUMNS))
 
 
+def review_targets(table: pd.DataFrame) -> list[str]:
+    """The target choices of a ``review_frame`` table: ``TARGET_OPTIONS``, plus ``VALUE_MAP_TARGET`` only when a row
+    shows it (a table's select column offers the same choices on every row, and ``apply_review`` refuses
+    ``VALUE_MAP_TARGET`` on a column without a value map)."""
+    return [*TARGET_OPTIONS, *([VALUE_MAP_TARGET] if (table.target == VALUE_MAP_TARGET).any() else [])]
+
+
 def _cell(v: object) -> str:
     """A table cell as stripped text ("" for None / NaN / NA, which an edited table may hold)."""
     return "" if v is None or (not isinstance(v, str) and pd.isna(v)) else str(v).strip()
@@ -701,4 +708,4 @@ __all__ = ["BUILTIN_MAPPINGS_DIR", "Conversion", "CoverageSummary", "DRAFT_CACHE
            "derived_features_frame", "draft", "draft_cache", "draft_is_cached", "expr_text", "extras_summary",
            "features_signature", "form_from_mapping", "form_from_toml", "form_toml", "is_plain", "load_choice",
            "mapping_choices", "mapping_from_form", "meanings", "missing_files", "outcome_frame", "profile",
-           "profile_frame", "raw_frames", "review_frame", "value_map_frame", "with_join", "with_role"]
+           "profile_frame", "raw_frames", "review_frame", "review_targets", "value_map_frame", "with_join", "with_role"]
