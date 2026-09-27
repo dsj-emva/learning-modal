@@ -274,6 +274,29 @@ def test_stage_map_value_map_and_crm_rows(converted: dict[str, bytes], frames: d
     assert (times.diff().dropna() > pd.Timedelta(0)).all()  # strictly ordered per lead
 
 
+def test_won_leads_without_a_deal_value_are_all_counted(frames: dict[str, pd.DataFrame],
+                                                        mapping: DatasetMapping) -> None:
+    """Keel QA m9: a Won lead's deal value left blank because the source value, or an input of a derived expression,
+    is blank is counted (``won_deal_values_missing``) next to the non-positive ones, so the two add up to the Won CRM
+    rows without a deal value (what validation reports)."""
+    leads = frames["leads.csv"].copy()
+    won = leads.index[leads.stage == "Closed Won"]
+    leads.loc[won[:3], "amount"] = None
+    leads.loc[won[3:5], "amount"] = "0"
+    leads["seats"] = "2"
+    leads.loc[won[5:9], "seats"] = None  # a blank argument of product() blanks the value
+    derived = replace(mapping, lead=replace(mapping.lead, deal_value=Expr(
+        "product", args=(Expr.col("l.amount"), Expr.col("l.seats")))))
+    files = convert({**frames, "leads.csv": leads}, derived)
+    meta, C = json.loads(files["dataset.json"]), _csv(files, "crm_history.csv")
+    no_value = int(((C.stage == "Won") & C.deal_value.isna()).sum())
+    assert (meta["won_deal_values_missing"], meta["non_positive_deal_values_blanked"]) == (7, 2)
+    assert meta["won_deal_values_missing"] + meta["non_positive_deal_values_blanked"] == no_value == 9
+    unmapped = convert(frames, replace(mapping, lead=replace(mapping.lead, deal_value=None)))
+    assert json.loads(unmapped["dataset.json"])["won_deal_values_missing"] == len(won)
+    assert json.loads(convert(frames, mapping)["dataset.json"])["won_deal_values_missing"] == 0
+
+
 def test_unmapped_columns_are_blank_and_email_placeholder_is_derived(frames: dict[str, pd.DataFrame],
                                                                      mapping: DatasetMapping) -> None:
     no_email = replace(mapping, fields=tuple(f for f in mapping.fields if f.source != "l.mail"))

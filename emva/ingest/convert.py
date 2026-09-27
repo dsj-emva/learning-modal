@@ -30,7 +30,9 @@ dataset store take:
   ``REORDERED_IDS_LISTED`` of their lead ids in ``crm_times_reordered_ids``). Every event
   must be at or before ``as_of`` (a later event means
   ``as_of`` is wrong: refused). A non-positive deal value is left blank (``log`` of the value model is undefined) and
-  counted.
+  counted (``non_positive_deal_values_blanked``); Won leads whose deal value is blank for any other reason (blank in
+  the source, a blank input of a derived expression, deal_value unmapped) are counted as ``won_deal_values_missing``,
+  so the two add up to the Won rows without a deal value that validation reports (Keel QA m9).
 - ``companies.csv`` and ``people.csv``: header only (company and person columns are not mapped).
 - ``extra_features.csv`` (Phase 10, ADR 0024; only when the mapping declares ``[[features]]``, which then needs
   ``features_confirmed = true``): ``lead_id`` plus one column per declared feature, named by its ``name``, holding
@@ -114,6 +116,8 @@ DERIVED_COUNTS: dict[str, str] = {
     "placeholder_emails": "placeholder emails <lead_id>@unmapped.invalid (email unmapped or blank)",
     "lost_dated_at_as_of": "Lost leads without close_at dated at as_of (lost_without_close = \"as_of\")",
     "non_positive_deal_values_blanked": "non-positive deal values of Won leads left blank",
+    "won_deal_values_missing": "Won leads with no deal value: blank in the source, a blank input of its expression "
+                               "(e.g. a product() argument) or deal_value unmapped",
     "crm_ties_separated": "CRM rows at the same time as the previous one, moved 1 s later",
     "crm_times_reordered": "CRM rows dated before the previous one (e.g. a win before created_at), moved 1 s after it",
 }
@@ -606,7 +610,8 @@ def convert(frames: dict[str, pd.DataFrame], mapping: DatasetMapping) -> dict[st
     if lead.deal_value is not None:
         deal_value = _numbers(evaluate(lead.deal_value, raw, "deal_value"), "deal_value").where(won)
         non_positive = deal_value <= 0
-        deal_value = deal_value.where(~non_positive)
+    missing_value = won & deal_value.isna()  # with non_positive: every Won lead left without a deal value
+    deal_value = deal_value.where(~non_positive)
 
     # CRM rows: New, then Contacted (when mapped), then the final stage, strictly increasing per lead
     own_contact = contact_t.notna() & (stage != "Contacted")
@@ -641,7 +646,8 @@ def convert(frames: dict[str, pd.DataFrame], mapping: DatasetMapping) -> dict[st
             "currency": mapping.currency or None, "leads": len(raw), "rows_dropped_without_created_at": int(no_created.sum()),
             "final_stage_counts": {k: int(v) for k, v in stage.value_counts().sort_index().items()},
             "placeholder_emails": placeholders, "lost_dated_at_as_of": int(lost_no_close.sum()),
-            "non_positive_deal_values_blanked": int(non_positive.sum()), "crm_ties_separated": ties,
+            "non_positive_deal_values_blanked": int(non_positive.sum()),
+            "won_deal_values_missing": int(missing_value.sum()), "crm_ties_separated": ties,
             "crm_times_reordered": reordered, "crm_times_reordered_ids": reordered_ids,
             "mapped_targets": mapped, "coverage": coverage(files, mapped),
             "outcome_fill_gaps": outcome_fill_gaps(raw, mapping, stage, extras)}
