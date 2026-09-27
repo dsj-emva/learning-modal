@@ -190,6 +190,32 @@ def test_bad_dataset_json_is_an_error(converted: dict[str, bytes]) -> None:
         _find(validate_files({**converted, "dataset.json": content}), "dataset.json", None, text)
 
 
+def test_outcome_fill_gaps_are_notes_and_older_dataset_json_without_them_validates(
+        converted: dict[str, bytes]) -> None:
+    """Keel fix round (M6): each outcome_fill_gaps entry is an amber note on the file the column feeds (never an
+    error); a dataset.json converted before the key existed validates as before; a malformed key is an error."""
+    meta = json.loads(converted["dataset.json"])
+    assert meta["outcome_fill_gaps"] == []
+    gaps = [{"source": "deal.business_segment", "target": "answers.what_to_solve", "won_filled": 1.0,
+             "lost_filled": 0.0},
+            {"source": "deal.lead_type", "target": "feature:landing_page", "won_filled": 0.99, "lost_filled": 0}]
+    r = validate_files({**converted, "dataset.json": json.dumps({**meta, "outcome_fill_gaps": gaps}).encode()})
+    assert r.ok, r.errors
+    leads = [i for i in r.warnings if i.file == "historical_leads.csv" and i.column == "answers.what_to_solve"]
+    assert [i.message for i in leads] == [
+        "Filled for won leads but not for lost ones: probably known only after the outcome (label leakage). "
+        "deal.business_segment -> answers.what_to_solve (won 100%, lost 0%). Map such a column to ignore (or remove "
+        "the feature) unless it is known when the lead is submitted."]
+    assert any("deal.lead_type -> extra feature landing_page (won 99%, lost 0%)" in i.message
+               for i in r.warnings if i.file == "extra_features.csv" and i.column == "landing_page")
+    older = {k: v for k, v in meta.items() if k != "outcome_fill_gaps"}
+    r = validate_files({**converted, "dataset.json": json.dumps(older).encode()})
+    assert r.ok and not [i for i in r.warnings if "label leakage" in i.message]
+    for bad in ({"source": "x"}, [{"source": "x", "target": "y", "won_filled": "1", "lost_filled": 0}]):
+        _find(validate_files({**converted, "dataset.json": json.dumps({**meta, "outcome_fill_gaps": bad}).encode()}),
+              "dataset.json", "outcome_fill_gaps", "must be a list")
+
+
 def test_unconfirmed_or_broken_mapping_is_an_error(converted: dict[str, bytes]) -> None:
     text = converted["mapping.toml"].decode()
     draft = text.replace("outcome_confirmed = true", "outcome_confirmed = false").encode()

@@ -13,7 +13,8 @@ the mapping so the draft is reproducible without the API). A person reviews the 
 
 ``convert`` reads the source files a confirmed mapping names from ``--raw`` and writes the five training files,
 ``dataset.json`` and a copy of the mapping (``mapping.toml``) into ``--out``; it refuses a draft. It prints the
-coverage summary and every count of derived or adjusted values (``emva.ingest.convert.DERIVED_COUNTS``).
+coverage summary, every count of derived or adjusted values (``emva.ingest.convert.DERIVED_COUNTS``) and the mapped
+columns filled for won leads but not for lost ones (``outcome_fill_gaps``: probable label leakage; a warning only).
 
 ``score`` scores new leads given in the source format: ``--raw`` is a CSV of primary-source rows (other source files
 the mapping's submit-time part needs are read from the same directory) or a directory holding the source files. The
@@ -37,7 +38,14 @@ import pandas as pd
 from emva.context.agent import MODEL_ID, make_client
 from emva.context.cache import ReplyCache
 from emva.eval.evaluation_only import is_evaluation_only
-from emva.ingest.convert import COMPANIES_COLUMNS, DERIVED_COUNTS, convert, convert_leads, frames_from_bytes
+from emva.ingest.convert import (
+    COMPANIES_COLUMNS,
+    DERIVED_COUNTS,
+    convert,
+    convert_leads,
+    fill_gap_text,
+    frames_from_bytes,
+)
 from emva.ingest.draft import draft_mapping, is_cached, source_name
 from emva.ingest.mapping import MAX_SOURCES, dump_mapping, load_mapping
 from emva.ingest.profile import profile
@@ -104,6 +112,11 @@ def _convert(a: argparse.Namespace) -> None:
         print(f"  {key} = {meta[key]}: {what}")
     if meta["crm_times_reordered"]:
         print(f"  reordered leads, e.g. {meta['crm_times_reordered_ids']}")
+    gaps = meta["outcome_fill_gaps"]
+    print(f"filled for won leads but not for lost ones (probable label leakage; dataset.json outcome_fill_gaps): "
+          f"{len(gaps) or 'none'}")
+    for gap in gaps:
+        print(f"  {fill_gap_text(gap)}")
 
 
 def _score(a: argparse.Namespace) -> None:

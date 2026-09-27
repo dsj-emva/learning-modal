@@ -19,9 +19,18 @@ from emva.context.cache import ReplyCache
 from emva.context.contract import ContractError
 from emva.design import fixed_columns
 from emva.features import CATS_V2
-from emva.ingest.convert import PLACEHOLDER_DOMAIN, convert, convert_leads, evaluate, frames_from_bytes
+from emva.ingest.convert import (
+    PLACEHOLDER_DOMAIN,
+    convert,
+    convert_leads,
+    evaluate,
+    extra_values,
+    fill_gap_text,
+    frames_from_bytes,
+    outcome_fill_gaps,
+)
 from emva.ingest.draft import RESPONSE_SCHEMA, draft_mapping, is_cached, render_profiles
-from emva.ingest.mapping import LEAD_COLUMNS, TARGETS, DatasetMapping, Expr, dump_mapping, load_mapping
+from emva.ingest.mapping import LEAD_COLUMNS, TARGETS, DatasetMapping, Expr, FieldMap, dump_mapping, load_mapping
 from emva.ingest.profile import NAME_TOKEN, profile, redact
 from emva.io import load
 from emva.pipeline import run
@@ -398,6 +407,80 @@ def test_converted_output_passes_app_validation(converted: dict[str, bytes]) -> 
     assert report.ok, report.errors
 
 
+# --- outcome fill gaps: a mapped column filled for won leads only (Keel fix round, M6) --------------------------------
+
+LEAKY_MAPPING = MAPPING.replace("outcome_confirmed = true\n", "outcome_confirmed = true\nfeatures_confirmed = true\n") + '''
+[[sources]]
+name = "d"
+file = "deals.csv"
+join_on = "id"
+
+[[fields]]
+source = "d.segment"
+target = "answers.what_to_solve"
+
+[[features]]
+source = "d.segment"
+kind = "categorical"
+name = "segment"
+
+[[features]]
+source = "l.size"
+kind = "categorical"
+name = "size"
+'''
+
+
+def _with_deals(frames: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
+    """``frames`` plus a closed-deals file (Olist-style): one row per won lead only, keyed by the lead id."""
+    won = frames["leads.csv"][frames["leads.csv"].stage == "Closed Won"]
+    deals = pd.DataFrame({"id": won.id, "segment": ["retail", "tech"] * (len(won) // 2) + ["retail"] * (len(won) % 2)})
+    return {**frames, "deals.csv": deals.astype(object)}
+
+
+def test_a_won_only_column_mapped_to_a_field_or_feature_is_flagged(frames: dict[str, pd.DataFrame]) -> None:
+    """The column exists only for won leads: flagged as a field and as a feature, with the shares; columns filled on
+    every lead (l.mail) or blank at random (l.source, l.size, o.country) are not; the files still convert."""
+    files = convert(_with_deals(frames), load_mapping(LEAKY_MAPPING))
+    meta = json.loads(files["dataset.json"])
+    assert meta["outcome_fill_gaps"] == [
+        {"source": "d.segment", "target": "answers.what_to_solve", "won_filled": 1.0, "lost_filled": 0.0},
+        {"source": "d.segment", "target": "feature:segment", "won_filled": 1.0, "lost_filled": 0.0}]
+    assert [fill_gap_text(g) for g in meta["outcome_fill_gaps"]] == [
+        "d.segment -> answers.what_to_solve (won 100%, lost 0%)",
+        "d.segment -> extra feature segment (won 100%, lost 0%)"]
+    report = validate_files(files)
+    assert report.ok, report.errors  # a warning, never a block
+    notes = [(w.file, w.column, w.message) for w in report.warnings if "label leakage" in w.message]
+    assert [(f, c) for f, c, _ in notes] == [("historical_leads.csv", "answers.what_to_solve"),
+                                             ("extra_features.csv", "segment")]
+    assert notes[0][2].startswith("Filled for won leads but not for lost ones: probably known only after the outcome")
+    assert "d.segment -> answers.what_to_solve (won 100%, lost 0%)" in notes[0][2]
+
+
+def test_no_fill_gaps_without_a_won_only_column(converted: dict[str, bytes]) -> None:
+    meta = json.loads(converted["dataset.json"])
+    assert meta["outcome_fill_gaps"] == []
+    assert not [w for w in validate_files(converted).warnings if "label leakage" in w.message]
+
+
+def test_fill_gap_threshold_is_inclusive_and_needs_both_outcomes(mapping: DatasetMapping) -> None:
+    """Hand-built: 4 won, 4 lost, 1 open. Filled for all won and half the lost = a 0.50 gap (flagged); 3 of 4 lost =
+    0.25 (not); the open lead does not count; a value map is listed with its targets; no Lost lead = nothing."""
+    stage = pd.Series(["Won"] * 4 + ["Lost"] * 4 + ["Qualified"])
+    raw = pd.DataFrame({"l.half": ["x"] * 4 + ["x", "x", None, None, None],
+                        "l.most": ["x"] * 4 + ["x", "x", "x", None, None],
+                        "l.src": ["a"] * 4 + [None] * 4 + ["a"]})
+    m = replace(mapping, fields=(FieldMap("l.half", "answers.country"), FieldMap("l.most", "answers.job_title"),
+                                 FieldMap("l.src", value_map={"a": {"utm_source": "google", "utm_medium": "cpc"}}),
+                                 FieldMap("l.half", "ignore")), features=())
+    gaps = outcome_fill_gaps(raw, m, stage, extra_values(raw, m))
+    assert gaps == [{"source": "l.half", "target": "answers.country", "won_filled": 1.0, "lost_filled": 0.5},
+                    {"source": "l.src", "target": "utm_source, utm_medium", "won_filled": 1.0, "lost_filled": 0.0}]
+    no_lost = stage.replace("Lost", "Qualified")
+    assert outcome_fill_gaps(raw, m, no_lost, extra_values(raw, m)) == []
+
+
 # --- pipeline and report on a converted dataset ---------------------------------------------------------------------
 
 @pytest.fixture(scope="module")
@@ -655,6 +738,7 @@ def test_committed_mapping_converts_its_fixture(name: str) -> None:
                                                   f"{MIN_LEADS}"]  # fixtures are a few dozen rows
     meta = json.loads(files["dataset.json"])
     assert len(meta["coverage"]) == 39 and meta["mapping"] == name
+    assert meta["outcome_fill_gaps"] == []  # the hand-written mappings ignore every won-only column
 
 
 def test_cli_convert_writes_the_dataset_and_refuses_a_draft(tmp_path: Path,
@@ -668,6 +752,7 @@ def test_cli_convert_writes_the_dataset_and_refuses_a_draft(tmp_path: Path,
 
     meta = json.loads((tmp_path / "out" / "dataset.json").read_text())
     assert all(f"{k} = {meta[k]}: " in printed for k in DERIVED_COUNTS) and meta["lost_dated_at_as_of"] > 0
+    assert "outcome_fill_gaps): none" in printed
     assert {p.name for p in (tmp_path / "out").iterdir()} == {
         "historical_leads.csv", "crm_history.csv", "companies.csv", "people.csv", "dataset.json", "mapping.toml",
         "extra_features.csv"}  # the mapping declares [[features]] (Phase 10)
