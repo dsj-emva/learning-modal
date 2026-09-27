@@ -105,8 +105,8 @@ def test_removing_a_refused_upload_withdraws_its_check_results(monkeypatch: pyte
 
     at = _sign_in(_app(monkeypatch, tmp_path), "letmein")
     at.switch_page("views/upload.py").run()
-    at.file_uploader(key="up_historical_leads.csv").upload("historical_leads.csv",
-                                                             (DATA_V1 / "historical_leads.csv").read_bytes(), "text/csv")
+    leads = (DATA_V1 / "historical_leads.csv").read_bytes()
+    at.file_uploader(key="up_historical_leads.csv").upload("historical_leads.csv", leads, "text/csv")
     at.file_uploader(key="up_crm_history.csv").upload("ground_truth_labels.csv", b"lead_id,y\nL1,1\n", "text/csv")
     at.run()
     assert "Refused ground_truth_labels.csv" in _text(at)

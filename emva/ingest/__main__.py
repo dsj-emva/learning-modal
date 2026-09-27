@@ -21,9 +21,9 @@ the mapping's submit-time part needs are read from the same directory) or a dire
 rows go through ``emva.ingest.convert.convert_leads`` (no outcome columns needed; every row needs its ``created_at``
 column(s) filled, else the command fails naming the rows; a row whose value-map column holds a value the map does not
 list is not scored and is named on stderr, and the command fails only when every row is) and
-``emva.scoring.score_leads`` with ``RUN_DIR/model.joblib`` (written by ``python -m emva --out RUN_DIR``). ``--data`` is the dataset whose
-``companies.csv`` the enrichment join reads; without it an empty one is used, which is what every converted dataset
-holds (the converter writes companies.csv header-only). Writes ``--out`` or prints the scores as CSV.
+``emva.scoring.score_leads`` with ``RUN_DIR/model.joblib`` (written by ``python -m emva --out RUN_DIR``). ``--data`` is
+the dataset whose ``companies.csv`` the enrichment join reads; without it an empty one is used, which is what every
+converted dataset holds (the converter writes companies.csv header-only). Writes ``--out`` or prints the scores as CSV.
 """
 from __future__ import annotations
 

@@ -34,6 +34,10 @@ from emva.pipeline import build
 RUN_OUTPUTS: tuple[str, ...] = ("scores.csv", "weights.csv", BUNDLE_FILE)
 # Names of the summary columns ``python -m emva`` prints (``emva.eval.metrics.summary``).
 SUMMARY_COLUMNS: tuple[str, ...] = ("auc", "brier", "top20_wins", "top20_revenue")
+# Shown under the training log: its summary table is the pipeline's, whose revenue share imputes (ADR 0002).
+LOG_SUMMARY_NOTE: str = ("The summary table in the log is the pipeline's own (python -m emva): its top20_revenue "
+                         "counts a won test lead without a recorded deal value at the model's estimate. The results "
+                         "page counts recorded deal values only, so its revenue figures differ.")
 
 
 @dataclass(frozen=True)
@@ -218,6 +222,7 @@ def report_available(dataset_path: str | Path) -> bool:
     return rules_available(dataset_path) or is_converted(dataset_path)
 
 
-__all__ = ["CHILD_ENV_KEYS", "RUN_OUTPUTS", "TrainingConfig", "TrainingSummary", "child_env", "feature_set_options",
+__all__ = ["CHILD_ENV_KEYS", "LOG_SUMMARY_NOTE", "RUN_OUTPUTS", "TrainingConfig", "TrainingSummary", "child_env",
+           "feature_set_options",
            "finish_run", "parse_summary", "pre_training_summary", "report_available", "report_command",
            "rules_available", "start_training", "training_command"]

@@ -30,7 +30,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from app.storage import DATASET_META_FILE, RULES_FILE, is_converted
+from app.storage import DATASET_META_FILE, RULES_FILE, SAMPLE_DATASET_NAME, is_converted
 from emva.constants import AS_OF, CATS, CATS_V2_CANDIDATES, TEST_FROM, TOP_FRACTION
 from emva.dataset_meta import dataset_dates
 from emva.eval.bootstrap import N_RESAMPLES, SEED, PairedComparison, auc_ci
@@ -224,6 +224,34 @@ def baseline_scores(dataset: str | Path, test_ids: pd.Index) -> tuple[pd.DataFra
     return base, None
 
 
+# Where a run's numbers come from, said near the top of the results page (claims policy: "on simulated data" for the
+# sample; a converted export is someone's real data, public or not).
+SAMPLE_DATA_NOTE: str = "Trained on the bundled synthetic sample: every number here is on simulated data."
+CONVERTED_DATA_NOTE: str = ("Trained on a converted dataset (dataset.json): every number here is on that source's "
+                            "data, not on simulated data. For a public export, say \"on public data\"; check its "
+                            "licence before quoting.")
+REPORT_TITLE: str = "Full standard report"
+
+
+def data_note(dataset_name: str, dataset_path: str | Path) -> str:
+    """``SAMPLE_DATA_NOTE`` for the bundled sample, ``CONVERTED_DATA_NOTE`` for a converted dataset (``dataset.json``),
+    else ``""`` (an upload in EMVA's format: its numbers are on whatever the uploader's data are)."""
+    if dataset_name == SAMPLE_DATASET_NAME:
+        return SAMPLE_DATA_NOTE
+    return CONVERTED_DATA_NOTE if is_converted(dataset_path) else ""
+
+
+def report_title(models: Iterable[str] | None) -> str:
+    """The results page's title for the standard report: ``REPORT_TITLE`` plus the rows the report holds, from the
+    standard table's ``models`` (e.g. "(baseline vs model vs status quo)", "(model only)"); ``REPORT_TITLE`` alone
+    when they are not known (None: the selected test set could not be evaluated)."""
+    if models is None:
+        return REPORT_TITLE
+    present = set(models)
+    rows = [*(["baseline"] if BASELINE in present else []), "model", *(["status quo"] if STATUS_QUO in present else [])]
+    return f"{REPORT_TITLE} ({' vs '.join(rows) if len(rows) > 1 else 'model only'})"
+
+
 def kpi_reference(models: Iterable[str]) -> str | None:
     """The row the KPI strip compares this model with: the first of ``KPI_REFERENCES`` among ``models``, else None."""
     present = set(models)
@@ -380,7 +408,8 @@ def top_fraction_label() -> str:
     return f"top {int(TOP_FRACTION * 100)}%"
 
 
-__all__ = ["BASELINE", "BASELINE_CONVERTED", "BASELINE_FAILED", "CANDIDATE", "EXTRA_LABEL", "Evaluation",
+__all__ = ["BASELINE", "BASELINE_CONVERTED", "BASELINE_FAILED", "CANDIDATE", "CONVERTED_DATA_NOTE", "EXTRA_LABEL",
+           "Evaluation", "REPORT_TITLE", "SAMPLE_DATA_NOTE", "data_note", "report_title",
            "FEATURE_LABELS", "GENERIC_MISSINGNESS_FLAG", "GenericSection", "KPI_REFERENCES", "LEAKAGE_AUC_FLAG",
            "MISSINGNESS_FLAG_TEXT", "STATUS_QUO", "TEST_SETS",
            "VALUE_COLUMNS", "auc_month", "baseline_scores", "calibration", "evaluate", "feature_label",

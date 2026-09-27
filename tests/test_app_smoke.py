@@ -58,6 +58,10 @@ def test_empty_root_shows_empty_states(monkeypatch: pytest.MonkeyPatch, tmp_path
     at = _sign_in(_app(monkeypatch, tmp_path / "fresh"), "letmein")
     assert not at.exception and "Nothing trained yet" in _text(at)
     assert (tmp_path / "fresh" / "registry.json").exists()  # layout created on first start
+    at.switch_page("views/upload.py").run()
+    # nothing validated yet: the check and save steps are not shown, so training is step 03, not 05 (c4)
+    assert not at.exception and '<span class="step">03</span>Train a model' in _text(at)
+    assert "05" not in "".join(m.value for m in at.markdown if 'class="step"' in m.value)
 
 
 def test_every_page_renders_with_a_trained_run(monkeypatch: pytest.MonkeyPatch, app_trained) -> None:
@@ -94,6 +98,7 @@ def test_results_page_amounts_and_constant_signals(monkeypatch: pytest.MonkeyPat
 
     at = _sign_in(_app(monkeypatch, app_trained[0]), "letmein")
     assert not at.exception and "£" in _stats(at) and "same on every training lead" not in _captions(at)
+    assert "status-quo rules" not in _text(at)  # the subtitle promises no comparison (m3)
     at = _sign_in(_app(monkeypatch, app_converted[0]), "letmein")
     assert not at.exception, at.exception
     assert "BRL " in _stats(at) and "£" not in _stats(at)
@@ -114,6 +119,15 @@ def test_components_escape_user_text() -> None:
     html = C.file_card("<x>.csv", "Leads", [Issue("f", "<col>", "<script>alert(1)</script>", (1, 2))], [], True)
     assert "<script>" not in html and "&lt;script&gt;" in html and "&lt;col&gt;" in html
     assert C.points(-7.4) == "−7" and C.points(3) == "+3" and C.pct(0.2345) == "23.4%"
+
+
+def test_logo_is_the_glyph_then_the_escaped_name() -> None:
+    """st.logo's image (glyph square in the accent, then the name) and its collapsed-sidebar icon (the square)."""
+    from app import theme
+
+    logo, icon = C.logo_svg(theme.PALETTE, "<Keel>"), C.logo_svg(theme.PALETTE)
+    assert logo.startswith("<svg") and theme.PALETTE["accent"] in logo and "&lt;Keel&gt;</text>" in logo
+    assert icon.startswith("<svg") and theme.PALETTE["accent"] in icon and "<text" not in icon
 
 
 def test_money_formats_by_the_dataset_currency() -> None:
@@ -453,6 +467,10 @@ def test_map_with_extras_confirm_both_convert_save_train_generic_and_see_the_com
         time.sleep(0.5)
     run = storage.get_run(tmp_path, run_id)
     assert run.status == "succeeded" and run.args["feature_set"] == "generic" and run.has_report, run.error
+    at.run()  # the finished run's log panel says whose summary table it shows (c5)
+    assert not at.exception, at.exception
+    from app import training
+    assert training.LOG_SUMMARY_NOTE in _captions(at) and "top20_revenue" in "".join(c.value for c in at.code)
     at.switch_page("views/results.py").run()
     assert not at.exception, at.exception
     page = _text(at)
@@ -498,3 +516,17 @@ def test_generic_run_score_page_offers_the_extras(monkeypatch: pytest.MonkeyPatc
     page = _text(at)  # an unseen extra value is scored as other, with a note naming the lead (M7)
     assert "Unlisted landing_page scores as other." in page and "Some leads were not scored" not in page
     assert f"never-seen-page&#x27; (lead {raw.mql_id.iloc[1]})" in page
+
+
+def test_points_chart_fits_a_phone() -> None:
+    """Long signal labels are cut (distinct, full label on hover) and the axis title is short (c2)."""
+    from app import charts
+
+    long_a, long_b = "Extra · landing_page · " + "a" * 32, "Extra · landing_page · " + "a" * 31 + "b"
+    labels = ["Channel · meta", long_a, "Extra · landing_page · 40dec9f3d5259a3d2dbcdab2114fae47"]
+    cut = charts.short_labels(labels)
+    assert cut[0] == labels[0] and all(len(c) <= charts.POINTS_LABEL_MAX for c in cut) and cut[2].endswith("…")
+    assert charts.short_labels([long_a, long_b]) == [long_a, long_b]  # same cut form: both stay whole
+    fig = charts.points_chart(labels, [3.0, -2.0, 1.0])
+    assert list(fig.data[0].y) == cut and list(fig.data[0].customdata) == labels
+    assert fig.layout.xaxis.title.text == charts.POINTS_AXIS_TITLE and len(charts.POINTS_AXIS_TITLE) <= 24

@@ -40,17 +40,14 @@ def _css() -> str:
 header[data-testid="stHeader"] {{ background:transparent; }}
 .block-container {{ padding-top:2.5rem; padding-bottom:4rem; max-width:1240px; }}
 [data-testid="stSidebar"] {{ border-right:1px solid var(--hairline); }}
-[data-testid="stSidebar"] [data-testid="stPageLink"] a {{ border-radius:8px; padding:6px 10px; }}
-[data-testid="stSidebar"] [data-testid="stPageLink"] a span {{ font-weight:500; color:var(--ink); }}
-[data-testid="stSidebar"] [data-testid="stPageLink-NavLink"][aria-current="page"],
-[data-testid="stSidebar"] [data-testid="stPageLink"] a[aria-current="page"] {{ background:var(--accent-tint); }}
-[data-testid="stSidebar"] [data-testid="stPageLink"] a[aria-current="page"] span {{ color:var(--accent-dark); }}
 code, pre, [data-testid="stCode"] {{ font-family:var(--mono) !important; }}
 [data-testid="stExpander"] details {{ border-color:var(--hairline); background:var(--surface); border-radius:var(--r); }}
 [data-testid="stDataFrame"] {{ border-radius:var(--r); }}
 .stButton button[kind="primary"], .stFormSubmitButton button[kind="primaryFormSubmit"],
 .stDownloadButton button {{ font-weight:600; letter-spacing:.01em; }}
 [data-testid="stFileUploaderDropzone"] {{ background:var(--surface); border:1px dashed var(--hairline); }}
+/* a single-file uploader (its input has no multiple attribute) gets no "Add files" button next to its file */
+[data-testid="stFileUploaderDropzone"]:not(:has(input[multiple])) button[aria-label="Add files"] {{ display:none; }}
 hr {{ border-color:var(--hairline) !important; }}
 
 /* wordmark */

@@ -85,8 +85,9 @@ def _result(res: scoring.LeadScore, base: float, run: storage.Run, bundle: Model
                           "lead before training and scoring. It is scored here anyway.", "warn"))
     b = scoring.breakdown(res.points, ui.run_constant_columns(run))
     start, signals, total = b.shown()
-    ui.html(C.section("Why this score", "Every signal that moved this lead away from the starting score. Signals at "
-                                        "their comparison level add nothing and are not listed."))
+    ui.html(C.section("Why this score", "Every signal that moved this lead away from the starting score; 20 points "
+                                        "doubles the odds of closing. Signals at their comparison level add nothing "
+                                        "and are not listed."))
     start_label = "Starting score" if not b.folded else \
         f"Starting score (incl. {b.folded} signal{'s' * (b.folded != 1)} the same on every training lead)"
     ui.html(C.stats([(start_label, C.points(start) + " pts"), ("Signals", C.points(signals) + " pts"),
