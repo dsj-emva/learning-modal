@@ -152,7 +152,11 @@ def _source_mode(run: storage.Run, bundle: ModelBundle, mapping: DatasetMapping)
                     frames = scoring.frames_from_source_uploads(mapping, {f.name: f.getvalue() for f in files})
             if frames is not None:
                 st.session_state[state] = scoring.score_source(bundle, mapping, frames, run.dataset_path)
-        except ValueError as e:  # includes UnknownLevelError and convert_leads' refusals
+        except UnknownLevelError as e:
+            st.session_state.pop(state, None)
+            ui.html(C.callout(" ".join(f"{line}." for line in scoring.source_problem_lines(e)), "bad",
+                              lead="These leads have values this model has not seen:"))
+        except ValueError as e:  # convert_leads' refusals and malformed files
             st.session_state.pop(state, None)
             ui.html(C.callout(str(e), "bad", lead="These leads cannot be scored:"))
     with right:
@@ -219,13 +223,16 @@ def render() -> None:
                                 placeholder="lead_id, e.g. L00042",
                                 help="Prefills the form with that lead's answers and session, to see how the model "
                                      "scored a real submission.").strip()
-        defaults = scoring.defaults_for(run.dataset_path)
+        example = ui.example(run.run_id, str(Path(run.out_dir) / BUNDLE_FILE), run.dataset_path)
+        defaults = example.values
         if lead_id:
             row = ui.raw_lead(run.dataset_path, lead_id)
             if row is None:
                 ui.html(C.callout("Showing the example lead instead.", "warn", lead=f"No lead {lead_id} in this dataset."))
             else:
                 defaults = scoring.values_from_lead(row)
+        if example.note is not None and not lead_id:
+            ui.html(C.callout(example.note, "info"))
         values = _form(defaults, f"{run.run_id}_{lead_id or 'example'}")
     with right:
         if values is None and f"score_{run.run_id}" not in st.session_state:
@@ -237,8 +244,9 @@ def render() -> None:
                 st.session_state[f"score_{run.run_id}"] = scoring.score_form(bundle, values, run.dataset_path)
             except UnknownLevelError as e:
                 st.session_state.pop(f"score_{run.run_id}", None)
-                ui.html(C.callout(f"{e}. Choose one of the allowed values, or retrain on data that contains it.",
-                                  "bad", lead="This model has not seen one of these values."))
+                ui.html(C.callout(" ".join(f"{line}." for line in scoring.form_problem_lines(e))
+                                  + " Change these fields to give an allowed value, or retrain on data that contains "
+                                    "it.", "bad", lead="This model has not seen some of these values."))
                 return
             except ValueError as e:
                 st.session_state.pop(f"score_{run.run_id}", None)

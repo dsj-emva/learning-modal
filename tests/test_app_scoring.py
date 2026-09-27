@@ -80,6 +80,61 @@ def test_unknown_level_and_bad_input(trained) -> None:
     assert issubclass(UnknownLevelError, ValueError)
 
 
+def test_example_is_the_built_in_lead_when_the_model_knows_its_levels(trained, converted, generic) -> None:
+    for bundle, data in (trained[:2], converted[:2], generic[:2]):
+        ex = scoring.example_for(bundle, data)
+        assert ex == scoring.Example(scoring.defaults_for(data)) and ex.lead_id is None and ex.note is None
+
+
+@pytest.fixture(scope="module")
+def converted_legacy(app_converted_legacy):
+    """``(bundle, dataset dir)`` of the legacy-labels, legacy-features run on the converted Olist-shaped fixture."""
+    _, run = app_converted_legacy
+    return load_bundle(Path(run.out_dir) / "model.joblib"), Path(run.dataset_path)
+
+
+def test_legacy_run_on_converted_data_starts_from_a_training_lead(converted_legacy) -> None:
+    """Keel QA M1: the legacy design knows only the levels seen in training, so the built-in example is refused; the
+    form starts from the first training-period lead the model can score, and says so."""
+    from emva.dataset_meta import dataset_dates
+
+    bundle, data = converted_legacy
+    with pytest.raises(UnknownLevelError) as e:
+        scoring.score_form(bundle, scoring.defaults_for(data), data)
+    assert {"band", "text", "seniority", "time_on_page"} <= {p.feature for p in e.value.problems}  # all, at once
+    ex = scoring.example_for(bundle, data)
+    raw = read_leads(data / "historical_leads.csv")
+    assert ex.lead_id in raw.index and raw.created_at[ex.lead_id] < pd.Timestamp(dataset_dates(data)[1], tz="UTC")
+    assert ex.note == (f"Example taken from training lead {ex.lead_id}: the built-in example uses values this model "
+                       "never saw.")
+    assert ex.values == scoring.values_from_lead(raw.loc[ex.lead_id])
+    got = scoring.score_form(bundle, ex.values, data)
+    assert 0 < got.p < 1
+    assert scoring.example_for(bundle, data) == ex  # deterministic
+
+
+def test_level_problems_use_the_form_labels(converted_legacy) -> None:
+    bundle, data = converted_legacy
+    with pytest.raises(UnknownLevelError) as e:
+        scoring.score_form(bundle, scoring.defaults_for(data), data)
+    lines = scoring.form_problem_lines(e.value)
+    assert len(lines) == len(e.value.problems)
+    assert f"Company size (typed): 51-200 was not seen in training; allowed: {', '.join(bundle.levels['band'])}" in lines
+    assert any(line.startswith("Job title → Seniority: senior was not seen in training; allowed: ") for line in lines)
+    assert any(line.startswith("What do they want to solve? → What they want to solve: specific ") for line in lines)
+    assert not any("form-" in line or "'band'" in line for line in lines)  # no generated ids, no internal names
+
+
+def test_source_level_problems_name_the_feature_and_the_leads() -> None:
+    from emva.scoring import LevelProblem
+
+    e = UnknownLevelError([LevelProblem("band", ("51-200", "5000+"), tuple(f"m{i}" for i in range(7)), ("1-10",)),
+                           LevelProblem("x_page", ("p9",), ("m1",), ("p1", "other"))])
+    assert scoring.source_problem_lines(e) == [
+        "Company size: 51-200, 5000+ were not seen in training; allowed: 1-10 (lead(s) m0, m1, m2, m3, m4, ...)",
+        "Extra · page: p9 was not seen in training; allowed: p1, other (lead(s) m1)"]
+
+
 def test_bot_flag_is_reported_not_dropped(trained) -> None:
     bundle, data, _ = trained
     got = scoring.score_form(bundle, {**scoring.defaults_for(data), "time_on_page_s": 3.0}, data)

@@ -5,6 +5,12 @@ labels), collects a dict of values and calls ``score_form``, which builds the le
 scores it with ``score_leads`` / ``points_breakdown`` against the run's bundle, so the app never re-implements a
 feature. Session fields default to typical values because a blank one sets ``session_missing=yes`` (v2 features).
 
+The example lead (``example_for``): ``defaults_for`` (``DEFAULTS``), unless the run's bundle has not seen one of its
+levels, which happens with the legacy feature set (its design keeps only the levels seen in training, so a converted
+dataset's legacy run may know a single company size). Then the form starts from the first training-period lead of the
+dataset that the model can score, and the page says so. A refused lead's ``UnknownLevelError`` is shown field by field
+(``form_problem_lines``, ``source_problem_lines``) with the form labels, not the model's feature names.
+
 Source format (Phase 9): when the run's dataset was converted with a mapping (``mapping.toml``, read by
 ``run_mapping`` through ``app.storage.read_mapping``), leads can also be given as the source sends them:
 ``source_fields`` lists the raw columns the mapping reads at submit time
@@ -33,12 +39,25 @@ import pandas as pd
 from app.results import feature_label
 from app.storage import get_dataset, read_mapping
 from emva.constants import MISSING
+from emva.dataset_meta import dataset_dates
 from emva.features import SESSION_INPUTS
 from emva.generic import EXTRA_PREFIX, OTHER, ExtraKind
 from emva.ingest.convert import convert_leads, frames_from_bytes
 from emva.ingest.mapping import COLUMN_OP, IGNORE, DatasetMapping, load_mapping
+from emva.io import read_leads
 from emva.persist import ModelBundle
-from emva.scoring import FieldSpec, is_blank, lead_from_form, points_breakdown, score_leads, submit_time_fields
+from emva.scoring import (
+    LEADS_LISTED,
+    FieldSpec,
+    UnknownLevelError,
+    featurise,
+    is_blank,
+    lead_from_form,
+    level_problems,
+    points_breakdown,
+    score_leads,
+    submit_time_fields,
+)
 
 # Sections of the form, in display order: title -> field names.
 SECTIONS: dict[str, tuple[str, ...]] = {
@@ -93,6 +112,95 @@ def values_from_lead(row: pd.Series) -> dict[str, object]:
     for f in submit_time_fields():
         out[f.name] = f.coerce(answers.get(f.name) if f.source == "answers" else row.get(f.name))
     return out
+
+
+# Model feature -> the form fields it is computed from (``emva.features.add_features``; ``add_features_v2`` reads the
+# same fields), for plain error messages. Company features come from the enrichment join on the domain (or name).
+FEATURE_FIELDS: dict[str, tuple[str, ...]] = {
+    "channel": ("utm_source", "utm_medium"), "form_variant": ("form_variant",), "band": ("company_size",),
+    "email": ("email",), "text": ("what_to_solve",), "seniority": ("job_title",), "spend": ("company_domain",),
+    "crm": ("company_domain",), "hiring": ("company_domain",), "sector": ("company_domain",),
+    "no_company": ("company_domain",), "time_on_page": ("time_on_page_s",), "hesitation_90s": ("hesitation_ms",),
+    "sessions_3plus": ("sessions_before_convert",), "viewed_pricing": ("viewed_pricing",), "search_term": ("utm_term",),
+    "business_hours": ("submitted_weekday", "local_submit_hour"), "ip_country": ("ip_country", "country"),
+    "ip_type": ("is_datacenter_ip",), "c_budget": ("budget",), "c_timeline": ("timeline",),
+    "edits_1_4": ("field_edit_count",),
+}
+# Features whose level is the typed value itself, so the message needs no feature name.
+TYPED_LEVEL_FEATURES: frozenset[str] = frozenset({"band", "form_variant", "c_budget", "c_timeline"})
+
+
+def _unseen(values: tuple[str, ...], allowed: tuple[str, ...]) -> str:
+    """``X was not seen in training; allowed: a, b`` (``were`` for several values)."""
+    return f"{', '.join(values)} {'was' if len(values) == 1 else 'were'} not seen in training; allowed: " \
+        f"{', '.join(allowed)}"
+
+
+def form_problem_lines(error: UnknownLevelError) -> list[str]:
+    """One line per feature of ``error`` in the EMVA form's words: the labels of the fields that feed it
+    (``FEATURE_FIELDS``, ``LABELS``), then the model's readable feature name when its level is not the typed value,
+    e.g. "Company size (typed): 51-200 was not seen in training; allowed: 1-10" or "Job title → Seniority: senior was
+    not seen in training; allowed: junior/ic". A feature without form fields is named by ``feature_label``."""
+    out = []
+    for p in error.problems:
+        fields = " / ".join(LABELS.get(f, f) for f in FEATURE_FIELDS.get(p.feature, ()))
+        if not fields:
+            head = feature_label(p.feature)
+        elif p.feature in TYPED_LEVEL_FEATURES:
+            head = fields
+        else:
+            head = f"{fields} → {feature_label(p.feature)}"
+        out.append(f"{head}: {_unseen(p.values, p.allowed)}")
+    return out
+
+
+def source_problem_lines(error: UnknownLevelError) -> list[str]:
+    """One line per feature of ``error`` for source-format leads: the readable feature name (``feature_label``), the
+    values, the leads (their ids, at most ``emva.scoring.LEADS_LISTED``) and the allowed levels."""
+    return [f"{feature_label(p.feature)}: {_unseen(p.values, p.allowed)} (lead(s) "
+            f"{', '.join(p.lead_ids[:LEADS_LISTED])}{', ...' if len(p.lead_ids) > LEADS_LISTED else ''})"
+            for p in error.problems]
+
+
+@dataclass(frozen=True)
+class Example:
+    """The lead the form starts from: ``values`` (form values) and ``lead_id``, the dataset lead they were taken
+    from, or None for the built-in example (``defaults_for``)."""
+
+    values: dict[str, object]
+    lead_id: str | None = None
+
+    @property
+    def note(self) -> str | None:
+        """The sentence the page shows when the example is a dataset lead; None for the built-in example."""
+        if self.lead_id is None:
+            return None
+        return (f"Example taken from training lead {self.lead_id}: the built-in example uses values this model "
+                "never saw.")
+
+
+def example_for(bundle: ModelBundle, data: str | Path) -> Example:
+    """The form's starting lead for ``bundle`` trained on dataset ``data``.
+
+    ``defaults_for(data)`` when ``bundle`` knows every level it produces (always for the v2 and generic feature sets,
+    whose design is fixed). Otherwise (legacy feature set: only the levels seen in training) the first lead of
+    ``historical_leads.csv``, in file order, that was created before the dataset's ``test_from``, is not dropped as a
+    bot or repeat and has only levels ``bundle`` knows (``values_from_lead``); the built-in example again if no lead
+    qualifies. Deterministic.
+    """
+    defaults = defaults_for(data)
+    if not level_problems(bundle, featurise(bundle, lead_from_form(clean_values(defaults)), data)):
+        return Example(defaults)
+    raw = read_leads(Path(data) / "historical_leads.csv")
+    X = featurise(bundle, raw, data)
+    ok = ~X.bot.astype(bool) & ~X.dup.astype(bool) & \
+        (X.created_at < pd.Timestamp(dataset_dates(data)[1], tz="UTC"))
+    for feature, allowed in bundle.levels.items():
+        ok &= X[feature].astype(str).isin(allowed)
+    if not ok.any():
+        return Example(defaults)
+    lead_id = str(X.index[ok.to_numpy()][0])
+    return Example(values_from_lead(raw.loc[lead_id]), lead_id)
 
 
 @dataclass(frozen=True)
@@ -420,7 +528,8 @@ def describe_transform(bundle: ModelBundle) -> str:
     return "p × expected deal value, " + ", then ".join(steps) + "." if steps else "p × expected deal value."
 
 
-__all__ = ["DEFAULTS", "FormField", "LeadScore", "SECTIONS", "SourceField", "SourceScores", "blank_session_fields",
-           "clean_values", "defaults_for", "describe_transform", "extra_names", "form_sections",
-           "frames_from_source_form", "frames_from_source_uploads", "number_text", "run_mapping", "score_form",
-           "score_source", "source_fields", "source_lead_score", "values_from_lead"]
+__all__ = ["DEFAULTS", "FEATURE_FIELDS", "Example", "FormField", "LeadScore", "SECTIONS", "SourceField", "SourceScores",
+           "TYPED_LEVEL_FEATURES", "blank_session_fields", "clean_values", "defaults_for", "describe_transform",
+           "example_for", "extra_names", "form_problem_lines", "form_sections", "frames_from_source_form",
+           "frames_from_source_uploads", "number_text", "run_mapping", "score_form", "score_source", "source_fields",
+           "source_lead_score", "source_problem_lines", "values_from_lead"]
