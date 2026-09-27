@@ -348,7 +348,6 @@ def extra_values(raw: pd.DataFrame, mapping: DatasetMapping) -> pd.DataFrame:
     return pd.DataFrame(out, index=raw.index, columns=[f.name for f in mapping.features])
 
 
-
 def outcome_fill_gaps(raw: pd.DataFrame, mapping: DatasetMapping, stage: pd.Series,
                       extras: pd.DataFrame) -> list[dict[str, object]]:
     """The ``outcome_fill_gaps`` entries (module docstring) of the converted rows ``raw`` with final ``stage``, in
