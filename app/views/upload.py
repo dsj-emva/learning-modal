@@ -271,7 +271,7 @@ def _lead_and_outcome(form: ingest.MappingForm, edited: ingest.MappingForm, fram
             else:
                 st.text_input(ROLE_LABELS[role], ingest.expr_text(e), key=f"mc_role_{v}_{role}", disabled=True,
                               help="A derived expression: edit it in the TOML below.")
-            _review_note(form, role)
+            _review_note(ingest.mark_edited(form, f)[0], role)
     st.markdown("**Outcome** (how a lead's final CRM stage is read)")
     c1, c2, c3 = st.columns(3, gap="medium")
     kind = c1.selectbox("Outcome kind", list(OUTCOME_KINDS), index=list(OUTCOME_KINDS).index(form.outcome_kind),
@@ -281,7 +281,7 @@ def _lead_and_outcome(form: ingest.MappingForm, edited: ingest.MappingForm, fram
     lost = c3.selectbox("A Lost lead without a close date", list(LOST_WITHOUT_CLOSE),
                         index=list(LOST_WITHOUT_CLOSE).index(form.lost_without_close), format_func=LOST_LABELS.get,
                         key=f"mc_olost_{v}")
-    _review_note(form, "outcome")
+    _review_note(ingest.mark_edited(form, replace(f, outcome_kind=kind, outcome_column=column))[0], "outcome")
     table = None
     if kind in ("stage", "won_flag") and column:
         same = kind == form.outcome_kind and column == form.outcome_column
@@ -308,7 +308,8 @@ def _lead_and_outcome(form: ingest.MappingForm, edited: ingest.MappingForm, fram
 
 def _field_table(form: ingest.MappingForm, edited: ingest.MappingForm, v: int) -> ingest.MappingForm:
     """The review table of field rows and extra features (low-confidence rows highlighted), the read-only value maps
-    and the read-only derived features."""
+    and the read-only derived features. Returns the edited form with every row whose mapping changed but whose draft
+    reason was kept marked ``ingest.EDITED_REVIEW`` (``ingest.mark_edited``; the page lists them)."""
     st.markdown("**Fields and extra features** (one row per uploaded column; ignore = not used as a field)")
     st.caption("Tick Feature to use a column as an extra feature of the generic feature set (v2 + extras): numeric "
                "columns are cut into 5 bins, categorical ones keep levels with at least 30 training leads. Only "
@@ -333,12 +334,18 @@ def _field_table(form: ingest.MappingForm, edited: ingest.MappingForm, v: int) -
                                "name": st.column_config.TextColumn(
                                    "Feature name", help="Lower-case letters, digits and _; blank = from the column"),
                                "check": st.column_config.TextColumn("Check", width="small")})
-    if low:
-        ui.html(C.callout(", ".join(low), "warn", lead="Low confidence, check these rows:"))
     try:
         edited = ingest.apply_review(edited, table)
     except ValueError as e:
         ui.html(C.callout(str(e), "bad"))
+    edited, changed = ingest.mark_edited(form, edited)
+    low = [s for s in low if s not in changed]
+    if low:
+        ui.html(C.callout(", ".join(low), "warn", lead="Low confidence, check these rows:"))
+    if changed:
+        ui.html(C.callout(f"{', '.join(changed)}. The draft's reason and confidence were written for the old mapping, "
+                          f"so they are dropped and the mapping records “{ingest.EDITED_REVIEW.reason}” instead. "
+                          "Type a reason in the table to keep your own.", "info", lead="Edited by you:"))
     vm = ingest.value_map_frame(form)
     if not vm.empty:
         st.markdown("**Value maps** (read-only here; edit them as TOML below)")
@@ -365,7 +372,7 @@ def _toml_editor(edited: ingest.MappingForm, frames: dict[str, pd.DataFrame]) ->
             ui.html(C.callout(error, "bad", lead="The TOML was not applied."))
         if st.button("Apply TOML", icon=":material/check:", key="mc_toml_apply"):
             try:
-                form = ingest.form_from_toml(new, frames)
+                form = ingest.mark_edited(edited, ingest.form_from_toml(new, frames))[0]
             except ValueError as e:
                 st.session_state[MC_TOML_ERR] = str(e)
             else:

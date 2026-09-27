@@ -304,6 +304,59 @@ def review_frame(f: MappingForm) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=list(REVIEW_COLUMNS))
 
 
+# The review a row gets when the reviewer changed its mapping but kept the draft's reason and confidence (Keel QA m9):
+# stored in mapping.toml, so a saved mapping never carries a reason written for another mapping.
+EDITED_REVIEW: Review = Review("edited by the reviewer")
+
+
+def _stale(r: Review | None, old: set[Review]) -> bool:
+    """True when ``r`` is a non-empty review found in ``old`` (the reason and confidence written for what the row
+    mapped before)."""
+    return r is not None and (bool(r.reason) or r.confidence is not None) and r in old and r != EDITED_REVIEW
+
+
+def mark_edited(before: MappingForm, after: MappingForm) -> tuple[MappingForm, list[str]]:
+    """``after`` with ``EDITED_REVIEW`` on every lead role, field row, feature and the outcome whose mapping the
+    reviewer changed since ``before`` while its reason and confidence stayed those written for the old mapping, and
+    the names of those rows (roles, ``outcome``, field sources, feature names, in that order).
+
+    Changed means: a lead role's expression; the outcome's kind or column; a field row's target or value map (or a
+    new field row for a column); a feature's kind or source (or a new feature). A reason or confidence the reviewer
+    typed is kept. A review is stale when it equals the old one of the same role, or of the same column's field row or
+    feature (the review table moves a row's reason between the two).
+    """
+    review = dict(after.review)
+    names: list[str] = []
+    for role in LEAD_ROLES:
+        if after.lead.get(role) != before.lead.get(role) and _stale(review.get(role), {before.review.get(role)}):
+            review[role], names = EDITED_REVIEW, [*names, role]
+    if (after.outcome_kind, after.outcome_column) != (before.outcome_kind, before.outcome_column) and \
+            _stale(review.get("outcome"), {before.review.get("outcome")}):
+        review["outcome"], names = EDITED_REVIEW, [*names, "outcome"]
+    old_fields = {fm.source: fm for fm in before.fields}
+    old_features = {expr_text(fm.source): fm for fm in before.features}
+
+    def old_reviews(column: str) -> set[Review]:
+        return {x.review for x in (old_fields.get(column), old_features.get(column)) if x is not None}
+
+    fields = []
+    for fm in after.fields:
+        b = old_fields.get(fm.source)
+        changed = b is None or (b.target, b.value_map) != (fm.target, fm.value_map)
+        if changed and _stale(fm.review, old_reviews(fm.source)):
+            fm, names = replace(fm, review=EDITED_REVIEW), [*names, fm.source]
+        fields.append(fm)
+    features = []
+    for fm in after.features:
+        source = expr_text(fm.source)
+        b = old_features.get(source)
+        changed = b is None or b.kind != fm.kind
+        if changed and _stale(fm.review, old_reviews(source)):
+            fm, names = replace(fm, review=EDITED_REVIEW), [*names, fm.name]
+        features.append(fm)
+    return replace(after, review=review, fields=tuple(fields), features=tuple(features)), names
+
+
 def _cell(v: object) -> str:
     """A table cell as stripped text ("" for None / NaN / NA, which an edited table may hold)."""
     return "" if v is None or (not isinstance(v, str) and pd.isna(v)) else str(v).strip()
@@ -694,11 +747,12 @@ def coverage_frame(meta: Mapping[str, object]) -> pd.DataFrame:
                           "leads_with_1": c["leads_with_1"], "leads": c["leads"]} for c in meta["coverage"]])
 
 
-__all__ = ["BUILTIN_MAPPINGS_DIR", "Conversion", "CoverageSummary", "DRAFT_CACHE", "DraftOutcome", "ExtrasSummary",
-           "FEATURE_KINDS", "MappingChoice", "MappingForm", "NO_KEY_MESSAGE", "PLACEHOLDER_DATES", "TARGET_OPTIONS",
-           "VALUE_MAP_TARGET", "apply_outcome", "apply_review", "blank_form", "column_values", "confirm", "convert_raw",
-           "coverage_frame", "coverage_summary", "default_feature_name", "derived_counts", "derived_features",
-           "derived_features_frame", "draft", "draft_cache", "draft_is_cached", "expr_text", "extras_summary",
-           "features_signature", "form_from_mapping", "form_from_toml", "form_toml", "is_plain", "load_choice",
-           "mapping_choices", "mapping_from_form", "meanings", "missing_files", "outcome_frame", "profile",
-           "profile_frame", "raw_frames", "review_frame", "value_map_frame", "with_join", "with_role"]
+__all__ = ["BUILTIN_MAPPINGS_DIR", "Conversion", "CoverageSummary", "DRAFT_CACHE", "DraftOutcome", "EDITED_REVIEW",
+           "ExtrasSummary", "FEATURE_KINDS", "MappingChoice", "MappingForm", "NO_KEY_MESSAGE", "PLACEHOLDER_DATES",
+           "TARGET_OPTIONS", "VALUE_MAP_TARGET", "apply_outcome", "apply_review", "blank_form", "column_values",
+           "confirm", "convert_raw", "coverage_frame", "coverage_summary", "default_feature_name", "derived_counts",
+           "derived_features", "derived_features_frame", "draft", "draft_cache", "draft_is_cached", "expr_text",
+           "extras_summary", "features_signature", "form_from_mapping", "form_from_toml", "form_toml", "is_plain",
+           "load_choice", "mapping_choices", "mapping_from_form", "mark_edited", "meanings", "missing_files",
+           "outcome_frame", "profile", "profile_frame", "raw_frames", "review_frame", "value_map_frame", "with_join",
+           "with_role"]

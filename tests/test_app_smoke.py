@@ -260,6 +260,41 @@ def test_fill_by_hand_then_apply_a_hand_written_toml(monkeypatch: pytest.MonkeyP
     assert not at.exception and "of 39 signals" in _text(at)
 
 
+def test_a_role_edited_as_toml_drops_its_draft_reason_and_blanked_values_are_counted(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Keel QA m9: deal_value switched to a derived product() through TOML no longer shows the draft's reason and
+    confidence; after Convert, "Derived during conversion" counts the Won leads left without a deal value by a blank
+    input, so it agrees with the check results."""
+    from conftest import olist_raw
+
+    _no_model_call(monkeypatch)
+    at = _sign_in(_app(monkeypatch, tmp_path), "letmein")
+    at.switch_page("views/upload.py").run()
+    at = _upload_raw(at, olist_raw())
+    at.selectbox(key="mc_choice").select("builtin:olist_funnel").run()
+    at.button(key="mc_load").click().run()
+    notes = "\n".join(t.value for t in at.text)
+    assert "low confidence · Declared monthly revenue" in notes
+    text = at.text_area[0].value
+    derived = text.replace('deal_value = "deal.declared_monthly_revenue"', 'deal_value = { op = "product", args = '
+                           '["deal.declared_monthly_revenue", "deal.declared_product_catalog_size"] }')
+    assert derived != text
+    at.text_area[0].input(derived).run()
+    at.button(key="mc_toml_apply").click().run()
+    assert not at.exception and "TOML applied" in _text(at)
+    notes = "\n".join(t.value for t in at.text)
+    assert "Declared monthly revenue" not in notes and "no confidence · edited by the reviewer" in notes
+    assert 'deal_value = { reason = "edited by the reviewer" }' in at.text_area[0].value  # what is saved
+    at = _confirm_and_convert(at)
+    assert not at.exception, at.exception
+    derived_text = "\n".join(t.value for t in at.text)
+    assert "Won leads with no deal value: blank in the source, a blank input of its expression" in derived_text
+    counts = {line.split("  ", 1)[1]: int(line.split("  ", 1)[0].replace(",", ""))
+              for line in derived_text.splitlines() if "deal value" in line and "  " in line}
+    missing = sum(counts.values())
+    assert f"{missing:,} Won row(s) have no deal value" in _text(at)
+
+
 def test_a_won_only_column_mapped_to_a_field_is_flagged_after_convert(monkeypatch: pytest.MonkeyPatch,
                                                                       tmp_path: Path) -> None:
     """Keel fix round (M6): business_segment (closed deals only) mapped to answers.what_to_solve converts, with an

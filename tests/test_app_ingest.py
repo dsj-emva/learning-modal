@@ -152,6 +152,38 @@ def test_review_table_edits_the_extra_features(frames: dict[str, pd.DataFrame]) 
     assert ingest.features_signature(edited.features) == ingest.features_signature(m.features)
 
 
+def test_edited_rows_drop_the_draft_reason(frames: dict[str, pd.DataFrame]) -> None:
+    """Keel QA m9: a row whose mapping the reviewer changed while keeping the draft's reason and confidence gets
+    ``EDITED_REVIEW`` (stored in the mapping), listed by name; an untouched row, or one with a reason the reviewer
+    typed, keeps its review."""
+    from emva.ingest.mapping import Expr, dump_mapping
+
+    form = ingest.form_from_mapping(_olist(), frames)
+    assert ingest.mark_edited(form, form) == (form, [])
+    table = ingest.review_frame(form).set_index("source")
+    table.loc["deal.business_segment", "target"] = "answers.what_to_solve"  # a won-only column, reason kept
+    table.loc["deal.lead_type", ["target", "reason"]] = ["answers.job_title", "my own reason"]
+    table.loc["mql.landing_page_id", "kind"] = "numeric"  # the feature's kind changed, its reason kept
+    edited, names = ingest.mark_edited(form, ingest.apply_review(form, table.reset_index()))
+    assert names == ["deal.business_segment", "landing_page"]
+    by = {f.source: f for f in edited.fields}
+    assert by["deal.business_segment"].review == ingest.EDITED_REVIEW == Review("edited by the reviewer")
+    assert by["deal.lead_type"].review.reason == "my own reason"
+    assert by["mql.origin"].review == next(f for f in form.fields if f.source == "mql.origin").review
+    assert edited.features[0].review == ingest.EDITED_REVIEW
+    assert ingest.mark_edited(edited, edited) == (edited, [])  # marked once, never listed again
+    # a lead role switched to a derived expression (as through TOML), and the outcome column changed
+    product = Expr("product", args=(Expr.col("deal.declared_monthly_revenue"),
+                                    Expr.col("deal.declared_product_catalog_size")))
+    toml = replace(form, lead={**form.lead, "deal_value": product}, outcome_column="deal.won_date ")
+    marked, names = ingest.mark_edited(form, toml)
+    assert names == ["deal_value", "outcome"] and marked.review["deal_value"] == ingest.EDITED_REVIEW
+    assert marked.review["created_at"] == form.review["created_at"]
+    marked = replace(marked, outcome_column=form.outcome_column, review={**marked.review,
+                                                                          "outcome": form.review["outcome"]})
+    assert 'deal_value = { reason = "edited by the reviewer" }' in dump_mapping(ingest.mapping_from_form(marked))
+
+
 def test_review_table_refuses_bad_feature_rows(frames: dict[str, pd.DataFrame]) -> None:
     form = ingest.form_from_mapping(_olist(), frames)
     table = ingest.review_frame(form).set_index("source")
