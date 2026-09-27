@@ -48,6 +48,8 @@ OUTCOME_LABELS: dict[str, str] = {"stage": "A column of CRM stages", "won_flag":
 LOST_LABELS: dict[str, str] = {"error": "Refuse the conversion", "as_of": "Date the Lost row at as_of"}
 # Session-state keys of Map & convert (prefix mc_) and of the shared check / save steps.
 MC_SIG, MC_FORM, MC_VERSION, MC_MSG, MC_CONV = "mc_sig", "mc_form", "mc_version", "mc_msg", "mc_conv"
+# The last "Apply TOML" refusal, shown under the TOML editor (not at step 1c, far above it).
+MC_TOML_ERR = "mc_toml_err"
 VALIDATION, VALIDATED_FILES, VALIDATED_ORIGIN = "validation", "validated_files", "validated_origin"
 LABEL_MODES = {"horizon": "Horizon", "legacy": "Legacy (POC)"}
 FEATURE_SETS = {"v2": "v2", "generic": "Generic (v2 + extras)", "legacy": "Legacy (POC)"}
@@ -145,11 +147,12 @@ def _set_form(form: ingest.MappingForm, kind: str, text: str, lead: str = "") ->
     st.session_state[MC_VERSION] = st.session_state.get(MC_VERSION, 0) + 1
     st.session_state[MC_MSG] = (kind, text, lead)
     st.session_state.pop(MC_CONV, None)
+    st.session_state.pop(MC_TOML_ERR, None)
 
 
 def _reset_mapping() -> None:
     """Forget the mapping under review and its conversion (the raw files changed)."""
-    for k in (MC_FORM, MC_MSG, MC_CONV):
+    for k in (MC_FORM, MC_MSG, MC_CONV, MC_TOML_ERR):
         st.session_state.pop(k, None)
     if st.session_state.get(VALIDATED_ORIGIN) == "convert":
         for k in (VALIDATION, VALIDATED_FILES, VALIDATED_ORIGIN):
@@ -348,19 +351,23 @@ def _field_table(form: ingest.MappingForm, edited: ingest.MappingForm, v: int) -
 
 
 def _toml_editor(edited: ingest.MappingForm, frames: dict[str, pd.DataFrame]) -> None:
-    """The whole mapping as TOML text, editable; "Apply TOML" loads it into the form (``load_mapping`` checks it)."""
+    """The whole mapping as TOML text, editable; "Apply TOML" loads it into the form (``load_mapping`` checks it). A
+    refusal is shown under the editor, which stays open and keeps the edited text."""
     text = ingest.form_toml(edited)
-    with st.expander("Edit the whole mapping as TOML (value maps, derived expressions)"):
+    error = st.session_state.get(MC_TOML_ERR)
+    with st.expander("Edit the whole mapping as TOML (value maps, derived expressions)", expanded=error is not None):
         st.caption("The schema is in emva/ingest/mapping.py. Applying replaces the form above.")
         start = text if text is not None else ("# The form is not complete yet; complete it above or paste a whole "
                                                "mapping here.\n")
         digest = hashlib.sha256(start.encode("utf-8")).hexdigest()[:12]
         new = st.text_area("Mapping TOML", start, height=320, key=f"mc_toml_{digest}", label_visibility="collapsed")
+        if error is not None:
+            ui.html(C.callout(error, "bad", lead="The TOML was not applied."))
         if st.button("Apply TOML", icon=":material/check:", key="mc_toml_apply"):
             try:
                 form = ingest.form_from_toml(new, frames)
             except ValueError as e:
-                st.session_state[MC_MSG] = ("bad", str(e), "The TOML was not applied.")
+                st.session_state[MC_TOML_ERR] = str(e)
             else:
                 _set_form(form, "info", "Review it, then confirm.", lead="TOML applied.")
             st.rerun()

@@ -248,10 +248,14 @@ def test_fill_by_hand_then_apply_a_hand_written_toml(monkeypatch: pytest.MonkeyP
     at.text_area[0].input("name = ").run()
     at.button(key="mc_toml_apply").click().run()
     assert "The TOML was not applied" in _text(at) and "not valid TOML" in _text(at)
+    # m8: the refusal is shown in the TOML expander, next to the editor (not at step 1c), and the text is kept
+    toml_box = next(e for e in at.expander if e.label.startswith("Edit the whole mapping as TOML"))
+    assert any("The TOML was not applied" in m.value for m in toml_box.markdown)
+    assert at.text_area[0].value == "name = " and "Empty mapping" in _text(at)
     at.text_area[0].input((REPO / "mappings" / "olist_funnel.toml").read_text(encoding="utf-8")).run()
     at.button(key="mc_toml_apply").click().run()
     assert not at.exception, at.exception
-    assert "TOML applied" in _text(at)
+    assert "TOML applied" in _text(at) and "The TOML was not applied" not in _text(at)
     at = _confirm_and_convert(at)
     assert not at.exception and "of 39 signals" in _text(at)
 
