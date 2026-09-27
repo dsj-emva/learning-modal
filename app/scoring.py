@@ -308,14 +308,15 @@ def run_mapping(root: str | Path, dataset: str) -> DatasetMapping | None:
 class SourceField:
     """One raw column a new lead in the source format carries: its ``file`` and ``column``, the allowed ``options``
     (None = free input; a value map's keys, or a generic bundle's training levels of a categorical extra ending with
-    ``other``), ``feeds``, what the mapping makes of it (for the form's help text), and ``numeric`` (a numeric extra:
-    a number input)."""
+    ``other``), ``feeds``, what the mapping makes of it (for the form's help text), ``numeric`` (a numeric extra:
+    a number input) and ``required`` (a column of the ``created_at`` expression: ``convert_leads`` refuses a blank)."""
 
     file: str
     column: str
     options: tuple[str, ...] | None
     feeds: str
     numeric: bool = False
+    required: bool = False
 
     @property
     def key(self) -> str:
@@ -362,10 +363,11 @@ def _feeds(mapping: DatasetMapping) -> dict[tuple[str, str], tuple[str, tuple[st
         if opts is not None:
             options[key] = opts
 
-    for role in ("lead_id", "created_at"):
-        e = getattr(mapping.lead, role)
-        for c in e.columns() if e is not None else []:
-            add(c, f"lead {role} (optional: blank = {'a new id' if role == 'lead_id' else 'now'})")
+    if mapping.lead.lead_id is not None:
+        for c in mapping.lead.lead_id.columns():
+            add(c, "lead lead_id (optional: blank = a new id)")
+    for c in mapping.lead.created_at.columns():
+        add(c, "lead created_at (required)")
     for f in mapping.fields:
         if f.target == IGNORE:
             continue
@@ -398,14 +400,16 @@ def source_fields(mapping: DatasetMapping, bundle: ModelBundle | None = None) ->
     """The raw columns a new lead needs, per file in ``DatasetMapping.source_columns(submit_time_only=True)`` order.
 
     A joined file's join column is not listed (the form copies the primary file's value into it); a column with a
-    value map offers its keys, since any other value is refused by the conversion. With a generic ``bundle``, a
-    plain-column extra it uses is a number input (numeric) or offers its training levels (categorical, unless a value
-    map already fixes the options).
+    value map offers its keys, since any other value is refused by the conversion. The ``created_at`` column(s) are
+    ``required``. With a generic ``bundle``, a plain-column extra it uses is a number input (numeric) or offers its
+    training levels (categorical, unless a value map already fixes the options).
     """
     feeds = _feeds(mapping)
     extras = _extra_inputs(mapping, bundle)
     joins = {s.file: s.join_on for s in mapping.sources[1:]}
     primary = mapping.sources[0].file
+    by_name = {s.name: s.file for s in mapping.sources}
+    required = {(by_name[ref.split(".", 1)[0]], ref.split(".", 1)[1]) for ref in mapping.lead.created_at.columns()}
     out = []
     for file, columns in mapping.source_columns(submit_time_only=True).items():
         for c in columns:
@@ -415,7 +419,7 @@ def source_fields(mapping: DatasetMapping, bundle: ModelBundle | None = None) ->
             numeric = (file, c) in extras and extras[(file, c)] is None and options is None
             if options is None and extras.get((file, c)) is not None:
                 options = extras[(file, c)]
-            out.append(SourceField(file, c, options, what, numeric))
+            out.append(SourceField(file, c, options, what, numeric, (file, c) in required))
     return out
 
 
@@ -430,8 +434,9 @@ def number_text(value: float | int | None) -> str | None:
 def frames_from_source_form(mapping: DatasetMapping, values: dict[str, object]) -> dict[str, pd.DataFrame]:
     """One new lead as raw frames (file -> one-row frame of text) from form ``values`` keyed by ``SourceField.key``.
 
-    Blank values are missing cells; a blank lead id leaves its column out (``convert_leads`` then numbers the lead),
-    and each joined file's join column gets the primary file's value.
+    Blank values are missing cells (a blank ``created_at`` is refused by ``convert_leads``); a blank lead id leaves
+    its column out (``convert_leads`` then numbers the lead), and each joined file's join column gets the primary
+    file's value.
     """
     fields = source_fields(mapping)
     rows: dict[str, dict[str, object]] = {file: {} for file in mapping.source_columns(submit_time_only=True)}
@@ -496,7 +501,8 @@ def score_source(bundle: ModelBundle, mapping: DatasetMapping, frames: dict[str,
     """Convert raw source ``frames`` with ``mapping`` (``emva.ingest.convert_leads``) and score them with ``bundle``
     (``score_leads``; ``data`` holds the ``companies.csv`` the enrichment join reads).
 
-    Raises ``ValueError`` for what ``convert_leads`` refuses (e.g. a value outside a value map, a repeated lead id)
+    Raises ``ValueError`` for what ``convert_leads`` refuses (e.g. a blank ``created_at``, a value outside a value map,
+    a repeated lead id)
     and ``UnknownLevelError`` (a ``ValueError``) for a value the model was not trained with.
     """
     leads = convert_leads(frames, mapping)

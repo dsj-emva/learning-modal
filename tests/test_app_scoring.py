@@ -178,6 +178,8 @@ def test_source_fields_are_the_submit_time_columns(converted) -> None:
     by = {f.column: f for f in fields}
     assert by["origin"].options[:2] == ("paid_search", "social") and by["origin"].feeds == "utm_source, utm_medium"
     assert by["landing_page_id"].options is None and by["mql_id"].feeds.startswith("lead lead_id")
+    assert [f.column for f in fields if f.required] == ["first_contact_date"]
+    assert by["first_contact_date"].feeds.startswith("lead created_at (required)")
     assert "won_date" not in by and "declared_monthly_revenue" not in by  # outcome and deal value: never asked
 
 
@@ -215,7 +217,8 @@ def test_source_upload_scores_every_row_and_ignores_outcome_columns(converted) -
 def test_source_refusals_are_clear(converted) -> None:
     bundle, data, mapping = converted
     keys = {f.column: f.key for f in scoring.source_fields(mapping)}
-    frames = scoring.frames_from_source_form(mapping, {keys["origin"]: "carrier_pigeon"})
+    frames = scoring.frames_from_source_form(mapping, {keys["first_contact_date"]: "2018-04-01",
+                                                       keys["origin"]: "carrier_pigeon"})
     with pytest.raises(ValueError, match="not in its value_map"):
         scoring.score_source(bundle, mapping, frames, data)
     raw = pd.read_csv(io.BytesIO(_mql_csv()), dtype=str)
@@ -224,6 +227,33 @@ def test_source_refusals_are_clear(converted) -> None:
         scoring.score_source(bundle, mapping, scoring.frames_from_source_uploads(mapping, {"x.csv": dup}), data)
     with pytest.raises(ValueError, match="missing source file"):
         scoring.frames_from_source_uploads(mapping, {"a.csv": b"x\n1\n", "b.csv": b"y\n2\n"})
+
+
+def test_source_leads_need_created_at(converted) -> None:
+    """Keel QA M2: a blank or missing created_at column (first_contact_date) is refused, from the form and from a
+    CSV; a malformed date still is; a filled one scores."""
+    bundle, data, mapping = converted
+    keys = {f.column: f.key for f in scoring.source_fields(mapping)}
+    for date in ("", "   ", None):
+        frames = scoring.frames_from_source_form(mapping, {keys["first_contact_date"]: date,
+                                                           keys["origin"]: "paid_search"})
+        with pytest.raises(ValueError, match=r"created_at is blank on 1 new lead\(s\) \(rows \[1\]\)"):
+            scoring.score_source(bundle, mapping, frames, data)
+    raw = pd.read_csv(io.BytesIO(_mql_csv()), dtype=str).head(4)
+    blank = raw.assign(first_contact_date=["2018-04-01", "", "2018-04-03", None])
+    with pytest.raises(ValueError, match=r"created_at is blank on 2 new lead\(s\) \(rows \[2, 4\]\)"):
+        scoring.score_source(bundle, mapping, scoring.frames_from_source_uploads(
+            mapping, {"x.csv": blank.to_csv(index=False).encode()}), data)
+    gone = raw.drop(columns="first_contact_date").to_csv(index=False).encode()
+    with pytest.raises(ValueError, match="column 'mql.first_contact_date' is not in the source files"):
+        scoring.score_source(bundle, mapping, scoring.frames_from_source_uploads(mapping, {"x.csv": gone}), data)
+    bad = raw.assign(first_contact_date=["2018-04-01", "soon", "2018-04-03", "2018-04-04"]).to_csv(index=False)
+    with pytest.raises(ValueError, match="not ISO dates"):
+        scoring.score_source(bundle, mapping, scoring.frames_from_source_uploads(mapping, {"x.csv": bad.encode()}),
+                             data)
+    ok = scoring.score_source(bundle, mapping, scoring.frames_from_source_uploads(
+        mapping, {"x.csv": raw.to_csv(index=False).encode()}), data)
+    assert list(ok.leads.created_at) == list(pd.to_datetime(raw.first_contact_date, utc=True))
 
 
 def test_joined_file_gets_the_primary_join_value() -> None:

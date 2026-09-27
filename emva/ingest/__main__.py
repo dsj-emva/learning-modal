@@ -17,7 +17,8 @@ coverage summary and every count of derived or adjusted values (``emva.ingest.co
 
 ``score`` scores new leads given in the source format: ``--raw`` is a CSV of primary-source rows (other source files
 the mapping's submit-time part needs are read from the same directory) or a directory holding the source files. The
-rows go through ``emva.ingest.convert.convert_leads`` (no outcome columns needed) and ``emva.scoring.score_leads``
+rows go through ``emva.ingest.convert.convert_leads`` (no outcome columns needed; every row needs its ``created_at``
+column(s) filled, else the command fails naming the rows) and ``emva.scoring.score_leads``
 with ``RUN_DIR/model.joblib`` (written by ``python -m emva --out RUN_DIR``). ``--data`` is the dataset whose
 ``companies.csv`` the enrichment join reads; without it an empty one is used, which is what every converted dataset
 holds (the converter writes companies.csv header-only). Writes ``--out`` or prints the scores as CSV.

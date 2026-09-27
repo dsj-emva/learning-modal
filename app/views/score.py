@@ -96,13 +96,15 @@ def _option_label(o: str) -> str:
 
 def _source_form(mapping: DatasetMapping, bundle: ModelBundle, run_id: str) -> dict[str, object] | None:
     """The source-format form: only the raw columns the mapping reads at submit time (a generic bundle's extras as a
-    number input or their training levels); returns values on submit."""
+    number input or their training levels; the ``created_at`` column(s) marked required, "*"); returns values on
+    submit."""
     values: dict[str, object] = {}
     with st.form(f"source_form_{run_id}", border=False):
         cols = st.columns(2, gap="medium")
         for i, f in enumerate(scoring.source_fields(mapping, bundle)):
             with cols[i % 2]:
-                label, key, help_text = f.column, f"src_{run_id}_{f.key}", f"{f.file} · feeds {f.feeds}"
+                label, key = f.column + (" *" if f.required else ""), f"src_{run_id}_{f.key}"
+                help_text = f"{f.file} · feeds {f.feeds}"
                 if f.numeric:
                     values[f.key] = scoring.number_text(st.number_input(label, value=None, key=key, help=help_text,
                                                                         placeholder="blank", format="%g"))

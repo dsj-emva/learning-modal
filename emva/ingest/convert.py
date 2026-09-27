@@ -382,9 +382,11 @@ def convert_leads(frames: dict[str, pd.DataFrame], mapping: DatasetMapping) -> p
     Only the submit-time part of the mapping is read (``DatasetMapping.source_columns``): no outcome, won / close /
     contacted date or deal value, so those columns may be absent, and only the source files it names are needed.
     ``lead_id``: the mapped id when its columns are present (blank or repeated ids raise), else ``new-000001``, ... in
-    row order. ``created_at``: the mapped time when its columns are present and filled, else the current UTC time
-    (like ``emva.scoring.lead_from_form``; the models do not read it). Booleans come back as ``bool``, numbers as
-    floats, ``created_at`` as a UTC timestamp. Raises ``ValueError`` for a draft mapping or a value the mapping refuses.
+    row order. ``created_at``: the mapped time, required on every new lead (as ``convert`` requires it, but a blank is
+    never dropped: every lead given is scored or refused); no model feature reads it, but the batch duplicate check
+    orders submissions by it. Booleans come back as ``bool``, numbers as floats, ``created_at`` as a UTC timestamp.
+    Raises ``ValueError`` for a draft mapping, a missing ``created_at`` column, a blank or malformed ``created_at``
+    (naming the rows) or another value the mapping refuses.
     """
     check_confirmed(mapping)
     cols = mapping.source_columns(submit_time_only=True)
@@ -397,10 +399,12 @@ def convert_leads(frames: dict[str, pd.DataFrame], mapping: DatasetMapping) -> p
             raise ValueError("lead_id must be filled and unique on every new lead (or leave its column out)")
     else:
         lead_id = row_number.map(lambda i: f"new-{i:06d}")
-    now = pd.Timestamp.now(tz="UTC").floor("s")
-    created = pd.Series(now, index=raw.index)
-    if all(c in raw for c in lead.created_at.columns()):
-        created = _dates(evaluate(lead.created_at, raw, "created_at"), "created_at").fillna(now)
+    created = _dates(evaluate(lead.created_at, raw, "created_at"), "created_at")
+    if created.isna().any():
+        blank = created.isna()
+        raise ValueError(f"created_at is blank on {int(blank.sum())} new lead(s) (rows "
+                         f"{list(row_number[blank][:MAX_LISTED])}); every new lead needs "
+                         f"{', '.join(lead.created_at.columns())} (when the lead came in)")
     leads, _ = _lead_rows(raw, mapping, lead_id, created)
     out = leads.astype(object)
     out["created_at"] = created
