@@ -43,6 +43,17 @@ dataset store take:
   number of cleaned leads with a 1, and a status: ``data`` (varies across leads), ``constant`` (inputs mapped, but no
   variation) or ``unfilled`` (no input mapped). With ``[[features]]`` it also has ``features``: one
   ``{name, kind, source}`` per declared feature (``emva.generic.read_extra_features`` reads it).
+- ``outcome_fill_gaps`` in ``dataset.json`` (Keel fix round, M6): a label-leakage warning, never a block (nothing is
+  dropped). For every field row that sets a target (copies and value maps; not ``ignore``) and every declared
+  feature, the share of converted Won leads whose source value is filled (``won_filled``) and the same share among
+  Lost leads (``lost_filled``; final stage as the conversion determines it, open leads not counted). A row is listed
+  when the two differ by at least ``GENERIC_MISSINGNESS_FLAG`` (0.5), e.g. a closed-deal column that exists only for
+  won leads: ``{"source": "deal.business_segment", "target": "answers.what_to_solve", "won_filled": 1.0,
+  "lost_filled": 0.0}`` (a value map's ``target`` lists its targets comma-separated; a feature's is
+  ``feature:<name>``). Empty when nothing is flagged, or when there are no Won or no Lost leads to compare. The
+  ``[lead]`` roles and the outcome column are not screened (they are the outcome). ``fill_gap_text`` words one entry;
+  the CLI prints them, Keel shows them after Convert and ``app.validation`` as notes. Older ``dataset.json`` files
+  have no key.
 """
 from __future__ import annotations
 
@@ -50,12 +61,13 @@ import calendar
 import io
 import json
 import operator
+from collections.abc import Mapping
 from functools import reduce
 
 import numpy as np
 import pandas as pd
 
-from emva.constants import ANSWER_KEYS
+from emva.constants import ANSWER_KEYS, GENERIC_MISSINGNESS_FLAG
 from emva.dataset_meta import DATASET_META_FILE, FORMAT_KEY, FORMAT_VERSION, parse_as_of
 from emva.design import fixed_design
 from emva.eval.evaluation_only import is_evaluation_only
@@ -91,6 +103,8 @@ MIN_STEP: pd.Timedelta = pd.Timedelta(seconds=1)
 MAX_LISTED: int = 5
 # Lead ids of reordered CRM rows kept in dataset.json (``crm_times_reordered_ids``; app.validation warns with them).
 REORDERED_IDS_LISTED: int = 10
+# ``outcome_fill_gaps`` target of a declared extra feature: ``feature:<name>``.
+FEATURE_TARGET_PREFIX: str = "feature:"
 # dataset.json counts of values the conversion derived or adjusted, with what each means: the CLI prints every one,
 # Keel's coverage card lists the non-zero ones ("Derived during conversion").
 DERIVED_COUNTS: dict[str, str] = {
@@ -334,6 +348,34 @@ def extra_values(raw: pd.DataFrame, mapping: DatasetMapping) -> pd.DataFrame:
     return pd.DataFrame(out, index=raw.index, columns=[f.name for f in mapping.features])
 
 
+
+def outcome_fill_gaps(raw: pd.DataFrame, mapping: DatasetMapping, stage: pd.Series,
+                      extras: pd.DataFrame) -> list[dict[str, object]]:
+    """The ``outcome_fill_gaps`` entries (module docstring) of the converted rows ``raw`` with final ``stage``, in
+    mapping order (fields, then features; ``extras`` is ``extra_values(raw, mapping)``). Shares are rounded to 4 dp;
+    the flag compares the unrounded ones."""
+    won, lost = stage == "Won", stage == "Lost"
+    if not (won.any() and lost.any()):
+        return []
+    filled = [(f.source, ", ".join(f.targets()), raw[f.source].notna()) for f in mapping.fields if f.targets()]
+    filled += [(f.extra().source, FEATURE_TARGET_PREFIX + f.name, extras[f.name].notna()) for f in mapping.features]
+    out: list[dict[str, object]] = []
+    for source, target, has in filled:
+        w, lo = float(has[won].mean()), float(has[lost].mean())
+        if abs(w - lo) >= GENERIC_MISSINGNESS_FLAG:
+            out.append({"source": source, "target": target, "won_filled": round(w, 4), "lost_filled": round(lo, 4)})
+    return out
+
+
+def fill_gap_text(gap: Mapping[str, object]) -> str:
+    """One ``outcome_fill_gaps`` entry in plain words: ``deal.x -> answers.y (won 100%, lost 0%)``; a feature reads
+    ``extra feature <name>``."""
+    target = str(gap["target"])
+    if target.startswith(FEATURE_TARGET_PREFIX):
+        target = "extra feature " + target.removeprefix(FEATURE_TARGET_PREFIX)
+    return f"{gap['source']} -> {target} (won {float(gap['won_filled']):.0%}, lost {float(gap['lost_filled']):.0%})"
+
+
 def _listed(mask: pd.Series, ids: pd.Series) -> str:
     """``N lead(s), e.g. [...]`` for the rows where ``mask`` is True."""
     return f"{int(mask.sum())} lead(s), e.g. {list(ids[mask][:MAX_LISTED])}"
@@ -512,8 +554,9 @@ def convert(frames: dict[str, pd.DataFrame], mapping: DatasetMapping) -> dict[st
     files = {LEADS_FILE: _csv(leads), CRM_FILE: _csv(crm),
              COMPANIES_FILE: _csv(pd.DataFrame(columns=COMPANIES_COLUMNS)),
              PEOPLE_FILE: _csv(pd.DataFrame(columns=PEOPLE_COLUMNS))}
+    extras = extra_values(raw, mapping)
     if mapping.features:
-        files[EXTRA_FEATURES_FILE] = _csv(pd.concat([lead_id.rename("lead_id"), extra_values(raw, mapping)], axis=1))
+        files[EXTRA_FEATURES_FILE] = _csv(pd.concat([lead_id.rename("lead_id"), extras], axis=1))
 
     mapped = mapping.mapped_targets()
     meta = {FORMAT_KEY: FORMAT_VERSION, "mapping": mapping.name, "as_of": mapping.as_of,
@@ -523,7 +566,8 @@ def convert(frames: dict[str, pd.DataFrame], mapping: DatasetMapping) -> dict[st
             "placeholder_emails": placeholders, "lost_dated_at_as_of": int(lost_no_close.sum()),
             "non_positive_deal_values_blanked": int(non_positive.sum()), "crm_ties_separated": ties,
             "crm_times_reordered": reordered, "crm_times_reordered_ids": reordered_ids,
-            "mapped_targets": mapped, "coverage": coverage(files, mapped)}
+            "mapped_targets": mapped, "coverage": coverage(files, mapped),
+            "outcome_fill_gaps": outcome_fill_gaps(raw, mapping, stage, extras)}
     if mapping.features:
         meta["features"] = [{"name": e.name, "kind": e.kind.value, "source": e.source}
                             for e in (f.extra() for f in mapping.features)]
@@ -551,6 +595,6 @@ def coverage(files: dict[str, bytes], mapped_targets: list[str]) -> list[dict[st
     return rows
 
 
-__all__ = ["COMPANIES_COLUMNS", "CRM_COLUMNS", "DERIVED_COUNTS", "FEATURE_INPUTS", "PEOPLE_COLUMNS",
-           "PLACEHOLDER_DOMAIN", "convert", "convert_leads", "coverage", "evaluate", "extra_values",
-           "frames_from_bytes", "join_sources"]
+__all__ = ["COMPANIES_COLUMNS", "CRM_COLUMNS", "DERIVED_COUNTS", "FEATURE_INPUTS", "FEATURE_TARGET_PREFIX",
+           "PEOPLE_COLUMNS", "PLACEHOLDER_DOMAIN", "convert", "convert_leads", "coverage", "evaluate", "extra_values",
+           "fill_gap_text", "frames_from_bytes", "join_sources", "outcome_fill_gaps"]

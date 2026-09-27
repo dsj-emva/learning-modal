@@ -21,7 +21,9 @@
 - **dataset.json** (a converted dataset's metadata, ``emva.ingest.convert``): optional; the rules of
   ``emva.dataset_meta.parse_dataset_meta`` (a JSON object with a valid ``as_of`` and ``test_from``). When present,
   its ``as_of`` is the snapshot date the "dated after the snapshot" warning uses (ADR 0020), else ``AS_OF``; CRM
-  rows the converter had to reorder (``crm_times_reordered``) are a warning naming example lead ids.
+  rows the converter had to reorder (``crm_times_reordered``) are a warning naming example lead ids, and each mapped
+  column filled for won leads but not for lost ones (``outcome_fill_gaps``, probable label leakage) is a warning on
+  the file it feeds; files without the key (converted before it existed) validate as before.
 - **mapping.toml** (the confirmed mapping a converted dataset came from): optional; it must load with
   ``emva.ingest.load_mapping`` and have ``outcome_confirmed = true``. Each of the two without the other is a note.
 - **extra_features.csv** (the generic feature set's raw extras, Phase 10 (b); what ``emva.generic.read_extra_features``
@@ -61,6 +63,7 @@ from emva.constants import AS_OF, DEAL_VALUE_LEVELS, ENRICHMENT_COLUMNS, MISSING
 from emva.dataset_meta import parse_as_of, parse_dataset_meta
 from emva.eval.status_quo import RULE_FIELDS
 from emva.generic import ExtraFeature, ExtraKind, parse_features
+from emva.ingest.convert import FEATURE_TARGET_PREFIX, fill_gap_text
 from emva.ingest.mapping import load_mapping
 from emva.scoring import FieldType, submit_time_fields
 
@@ -68,6 +71,12 @@ from emva.scoring import FieldType, submit_time_fields
 MIN_LEADS: int = 200
 # At most this many row numbers are listed per issue.
 MAX_ROWS_LISTED: int = 10
+# Wording of an ``outcome_fill_gaps`` entry (dataset.json), shared by this note and Keel's coverage card.
+FILL_GAP_LEAD: str = "Filled for won leads but not for lost ones:"
+FILL_GAP_WHY: str = "probably known only after the outcome (label leakage)."
+FILL_GAP_ADVICE: str = ("Map such a column to ignore (or remove the feature) unless it is known when the lead is "
+                        "submitted.")
+FILL_GAP_KEYS: frozenset[str] = frozenset({"source", "target", "won_filled", "lost_filled"})
 
 _LEAD_FIELDS = [f for f in submit_time_fields() if f.source == "column"]
 OPTIONAL_LEAD_COLUMNS: frozenset[str] = frozenset({"company_name"})
@@ -363,7 +372,28 @@ def _check_meta(c: _Checker, content: bytes) -> tuple[pd.Timestamp | None, tuple
         c.warn(CRM_FILE, "changed_at", f"{reordered} CRM event(s) were dated before the previous event of their lead "
                                        "(e.g. a win before the lead was created); the conversion moved each to 1 s "
                                        f"after it. Check the source dates, e.g. leads {ids}")
+    _check_fill_gaps(c, meta.get("outcome_fill_gaps", []))
     return parse_as_of(meta["as_of"]), features
+
+
+def _check_fill_gaps(c: _Checker, gaps: object) -> None:
+    """One warning per ``outcome_fill_gaps`` entry of ``dataset.json`` (``emva.ingest.convert``), on the file the
+    column feeds (``extra_features.csv`` for a feature, else ``historical_leads.csv``); an error when the key is not a
+    list of ``FILL_GAP_KEYS`` objects with numeric shares."""
+    ok = isinstance(gaps, list) and all(
+        isinstance(g, dict) and FILL_GAP_KEYS <= g.keys()
+        and all(isinstance(g[k], (int, float)) and not isinstance(g[k], bool) for k in ("won_filled", "lost_filled"))
+        for g in gaps)
+    if not ok:
+        c.error(DATASET_META_FILE, "outcome_fill_gaps", "must be a list of {source, target, won_filled, lost_filled} "
+                                                        "objects with shares as numbers")
+        return
+    for g in gaps:
+        target = str(g["target"])
+        feature = target.startswith(FEATURE_TARGET_PREFIX)
+        c.warn(EXTRA_FEATURES_FILE if feature else LEADS_FILE,
+               target.removeprefix(FEATURE_TARGET_PREFIX) if feature else target,
+               f"{FILL_GAP_LEAD} {FILL_GAP_WHY} {fill_gap_text(g)}. {FILL_GAP_ADVICE}")
 
 
 def _check_extras(c: _Checker, content: bytes, features: tuple[ExtraFeature, ...],
@@ -505,4 +535,5 @@ def validate_dir(path: str | Path) -> ValidationReport:
     return validate_files({n: (p / n).read_bytes() for n in TRAINING_FILES + METADATA_FILES if (p / n).exists()})
 
 
-__all__ = ["Issue", "MIN_LEADS", "REQUIRED_COLUMNS", "ValidationReport", "validate_dir", "validate_files"]
+__all__ = ["FILL_GAP_ADVICE", "FILL_GAP_LEAD", "FILL_GAP_WHY", "Issue", "MIN_LEADS", "REQUIRED_COLUMNS",
+           "ValidationReport", "validate_dir", "validate_files"]

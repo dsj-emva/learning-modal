@@ -14,8 +14,8 @@ import streamlit as st
 from app import charts, ingest, storage, training, ui
 from app import components as C
 from app.storage import StorageError
-from app.validation import ValidationReport, validate_files
-from emva.ingest.convert import DEFAULT_FORM_VARIANT
+from app.validation import FILL_GAP_ADVICE, FILL_GAP_LEAD, FILL_GAP_WHY, ValidationReport, validate_files
+from emva.ingest.convert import DEFAULT_FORM_VARIANT, fill_gap_text
 from emva.ingest.draft import source_name
 from emva.ingest.mapping import (
     CONFIDENCES,
@@ -440,6 +440,10 @@ def _coverage(meta: dict) -> None:
                           "model is trained with the generic feature set (v2 + extras): categorical levels with at "
                           "least 30 training leads plus other and missing, numeric values in 5 quantile bins plus "
                           "missing, all fitted on the training leads.", "info", lead="Extra features:"))
+    gaps = meta.get("outcome_fill_gaps", [])
+    if gaps:
+        ui.html(C.callout(f"{FILL_GAP_WHY} {'; '.join(fill_gap_text(g) for g in gaps)}. {FILL_GAP_ADVICE}", "warn",
+                          lead=FILL_GAP_LEAD))
     derived = ingest.derived_counts(meta)
     if derived:
         st.markdown("**Derived during conversion** (counts in dataset.json)")

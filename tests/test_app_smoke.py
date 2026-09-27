@@ -181,6 +181,7 @@ def test_map_convert_validate_save_with_a_saved_mapping(monkeypatch: pytest.Monk
     page = _text(at)
     assert "fills " in page and " of 39 signals" in page and "Check results" in page and "Save as a dataset" in page
     assert "Derived during conversion" in page and "Lost leads without close_at" in "\n".join(t.value for t in at.text)
+    assert "Filled for won leads" not in page  # the committed mapping ignores every won-only column
     at.text_input(key="dataset_name").input("olist-smoke")
     next(b for b in at.button if b.label == "Save dataset").click()
     at.run()
@@ -212,6 +213,31 @@ def test_fill_by_hand_then_apply_a_hand_written_toml(monkeypatch: pytest.MonkeyP
     assert "TOML applied" in _text(at)
     at = _confirm_and_convert(at)
     assert not at.exception and "of 39 signals" in _text(at)
+
+
+def test_a_won_only_column_mapped_to_a_field_is_flagged_after_convert(monkeypatch: pytest.MonkeyPatch,
+                                                                      tmp_path: Path) -> None:
+    """Keel fix round (M6): business_segment (closed deals only) mapped to answers.what_to_solve converts, with an
+    amber warning in the coverage card and a note on historical_leads.csv in Check results."""
+    from conftest import REPO, olist_raw
+
+    _no_model_call(monkeypatch)
+    at = _sign_in(_app(monkeypatch, tmp_path), "letmein")
+    at.switch_page("views/upload.py").run()
+    at = _upload_raw(at, olist_raw())
+    at.button(key="mc_blank").click().run()
+    text = (REPO / "mappings" / "olist_funnel.toml").read_text(encoding="utf-8")
+    leaky = text.replace('source = "deal.business_segment"\ntarget = "ignore"',
+                         'source = "deal.business_segment"\ntarget = "answers.what_to_solve"')
+    assert leaky != text
+    at.text_area[0].input(leaky).run()
+    at.button(key="mc_toml_apply").click().run()
+    at = _confirm_and_convert(at)
+    assert not at.exception, at.exception
+    page = _text(at)
+    assert page.count("Filled for won leads but not for lost ones:") == 2  # the coverage card and the file note
+    assert "deal.business_segment -&gt; answers.what_to_solve (won 100%, lost 0%)" in page
+    assert "Save as a dataset" in page  # a warning, not a block
 
 
 def test_draft_button_uses_a_cached_draft(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
