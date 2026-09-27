@@ -42,11 +42,13 @@ from emva.eval.metrics import auc_by_month, calibration_by_decile
 from emva.eval.report import ScoredModel, TestSet, frozen_test_labels, headline_frame, paired_frame, run_baseline
 from emva.eval.status_quo import load_rules, status_quo_value
 from emva.eval.value_report import scale_stats
+from emva.feature_spec import feature_spec
 from emva.features import FeatureSet
-from emva.generic import EXTRA_PREFIX, GenericEncoder
+from emva.generic import EXTRA_PREFIX, GenericEncoder, read_extra_features
 from emva.io import load
-from emva.labels import LabelConfig
+from emva.labels import LabelConfig, split_masks
 from emva.model import INTERCEPT, split_design_column
+from emva.pipeline import build
 from emva.pipeline import run as pipeline_run
 
 log = logging.getLogger(__name__)
@@ -113,6 +115,56 @@ def scorecard(run_dir: str | Path, extras: GenericEncoder | None = None) -> pd.D
         "reference": [refs.get(f, "") for f, _ in parts], "points": w.points.to_numpy(),
         "odds_multiplier": w.odds_multiplier.to_numpy(), "log_odds": w.log_odds.to_numpy(), "column": list(w.index)})
     return out.sort_values(["points", "column"], ascending=[False, True], kind="stable").reset_index(drop=True)
+
+
+def constant_columns(dataset: str | Path, label_mode: str, feature_set: str,
+                     extras: GenericEncoder | None = None) -> dict[str, float]:
+    """Design columns with no variance on the training rows of a run with ``label_mode`` / ``feature_set`` on
+    ``dataset`` (``emva.eval.collinearity``'s ``constant``), each with the value it has on every training lead (0 or 1).
+
+    With L2 a column that is 1 on every training lead shares the intercept's job, so its points are part of the
+    starting score rather than a signal that moves a lead; a column that is 0 on every one never fires. The design
+    is rebuilt as ``emva.pipeline.run`` builds it (``emva.pipeline.build``, ``emva.labels.split_masks`` at the
+    dataset's own dates, the feature set's design) without fitting; a generic run's extras use the run's fitted
+    encoder (``extras``, its bundle's). Raises ``ValueError`` for a generic run without ``extras`` or without the
+    dataset's extras, and what ``emva.io.load`` / ``dataset_dates`` raise.
+    """
+    as_of, test_from = dataset_dates(dataset)
+    labels = LabelConfig(mode=label_mode)
+    spec = feature_spec(feature_set)
+    X = build(load(dataset), labels, spec.feature_set, as_of)
+    train, _ = split_masks(X, test_from, labels.eligible(X, as_of))
+    D = spec.design(X)
+    if spec.extras:
+        if extras is None:
+            raise ValueError("a generic-feature-set run needs its bundle's extras encoder")
+        D = D.join(extras.design(X.join(read_extra_features(dataset)[1])))
+    T = D[train]
+    sd = T.to_numpy(dtype=float).std(axis=0)
+    return {str(c): float(T[c].iloc[0]) for c, s in zip(T.columns, sd) if not s > 0}
+
+
+def constant_note(card: pd.DataFrame, constant: dict[str, float]) -> str:
+    """One line for the scorecard on the ``constant`` columns (``constant_columns``) of ``card`` (``scorecard``),
+    empty when there are none: how many signals are the same on every training lead; those on for every lead by name
+    with their points, which are part of the starting score; those never on by count (they score 0)."""
+    rows = card[card.column.isin(constant)]
+    if rows.empty:
+        return ""
+    on = rows[rows.column.map(constant) == 1.0]
+    off = len(rows) - len(on)
+    parts = []
+    if len(on):
+        pts = int(round(on.points.sum()))
+        sign = "+" if pts > 0 else "−" if pts < 0 else ""
+        names = ", ".join(f"{f} · {lvl}" for f, lvl in zip(on.feature, on.level))
+        tail = "add no points" if pts == 0 else \
+            f"{'their' if len(on) != 1 else 'its'} {sign}{abs(pts)} points are part of the starting score"
+        parts.append(f"{len(on)} {'are' if len(on) != 1 else 'is'} on for every one ({names}) and {tail}")
+    if off:
+        parts.append(f"{off} {'are never on and score' if off != 1 else 'is never on and scores'} 0")
+    n = len(rows)
+    return f"{n} signal{'s are' if n != 1 else ' is'} the same on every training lead: {'; '.join(parts)}."
 
 
 @dataclass
@@ -332,5 +384,6 @@ __all__ = ["BASELINE", "BASELINE_CONVERTED", "BASELINE_FAILED", "CANDIDATE", "EX
            "FEATURE_LABELS", "GENERIC_MISSINGNESS_FLAG", "GenericSection", "KPI_REFERENCES", "LEAKAGE_AUC_FLAG",
            "MISSINGNESS_FLAG_TEXT", "STATUS_QUO", "TEST_SETS",
            "VALUE_COLUMNS", "auc_month", "baseline_scores", "calibration", "evaluate", "feature_label",
-           "generic_comparison", "kpi_reference", "load_scores", "scorecard", "standard_table",
+           "constant_columns", "constant_note", "generic_comparison", "kpi_reference", "load_scores", "scorecard",
+           "standard_table",
            "training_base_rate", "value_distribution"]

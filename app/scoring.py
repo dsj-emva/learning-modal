@@ -25,6 +25,7 @@ source-format leads with a blank extra): the page warns per extra.
 from __future__ import annotations
 
 import json
+from collections.abc import Collection
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -39,6 +40,7 @@ from emva.features import SESSION_INPUTS
 from emva.generic import EXTRA_PREFIX, OTHER, ExtraKind
 from emva.ingest.convert import convert_leads, frames_from_bytes
 from emva.ingest.mapping import COLUMN_OP, IGNORE, DatasetMapping, load_mapping
+from emva.model import INTERCEPT
 from emva.persist import ModelBundle
 from emva.scoring import FieldSpec, is_blank, lead_from_form, points_breakdown, score_leads, submit_time_fields
 
@@ -182,6 +184,37 @@ def _lead_score(bundle: ModelBundle, lead: pd.DataFrame, s: pd.Series, data: str
     return LeadScore(p=float(s.p_formula), deal_value=float(s.deal_value_hat), value_formula=float(s.value_formula),
                      value_at_submit=float(s.value_at_submit), is_bot=bool(s.is_bot),
                      is_duplicate=bool(s.is_duplicate), points=pts, blank_session=blank)
+
+
+@dataclass(frozen=True)
+class Breakdown:
+    """A lead's points split for the page (``breakdown``): ``starting`` (unrounded points of the intercept plus the
+    lead's active columns that are constant on the training rows, ``folded`` of them), ``signals_points`` (unrounded
+    sum of every other active column) and ``signals`` (those rows whose points round to a non-zero integer, highest
+    first; columns as ``LeadScore.points``). ``starting + signals_points`` is the lead's logit(p) in points."""
+
+    starting: float
+    signals_points: float
+    signals: pd.DataFrame
+    folded: int
+
+    def shown(self) -> tuple[int, int, int]:
+        """``(starting, signals, total)`` as the page prints them: each part rounded, the total their sum, so the
+        three always add up as displayed."""
+        a, b = int(round(self.starting)), int(round(self.signals_points))
+        return a, b, a + b
+
+
+def breakdown(points: pd.DataFrame, constant: Collection[str] = ()) -> Breakdown:
+    """``LeadScore.points`` split into the starting score and the signals that move this lead: the intercept row and
+    the ``constant`` design columns (``app.results.constant_columns``: the same on every training lead, so their
+    points belong to the starting score) are folded together, rows rounding to 0 points are not listed."""
+    column = points.feature.where(points.level == "", points.feature + "=" + points.level)
+    start = (points.feature == INTERCEPT) | column.isin(set(constant))
+    rest = points[~start]
+    shown = rest[rest.points.round().astype(int) != 0].sort_values("points", ascending=False, kind="stable")
+    return Breakdown(starting=float(points.points[start].sum()), signals_points=float(rest.points.sum()),
+                     signals=shown, folded=int(start.sum()) - int((points.feature == INTERCEPT).sum()))
 
 
 # --- source format ---------------------------------------------------------------------------------------------------
@@ -424,7 +457,8 @@ def describe_transform(bundle: ModelBundle, currency: str | None = V1_CURRENCY) 
     return "p × expected deal value, " + ", then ".join(steps) + "." if steps else "p × expected deal value."
 
 
-__all__ = ["DEFAULTS", "FormField", "LeadScore", "SECTIONS", "SourceField", "SourceScores",
-           "blank_session_fields", "clean_values", "defaults_for", "describe_transform", "extra_names", "form_sections",
+__all__ = ["Breakdown", "DEFAULTS", "FormField", "LeadScore", "SECTIONS", "SourceField", "SourceScores",
+           "blank_session_fields", "breakdown", "clean_values", "defaults_for", "describe_transform", "extra_names",
+           "form_sections",
            "frames_from_source_form", "frames_from_source_uploads", "number_text", "run_mapping", "score_form",
            "score_source", "source_fields", "source_lead_score", "values_from_lead"]

@@ -11,7 +11,6 @@ from app import components as C
 from app.scoring import FormField
 from emva.generic import OTHER
 from emva.ingest.mapping import DatasetMapping
-from emva.model import INTERCEPT
 from emva.persist import BUNDLE_FILE, ModelBundle
 from emva.scoring import FieldType, UnknownLevelError
 
@@ -61,7 +60,8 @@ def _form(defaults: dict[str, object], form_key: str) -> dict[str, object] | Non
 
 
 def _result(res: scoring.LeadScore, base: float, run: storage.Run, bundle: ModelBundle, batch: bool = False) -> None:
-    """The result card (amounts in the run's dataset currency), then the points breakdown (``batch``: the lead was
+    """The result card (amounts in the run's dataset currency), then the points breakdown with the columns that are
+    the same on every training lead folded into the starting score (``scoring.breakdown``; ``batch``: the lead was
     scored with others from a file)."""
     cur = ui.currency(run.dataset_path)
     flags = [C.pill("Looks like a bot", "bad") if res.is_bot else C.pill("Not a bot", "ok")]
@@ -80,14 +80,15 @@ def _result(res: scoring.LeadScore, base: float, run: storage.Run, bundle: Model
     if res.is_bot:
         ui.html(C.callout("Under 15 seconds on the page or a headless browser: the batch pipeline would drop this "
                           "lead before training and scoring. It is scored here anyway.", "warn"))
-    pts = res.points
-    icpt = pts[pts.feature == INTERCEPT]
-    rest = pts[pts.feature != INTERCEPT].sort_values("points", ascending=False, kind="stable")
+    b = scoring.breakdown(res.points, ui.run_constant_columns(run))
+    start, signals, total = b.shown()
     ui.html(C.section("Why this score", "Every signal that moved this lead away from the starting score. Signals at "
                                         "their comparison level add nothing and are not listed."))
-    ui.html(C.stats([("Starting score", C.points(float(icpt.points.iloc[0])) + " pts"),
-                     ("Signals", C.points(float(rest.points.sum())) + " pts"),
-                     ("Total", C.points(float(pts.points.sum())) + " pts")]))
+    start_label = "Starting score" if not b.folded else \
+        f"Starting score (incl. {b.folded} signal{'s' * (b.folded != 1)} the same on every training lead)"
+    ui.html(C.stats([(start_label, C.points(start) + " pts"), ("Signals", C.points(signals) + " pts"),
+                     ("Total", C.points(total) + " pts")]))
+    rest = b.signals
     labels = [f"{lbl} · {lvl}" for lbl, lvl in zip(rest.label, rest.level)]
     st.plotly_chart(charts.points_chart(labels, rest.points.tolist()), config=charts.CONFIG, theme=None, width="stretch",
                     key="lead_points")

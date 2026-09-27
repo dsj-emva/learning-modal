@@ -82,19 +82,20 @@ def _captions(at: AppTest) -> str:
     return "\n".join(c.value for c in at.caption)
 
 
-def test_results_page_amounts_in_the_dataset_currency(monkeypatch: pytest.MonkeyPatch, app_trained,
-                                                       app_converted) -> None:
-    """The sample shows £; the converted Olist fixture (currency BRL) shows BRL, never £ (M4)."""
+def test_results_page_amounts_and_constant_signals(monkeypatch: pytest.MonkeyPatch, app_trained,
+                                                    app_converted) -> None:
+    """The sample shows £ and no constant-signal note; the converted Olist fixture (currency BRL) shows BRL, never £,
+    and says which signals are the same on every training lead (M3, M4)."""
     import numpy as np
 
     from app import charts
 
     at = _sign_in(_app(monkeypatch, app_trained[0]), "letmein")
-    assert not at.exception and "£" in _stats(at)
+    assert not at.exception and "£" in _stats(at) and "same on every training lead" not in _captions(at)
     at = _sign_in(_app(monkeypatch, app_converted[0]), "letmein")
     assert not at.exception, at.exception
     assert "BRL " in _stats(at) and "£" not in _stats(at)
-    assert "source's currency" not in _captions(at)
+    assert "same on every training lead" in _captions(at) and "source's currency" not in _captions(at)
     ticks = charts.value_histogram({"v": np.array([5.0, 500.0])}, "BRL").layout.xaxis.ticktext
     assert ticks[0] == "BRL 1" and all("£" not in t for t in ticks)
     assert charts.value_histogram({"v": np.array([5.0])}, None).layout.xaxis.ticktext[0] == "1"
@@ -286,6 +287,7 @@ def test_score_page_source_format(monkeypatch: pytest.MonkeyPatch, app_converted
     assert "Chance this lead closes" in _text(at) and "Why this score" in _text(at)
     card = next(m.value for m in at.markdown if m.value.startswith("<div class=\"k-result\""))
     assert "BRL " in card and "£" not in card  # the mapping declares BRL (M4)
+    assert "same on every training lead" in _text(at)  # the constant signals are in the starting score (M3)
     raw = (INGEST_FIXTURES / "olist_funnel" / OLIST_MQL).read_bytes()
     at.file_uploader(key=f"src_upload_{run.run_id}").upload("new.csv", raw, "text/csv").run()
     at.button(key=f"src_score_file_{run.run_id}").click().run()

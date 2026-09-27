@@ -83,9 +83,15 @@ def _scorecard_table(card: pd.DataFrame, height: int, key: str) -> None:
 
 
 def _scorecard(run: storage.Run, extras: GenericEncoder | None) -> None:
-    """Scorecard: signed bar chart and a sortable table. A generic run's long list (extras' ``x_`` columns) shows the
+    """Scorecard: signed bar chart and a sortable table, without the columns that are the same on every training lead
+    (``results.constant_columns``; one line names them). A generic run's long list (extras' ``x_`` columns) shows the
     ``SCORECARD_TOP`` rows with the largest |points|, with every row in an expander."""
     card = results.scorecard(run.out_dir, extras)
+    constant = ui.run_constant_columns(run)
+    note = results.constant_note(card, constant)
+    card = card[~card.column.isin(constant)].reset_index(drop=True)
+    if note:
+        st.caption(note)
     long = extras is not None and len(card) > SCORECARD_TOP
     shown = card.loc[card.points.abs().sort_values(ascending=False, kind="stable").index[:SCORECARD_TOP]] \
         .sort_values("points", ascending=False, kind="stable") if long else card
