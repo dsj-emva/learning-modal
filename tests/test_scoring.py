@@ -18,6 +18,7 @@ from emva.persist import ModelBundle, load_bundle, save_bundle
 from emva.pipeline import PipelineResult
 from emva.scoring import (
     FieldSpec,
+    LevelProblem,
     UnknownLevelError,
     lead_from_form,
     points_breakdown,
@@ -192,6 +193,31 @@ def test_unknown_company_size_answer_raises(trained):
     raw.loc[0, "answers"] = json.dumps({"company_size": "5000+"})
     with pytest.raises(UnknownLevelError, match="band"):
         score_leads(bundle, raw, DATA_V2)
+
+
+def test_unknown_levels_of_several_features_are_all_named(trained):
+    result, bundle = trained[DATA_V2, FeatureSet.V2]
+    lead = result.X.index[result.X.en_employee_band.isna()][0]
+    raw = _raw(DATA_V2, [lead])
+    raw.loc[0, "answers"] = json.dumps({"company_size": "5000+"})
+    raw.loc[0, "form_variant"] = "Z"
+    with pytest.raises(UnknownLevelError) as e:
+        score_leads(bundle, raw, DATA_V2)
+    order = list(bundle.levels)
+    assert [p.feature for p in e.value.problems] == sorted(["form_variant", "band"], key=order.index)
+    by = {p.feature: p for p in e.value.problems}
+    assert by["band"].values == ("5000+",) and by["band"].lead_ids == (lead,) and MISSING in by["band"].allowed
+    lines = str(e.value).splitlines()
+    assert len(lines) == 2 and all("not trained with; allowed:" in line for line in lines)
+    assert any("'form_variant'" in line and "'Z'" in line for line in lines)
+    with pytest.raises(ValueError, match="at least one"):
+        UnknownLevelError([])
+
+
+def test_unknown_level_message_lists_at_most_five_leads():
+    p = LevelProblem("band", ("5000+",), tuple(f"L{i}" for i in range(8)), ("1-10",))
+    assert p.message() == ("feature 'band' has value(s) ['5000+'] for lead(s) ['L0', 'L1', 'L2', 'L3', 'L4'] that the "
+                           "model was not trained with; allowed: ['1-10']")
 
 
 def test_input_errors(trained):

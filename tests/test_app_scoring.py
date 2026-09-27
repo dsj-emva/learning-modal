@@ -80,6 +80,61 @@ def test_unknown_level_and_bad_input(trained) -> None:
     assert issubclass(UnknownLevelError, ValueError)
 
 
+def test_example_is_the_built_in_lead_when_the_model_knows_its_levels(trained, converted, generic) -> None:
+    for bundle, data in (trained[:2], converted[:2], generic[:2]):
+        ex = scoring.example_for(bundle, data)
+        assert ex == scoring.Example(scoring.defaults_for(data)) and ex.lead_id is None and ex.note is None
+
+
+@pytest.fixture(scope="module")
+def converted_legacy(app_converted_legacy):
+    """``(bundle, dataset dir)`` of the legacy-labels, legacy-features run on the converted Olist-shaped fixture."""
+    _, run = app_converted_legacy
+    return load_bundle(Path(run.out_dir) / "model.joblib"), Path(run.dataset_path)
+
+
+def test_legacy_run_on_converted_data_starts_from_a_training_lead(converted_legacy) -> None:
+    """Keel QA M1: the legacy design knows only the levels seen in training, so the built-in example is refused; the
+    form starts from the first training-period lead the model can score, and says so."""
+    from emva.dataset_meta import dataset_dates
+
+    bundle, data = converted_legacy
+    with pytest.raises(UnknownLevelError) as e:
+        scoring.score_form(bundle, scoring.defaults_for(data), data)
+    assert {"band", "text", "seniority", "time_on_page"} <= {p.feature for p in e.value.problems}  # all, at once
+    ex = scoring.example_for(bundle, data)
+    raw = read_leads(data / "historical_leads.csv")
+    assert ex.lead_id in raw.index and raw.created_at[ex.lead_id] < pd.Timestamp(dataset_dates(data)[1], tz="UTC")
+    assert ex.note == (f"Example taken from training lead {ex.lead_id}: the built-in example uses values this model "
+                       "never saw.")
+    assert ex.values == scoring.values_from_lead(raw.loc[ex.lead_id])
+    got = scoring.score_form(bundle, ex.values, data)
+    assert 0 < got.p < 1
+    assert scoring.example_for(bundle, data) == ex  # deterministic
+
+
+def test_level_problems_use_the_form_labels(converted_legacy) -> None:
+    bundle, data = converted_legacy
+    with pytest.raises(UnknownLevelError) as e:
+        scoring.score_form(bundle, scoring.defaults_for(data), data)
+    lines = scoring.form_problem_lines(e.value)
+    assert len(lines) == len(e.value.problems)
+    assert f"Company size (typed): 51-200 was not seen in training; allowed: {', '.join(bundle.levels['band'])}" in lines
+    assert any(line.startswith("Job title → Seniority: senior was not seen in training; allowed: ") for line in lines)
+    assert any(line.startswith("What do they want to solve? → What they want to solve: specific ") for line in lines)
+    assert not any("form-" in line or "'band'" in line for line in lines)  # no generated ids, no internal names
+
+
+def test_source_level_problems_name_the_feature_and_the_leads() -> None:
+    from emva.scoring import LevelProblem
+
+    e = UnknownLevelError([LevelProblem("band", ("51-200", "5000+"), tuple(f"m{i}" for i in range(7)), ("1-10",)),
+                           LevelProblem("x_page", ("p9",), ("m1",), ("p1", "other"))])
+    assert scoring.source_problem_lines(e) == [
+        "Company size: 51-200, 5000+ were not seen in training; allowed: 1-10 (lead(s) m0, m1, m2, m3, m4, ...)",
+        "Extra · page: p9 was not seen in training; allowed: p1, other (lead(s) m1)"]
+
+
 def test_bot_flag_is_reported_not_dropped(trained) -> None:
     bundle, data, _ = trained
     got = scoring.score_form(bundle, {**scoring.defaults_for(data), "time_on_page_s": 3.0}, data)
@@ -123,6 +178,8 @@ def test_source_fields_are_the_submit_time_columns(converted) -> None:
     by = {f.column: f for f in fields}
     assert by["origin"].options[:2] == ("paid_search", "social") and by["origin"].feeds == "utm_source, utm_medium"
     assert by["landing_page_id"].options is None and by["mql_id"].feeds.startswith("lead lead_id")
+    assert [f.column for f in fields if f.required] == ["first_contact_date"]
+    assert by["first_contact_date"].feeds.startswith("lead created_at (required)")
     assert "won_date" not in by and "declared_monthly_revenue" not in by  # outcome and deal value: never asked
 
 
@@ -160,7 +217,8 @@ def test_source_upload_scores_every_row_and_ignores_outcome_columns(converted) -
 def test_source_refusals_are_clear(converted) -> None:
     bundle, data, mapping = converted
     keys = {f.column: f.key for f in scoring.source_fields(mapping)}
-    frames = scoring.frames_from_source_form(mapping, {keys["origin"]: "carrier_pigeon"})
+    frames = scoring.frames_from_source_form(mapping, {keys["first_contact_date"]: "2018-04-01",
+                                                       keys["origin"]: "carrier_pigeon"})
     with pytest.raises(ValueError, match="not in its value_map"):
         scoring.score_source(bundle, mapping, frames, data)
     raw = pd.read_csv(io.BytesIO(_mql_csv()), dtype=str)
@@ -169,6 +227,33 @@ def test_source_refusals_are_clear(converted) -> None:
         scoring.score_source(bundle, mapping, scoring.frames_from_source_uploads(mapping, {"x.csv": dup}), data)
     with pytest.raises(ValueError, match="missing source file"):
         scoring.frames_from_source_uploads(mapping, {"a.csv": b"x\n1\n", "b.csv": b"y\n2\n"})
+
+
+def test_source_leads_need_created_at(converted) -> None:
+    """Keel QA M2: a blank or missing created_at column (first_contact_date) is refused, from the form and from a
+    CSV; a malformed date still is; a filled one scores."""
+    bundle, data, mapping = converted
+    keys = {f.column: f.key for f in scoring.source_fields(mapping)}
+    for date in ("", "   ", None):
+        frames = scoring.frames_from_source_form(mapping, {keys["first_contact_date"]: date,
+                                                           keys["origin"]: "paid_search"})
+        with pytest.raises(ValueError, match=r"created_at is blank on 1 new lead\(s\) \(rows \[1\]\)"):
+            scoring.score_source(bundle, mapping, frames, data)
+    raw = pd.read_csv(io.BytesIO(_mql_csv()), dtype=str).head(4)
+    blank = raw.assign(first_contact_date=["2018-04-01", "", "2018-04-03", None])
+    with pytest.raises(ValueError, match=r"created_at is blank on 2 new lead\(s\) \(rows \[2, 4\]\)"):
+        scoring.score_source(bundle, mapping, scoring.frames_from_source_uploads(
+            mapping, {"x.csv": blank.to_csv(index=False).encode()}), data)
+    gone = raw.drop(columns="first_contact_date").to_csv(index=False).encode()
+    with pytest.raises(ValueError, match="column 'mql.first_contact_date' is not in the source files"):
+        scoring.score_source(bundle, mapping, scoring.frames_from_source_uploads(mapping, {"x.csv": gone}), data)
+    bad = raw.assign(first_contact_date=["2018-04-01", "soon", "2018-04-03", "2018-04-04"]).to_csv(index=False)
+    with pytest.raises(ValueError, match="not ISO dates"):
+        scoring.score_source(bundle, mapping, scoring.frames_from_source_uploads(mapping, {"x.csv": bad.encode()}),
+                             data)
+    ok = scoring.score_source(bundle, mapping, scoring.frames_from_source_uploads(
+        mapping, {"x.csv": raw.to_csv(index=False).encode()}), data)
+    assert list(ok.leads.created_at) == list(pd.to_datetime(raw.first_contact_date, utc=True))
 
 
 def test_joined_file_gets_the_primary_join_value() -> None:

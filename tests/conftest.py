@@ -107,9 +107,9 @@ def olist_raw(copies: int = OLIST_COPIES) -> dict[str, bytes]:
     return out
 
 
-def _converted_and_trained(tmp_path_factory, root_name: str, feature_set: str):
+def _converted_and_trained(tmp_path_factory, root_name: str, feature_set: str, label_mode: str = "horizon"):
     """``(root, run)``: ``olist_raw()`` converted with the committed ``mappings/olist_funnel.toml`` in a fresh app data
-    root and trained end to end by ``app.training.start_training`` (horizon labels, ``feature_set``)."""
+    root and trained end to end by ``app.training.start_training`` (``label_mode`` labels, ``feature_set``)."""
     import sys
 
     from app import ingest, storage, training
@@ -120,7 +120,7 @@ def _converted_and_trained(tmp_path_factory, root_name: str, feature_set: str):
     conv = ingest.convert_raw(ingest.raw_frames(olist_raw()), mapping, "2026-09-26")
     assert conv.report.ok, conv.report.errors
     ds = storage.save_dataset(root, "olist-fixture", conv.files)
-    config = training.TrainingConfig(feature_set=feature_set)
+    config = training.TrainingConfig(label_mode=label_mode, feature_set=feature_set)
     run = storage.register_run(root, storage.new_run(root, ds, config.as_dict()))
     proc = training.start_training(root, run, python=sys.executable, report_resamples=APP_REPORT_RESAMPLES)
     assert proc.wait(timeout=180) == 0, Path(run.log_path).read_text()
@@ -141,3 +141,10 @@ def app_generic(tmp_path_factory):
     """``(root, run)``: as ``app_converted``, in its own data root, trained with the generic feature set (v2 plus the
     mapping's one extra, landing_page; Phase 10 (b))."""
     return _converted_and_trained(tmp_path_factory, "app-generic", "generic")
+
+
+@pytest.fixture(scope="session")
+def app_converted_legacy(tmp_path_factory):
+    """``(root, run)``: as ``app_converted``, in its own data root, trained with legacy labels and legacy features
+    (a data-driven design: only the levels seen in training; the Keel QA fix round's M1)."""
+    return _converted_and_trained(tmp_path_factory, "app-converted-legacy", "legacy", "legacy")

@@ -13,8 +13,9 @@ except that a text field stays text in a column that was blank on every training
 
 Rulings:
 
-- **Unknown categorical levels raise** ``UnknownLevelError`` listing the leads, the values and the allowed
-  levels (``ModelBundle.levels``), rather than mapping them to a missing level: a level the model never saw has
+- **Unknown categorical levels raise** ``UnknownLevelError`` listing, for every offending feature, the leads, the
+  values and the allowed levels (``ModelBundle.levels``; also as ``UnknownLevelError.problems``, one ``LevelProblem``
+  per feature), rather than mapping them to a missing level: a level the model never saw has
   no coefficient, and guessing one would silently misprice the lead. For the legacy feature set the allowed
   levels are those seen in training (its design is data-driven).
 - **Extras of the generic feature set** (Phase 10, ADR 0024): a bundle trained with ``--feature-set generic`` also
@@ -51,8 +52,39 @@ from emva.persist import ModelBundle
 from emva.value import expected_value, predict_deal_value
 
 
+# Lead ids listed per feature in an ``UnknownLevelError`` message (``LevelProblem.lead_ids`` keeps them all).
+LEADS_LISTED = 5
+
+
+@dataclass(frozen=True)
+class LevelProblem:
+    """One model feature with values outside ``ModelBundle.levels``: the ``feature``, its offending ``values``
+    (sorted), the ``lead_ids`` that have one (input order) and the ``allowed`` levels."""
+
+    feature: str
+    values: tuple[str, ...]
+    lead_ids: tuple[str, ...]
+    allowed: tuple[str, ...]
+
+    def message(self) -> str:
+        """``feature 'band' has value(s) [...] for lead(s) [...] that the model was not trained with; allowed:
+        [...]`` (at most ``LEADS_LISTED`` lead ids)."""
+        return (f"feature {self.feature!r} has value(s) {list(self.values)} for lead(s) "
+                f"{list(self.lead_ids[:LEADS_LISTED])} that the model was not trained with; "
+                f"allowed: {list(self.allowed)}")
+
+
 class UnknownLevelError(ValueError):
-    """A lead has a categorical feature value the saved models were not trained with."""
+    """Leads have categorical feature values the saved models were not trained with. ``problems`` holds one
+    ``LevelProblem`` per offending feature (every one, in ``ModelBundle.levels`` order); the message joins their
+    ``LevelProblem.message`` texts, one per line."""
+
+    def __init__(self, problems: list[LevelProblem]) -> None:
+        """Needs at least one problem."""
+        if not problems:
+            raise ValueError("an UnknownLevelError needs at least one LevelProblem")
+        self.problems: tuple[LevelProblem, ...] = tuple(problems)
+        super().__init__("\n".join(p.message() for p in problems))
 
 
 class FieldType(str, Enum):
@@ -271,16 +303,35 @@ def _as_training_schema(bundle: ModelBundle, leads: pd.DataFrame) -> pd.DataFram
     return X
 
 
-def check_levels(bundle: ModelBundle, X: pd.DataFrame) -> None:
-    """Raise ``UnknownLevelError`` if any featurised lead in ``X`` has a model feature value outside
-    ``bundle.levels``; the message names the feature, the values, the leads and the allowed levels."""
+def level_problems(bundle: ModelBundle, X: pd.DataFrame) -> list[LevelProblem]:
+    """One ``LevelProblem`` per model feature for which a featurised lead in ``X`` (``featurise``) has a value outside
+    ``bundle.levels``, in ``bundle.levels`` order; empty when every value is known."""
+    out = []
     for feature, allowed in bundle.levels.items():
         values = X[feature].astype(str)
         bad = ~values.isin(allowed)
         if bad.any():
-            raise UnknownLevelError(f"feature {feature!r} has value(s) {sorted(set(values[bad]))} for lead(s) "
-                                    f"{list(X.index[bad])[:5]} that the model was not trained with; "
-                                    f"allowed: {list(allowed)}")
+            out.append(LevelProblem(feature, tuple(sorted(set(values[bad]))), tuple(map(str, X.index[bad])),
+                                    tuple(allowed)))
+    return out
+
+
+def check_levels(bundle: ModelBundle, X: pd.DataFrame) -> None:
+    """Raise ``UnknownLevelError`` if any featurised lead in ``X`` has a model feature value outside
+    ``bundle.levels``, naming every offending feature (``level_problems``) with its values, leads and allowed
+    levels."""
+    problems = level_problems(bundle, X)
+    if problems:
+        raise UnknownLevelError(problems)
+
+
+def featurise(bundle: ModelBundle, leads: pd.DataFrame, data: str | Path) -> pd.DataFrame:
+    """The leads as the training run featurised them (indexed by ``lead_id``): the training schema, the enrichment
+    join with ``data``'s ``companies.csv``, the bot and duplicate flags and ``bundle``'s feature set. No level check
+    (``check_levels`` / ``level_problems`` do that). Raises ``ValueError`` for malformed input, like ``score_leads``.
+    """
+    X = enrich(_as_training_schema(bundle, leads), read_companies(data))
+    return feature_spec(bundle.feature_set).featurise(flag_bots_and_duplicates(X))
 
 
 def prepare(bundle: ModelBundle, leads: pd.DataFrame, data: str | Path
@@ -292,8 +343,7 @@ def prepare(bundle: ModelBundle, leads: pd.DataFrame, data: str | Path
     ``score_leads``.
     """
     spec = feature_spec(bundle.feature_set)
-    X = enrich(_as_training_schema(bundle, leads), read_companies(data))
-    X = spec.featurise(flag_bots_and_duplicates(X))
+    X = featurise(bundle, leads, data)
     check_levels(bundle, X)
     D = spec.design(X)
     if bundle.extras is not None:
@@ -347,5 +397,6 @@ def points_breakdown(bundle: ModelBundle, leads: pd.DataFrame, data: str | Path)
                                                 "points"]]
 
 
-__all__ = ["FieldSpec", "FieldType", "UnknownLevelError", "check_levels", "is_blank", "lead_from_form", "points_breakdown", "prepare",
-           "score_leads", "submit_time_fields"]
+__all__ = ["LEADS_LISTED", "FieldSpec", "FieldType", "LevelProblem", "UnknownLevelError", "check_levels", "featurise",
+           "is_blank", "lead_from_form", "level_problems", "points_breakdown", "prepare", "score_leads",
+           "submit_time_fields"]

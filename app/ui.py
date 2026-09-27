@@ -1,7 +1,8 @@
 """Streamlit helpers shared by the pages: the data root, cached loaders, run pickers and HTML rendering.
 
-Caching: evaluation frames per (run, test set) with ``st.cache_data``; the model bundle per run with
-``st.cache_resource`` (one unpickled object per process, shared by sessions; bundles are read-only).
+Caching: evaluation frames per (run, test set) and the Score page's example lead per run with ``st.cache_data``; the
+model bundle per run with ``st.cache_resource`` (one unpickled object per process, shared by sessions; bundles are
+read-only).
 """
 from __future__ import annotations
 
@@ -12,7 +13,7 @@ import pandas as pd
 import streamlit as st
 
 from app import components as C
-from app import results, storage
+from app import results, scoring, storage
 from app.storage import Run
 from emva.dataset_meta import dataset_dates
 from emva.persist import BUNDLE_FILE, ModelBundle, load_bundle
@@ -103,6 +104,13 @@ def raw_lead(dataset_path: str, lead_id: str) -> pd.Series | None:
 
 
 @st.cache_data(show_spinner=False)
+def example(run_id: str, bundle_path: str, dataset_path: str) -> scoring.Example:
+    """The Score page's starting lead for the run (``scoring.example_for``; cached per run, since it may featurise
+    the whole dataset)."""
+    return scoring.example_for(bundle(run_id, bundle_path), dataset_path)
+
+
+@st.cache_data(show_spinner=False)
 def base_rate(run_id: str, out_dir: str, dataset_path: str) -> float:
     """Win rate of the run's training labels (``results.training_base_rate``, split at the dataset's
     ``test_from``)."""
@@ -116,5 +124,5 @@ def no_runs_state(message: str) -> None:
     st.page_link("views/upload.py", label="Upload data and train a model", icon=":material/arrow_forward:")
 
 
-__all__ = ["bundle", "base_rate", "data_root", "evaluation", "generic_section", "has_bundle", "html", "no_runs_state",
-           "pick_run", "raw_lead", "run_label"]
+__all__ = ["bundle", "base_rate", "data_root", "evaluation", "example", "generic_section", "has_bundle", "html",
+           "no_runs_state", "pick_run", "raw_lead", "run_label"]

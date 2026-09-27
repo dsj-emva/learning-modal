@@ -115,6 +115,21 @@ def test_score_page_prefills_a_dataset_lead(monkeypatch: pytest.MonkeyPatch, app
     assert not at.exception and "Chance this lead closes" in _text(at)
 
 
+def test_score_page_legacy_run_on_converted_data_starts_from_a_training_lead(monkeypatch: pytest.MonkeyPatch,
+                                                                             app_converted_legacy) -> None:
+    """Keel QA M1: the legacy design has not seen the built-in example's levels, so the EMVA form starts from a
+    training lead, says so, and that lead scores."""
+    root, run = app_converted_legacy
+    at = _sign_in(_app(monkeypatch, root), "letmein")
+    at.switch_page("views/score.py").run()
+    assert not at.exception, at.exception
+    assert "Example taken from training lead " in _text(at)
+    next(b for b in at.button if b.label == "Score this lead").click()
+    at.run()
+    assert not at.exception, at.exception
+    assert "Chance this lead closes" in _text(at) and "not seen" not in _text(at)
+
+
 # --- Map & convert and the source-format score page (Phase 9) --------------------------------------------------------
 
 def _upload_raw(at: AppTest, files: dict[str, bytes]) -> AppTest:
@@ -238,10 +253,15 @@ def test_score_page_source_format(monkeypatch: pytest.MonkeyPatch, app_converted
     at.switch_page("views/score.py").run()
     at.segmented_control(key=f"score_mode_{run.run_id}").set_value("source").run()
     assert not at.exception, at.exception
-    assert [t.label for t in at.text_input if t.key.startswith("src_")] == ["mql_id", "first_contact_date",
+    assert [t.label for t in at.text_input if t.key.startswith("src_")] == ["mql_id", "first_contact_date *",
                                                                             "landing_page_id"]
     origin = next(s for s in at.selectbox if s.key.endswith(":origin"))
     origin.select("paid_search")
+    next(b for b in at.button if b.label == "Score this lead").click()
+    at.run()
+    assert not at.exception and "created_at is blank" in _text(at)  # the date is required (Keel QA M2)
+    assert "Chance this lead closes" not in _text(at)
+    next(t for t in at.text_input if t.key.endswith(":first_contact_date")).input("2018-04-01")
     next(b for b in at.button if b.label == "Score this lead").click()
     at.run()
     assert not at.exception, at.exception
@@ -336,6 +356,7 @@ def test_generic_run_score_page_offers_the_extras(monkeypatch: pytest.MonkeyPatc
     page = next(s for s in at.selectbox if s.key.endswith(":landing_page_id"))
     assert page.options[0] == "— blank —" and page.options[-1] == "other (any value not listed)"
     page.select_index(1)
+    next(t for t in at.text_input if t.key.endswith(":first_contact_date")).input("2018-04-01")
     next(b for b in at.button if b.label == "Score this lead").click()
     at.run()
     assert not at.exception, at.exception

@@ -729,16 +729,36 @@ def test_form_text_in_a_column_blank_on_every_training_lead_scores(converted_dir
                                rtol=1e-12)
 
 
-def test_convert_leads_without_ids_dates_or_outcome_columns(frames: dict[str, pd.DataFrame],
-                                                            mapping: DatasetMapping) -> None:
-    new = frames["leads.csv"].head(3)[["mail", "source", "size", "org"]]
+def test_convert_leads_without_ids_or_outcome_columns(frames: dict[str, pd.DataFrame],
+                                                      mapping: DatasetMapping) -> None:
+    new = frames["leads.csv"].head(3)[["signup", "mail", "source", "size", "org"]]
     leads = convert_leads({"leads.csv": new, "orgs.csv": frames["orgs.csv"]}, mapping)
     assert list(leads.lead_id) == ["new-000001", "new-000002", "new-000003"]
-    assert leads.created_at.notna().all() and str(leads.created_at.dt.tz) == "UTC"
+    assert str(leads.created_at.dt.tz) == "UTC"
+    assert list(leads.created_at) == list(pd.to_datetime(new.signup, utc=True, format="ISO8601"))
     with pytest.raises(ValueError, match="column 'l.source' is not in the source files"):
         convert_leads({"leads.csv": new.drop(columns="source"), "orgs.csv": frames["orgs.csv"]}, mapping)
     with pytest.raises(ValueError, match="outcome_confirmed is false"):
         convert_leads({"leads.csv": new, "orgs.csv": frames["orgs.csv"]}, replace(mapping, outcome_confirmed=False))
+
+
+def test_convert_leads_requires_created_at_on_every_lead(frames: dict[str, pd.DataFrame],
+                                                         mapping: DatasetMapping) -> None:
+    """Keel QA M2: a new lead's created_at is required (it used to be filled with now): a missing column, a blank cell
+    (None, NaN or whitespace) and a malformed date are refused, naming the rows; nothing is dropped."""
+    new = frames["leads.csv"].head(4)[["id", "signup", "mail", "source", "size", "org"]]
+    orgs = frames["orgs.csv"]
+    with pytest.raises(ValueError, match="column 'l.signup' is not in the source files"):
+        convert_leads({"leads.csv": new.drop(columns="signup"), "orgs.csv": orgs}, mapping)
+    for blank in (None, np.nan, "  "):
+        bad = new.copy()
+        bad.loc[bad.index[[1, 3]], "signup"] = blank
+        with pytest.raises(ValueError, match=r"created_at is blank on 2 new lead\(s\) \(rows \[2, 4\]\); every new "
+                                             r"lead needs l\.signup"):
+            convert_leads({"leads.csv": bad, "orgs.csv": orgs}, mapping)
+    with pytest.raises(ValueError, match="created_at: 1 value\\(s\\) are not ISO dates"):
+        convert_leads({"leads.csv": new.assign(signup=["2025-02-01", "soon", "2025-02-03", "2025-02-04"]),
+                       "orgs.csv": orgs}, mapping)
 
 
 def test_convert_leads_types_booleans_for_scoring() -> None:
@@ -761,6 +781,12 @@ def test_cli_score_prints_scores(converted_dir: Path, frames: dict[str, pd.DataF
           str(tmp_path), "--data", str(converted_dir)])
     out = pd.read_csv(io.StringIO(capsys.readouterr().out), index_col="lead_id")
     assert list(out.index) == list(frames["leads.csv"].id.head(4)) and out.p_formula.between(0, 1).all()
+    blank = frames["leads.csv"].head(4).drop(columns=["stage", "closed", "amount"])
+    blank.loc[blank.index[2], "signup"] = None
+    blank.to_csv(tmp_path / "new.csv", index=False)
+    with pytest.raises(ValueError, match=r"created_at is blank on 1 new lead\(s\) \(rows \[3\]\)"):
+        main(["score", "--mapping", str(tmp_path / "mapping.toml"), "--raw", str(tmp_path / "new.csv"), "--run",
+              str(tmp_path), "--data", str(converted_dir)])
 
 
 def test_cli_draft_uses_the_cache_next_to_the_output(tmp_path: Path, frames: dict[str, pd.DataFrame]) -> None:

@@ -5,6 +5,12 @@ labels), collects a dict of values and calls ``score_form``, which builds the le
 scores it with ``score_leads`` / ``points_breakdown`` against the run's bundle, so the app never re-implements a
 feature. Session fields default to typical values because a blank one sets ``session_missing=yes`` (v2 features).
 
+The example lead (``example_for``): ``defaults_for`` (``DEFAULTS``), unless the run's bundle has not seen one of its
+levels, which happens with the legacy feature set (its design keeps only the levels seen in training, so a converted
+dataset's legacy run may know a single company size). Then the form starts from the first training-period lead of the
+dataset that the model can score, and the page says so. A refused lead's ``UnknownLevelError`` is shown field by field
+(``form_problem_lines``, ``source_problem_lines``) with the form labels, not the model's feature names.
+
 Source format (Phase 9): when the run's dataset was converted with a mapping (``mapping.toml``, read by
 ``run_mapping`` through ``app.storage.read_mapping``), leads can also be given as the source sends them:
 ``source_fields`` lists the raw columns the mapping reads at submit time
@@ -33,12 +39,25 @@ import pandas as pd
 from app.results import feature_label
 from app.storage import get_dataset, read_mapping
 from emva.constants import MISSING
+from emva.dataset_meta import dataset_dates
 from emva.features import SESSION_INPUTS
 from emva.generic import EXTRA_PREFIX, OTHER, ExtraKind
 from emva.ingest.convert import convert_leads, frames_from_bytes
 from emva.ingest.mapping import COLUMN_OP, IGNORE, DatasetMapping, load_mapping
+from emva.io import read_leads
 from emva.persist import ModelBundle
-from emva.scoring import FieldSpec, is_blank, lead_from_form, points_breakdown, score_leads, submit_time_fields
+from emva.scoring import (
+    LEADS_LISTED,
+    FieldSpec,
+    UnknownLevelError,
+    featurise,
+    is_blank,
+    lead_from_form,
+    level_problems,
+    points_breakdown,
+    score_leads,
+    submit_time_fields,
+)
 
 # Sections of the form, in display order: title -> field names.
 SECTIONS: dict[str, tuple[str, ...]] = {
@@ -93,6 +112,95 @@ def values_from_lead(row: pd.Series) -> dict[str, object]:
     for f in submit_time_fields():
         out[f.name] = f.coerce(answers.get(f.name) if f.source == "answers" else row.get(f.name))
     return out
+
+
+# Model feature -> the form fields it is computed from (``emva.features.add_features``; ``add_features_v2`` reads the
+# same fields), for plain error messages. Company features come from the enrichment join on the domain (or name).
+FEATURE_FIELDS: dict[str, tuple[str, ...]] = {
+    "channel": ("utm_source", "utm_medium"), "form_variant": ("form_variant",), "band": ("company_size",),
+    "email": ("email",), "text": ("what_to_solve",), "seniority": ("job_title",), "spend": ("company_domain",),
+    "crm": ("company_domain",), "hiring": ("company_domain",), "sector": ("company_domain",),
+    "no_company": ("company_domain",), "time_on_page": ("time_on_page_s",), "hesitation_90s": ("hesitation_ms",),
+    "sessions_3plus": ("sessions_before_convert",), "viewed_pricing": ("viewed_pricing",), "search_term": ("utm_term",),
+    "business_hours": ("submitted_weekday", "local_submit_hour"), "ip_country": ("ip_country", "country"),
+    "ip_type": ("is_datacenter_ip",), "c_budget": ("budget",), "c_timeline": ("timeline",),
+    "edits_1_4": ("field_edit_count",),
+}
+# Features whose level is the typed value itself, so the message needs no feature name.
+TYPED_LEVEL_FEATURES: frozenset[str] = frozenset({"band", "form_variant", "c_budget", "c_timeline"})
+
+
+def _unseen(values: tuple[str, ...], allowed: tuple[str, ...]) -> str:
+    """``X was not seen in training; allowed: a, b`` (``were`` for several values)."""
+    return f"{', '.join(values)} {'was' if len(values) == 1 else 'were'} not seen in training; allowed: " \
+        f"{', '.join(allowed)}"
+
+
+def form_problem_lines(error: UnknownLevelError) -> list[str]:
+    """One line per feature of ``error`` in the EMVA form's words: the labels of the fields that feed it
+    (``FEATURE_FIELDS``, ``LABELS``), then the model's readable feature name when its level is not the typed value,
+    e.g. "Company size (typed): 51-200 was not seen in training; allowed: 1-10" or "Job title → Seniority: senior was
+    not seen in training; allowed: junior/ic". A feature without form fields is named by ``feature_label``."""
+    out = []
+    for p in error.problems:
+        fields = " / ".join(LABELS.get(f, f) for f in FEATURE_FIELDS.get(p.feature, ()))
+        if not fields:
+            head = feature_label(p.feature)
+        elif p.feature in TYPED_LEVEL_FEATURES:
+            head = fields
+        else:
+            head = f"{fields} → {feature_label(p.feature)}"
+        out.append(f"{head}: {_unseen(p.values, p.allowed)}")
+    return out
+
+
+def source_problem_lines(error: UnknownLevelError) -> list[str]:
+    """One line per feature of ``error`` for source-format leads: the readable feature name (``feature_label``), the
+    values, the leads (their ids, at most ``emva.scoring.LEADS_LISTED``) and the allowed levels."""
+    return [f"{feature_label(p.feature)}: {_unseen(p.values, p.allowed)} (lead(s) "
+            f"{', '.join(p.lead_ids[:LEADS_LISTED])}{', ...' if len(p.lead_ids) > LEADS_LISTED else ''})"
+            for p in error.problems]
+
+
+@dataclass(frozen=True)
+class Example:
+    """The lead the form starts from: ``values`` (form values) and ``lead_id``, the dataset lead they were taken
+    from, or None for the built-in example (``defaults_for``)."""
+
+    values: dict[str, object]
+    lead_id: str | None = None
+
+    @property
+    def note(self) -> str | None:
+        """The sentence the page shows when the example is a dataset lead; None for the built-in example."""
+        if self.lead_id is None:
+            return None
+        return (f"Example taken from training lead {self.lead_id}: the built-in example uses values this model "
+                "never saw.")
+
+
+def example_for(bundle: ModelBundle, data: str | Path) -> Example:
+    """The form's starting lead for ``bundle`` trained on dataset ``data``.
+
+    ``defaults_for(data)`` when ``bundle`` knows every level it produces (always for the v2 and generic feature sets,
+    whose design is fixed). Otherwise (legacy feature set: only the levels seen in training) the first lead of
+    ``historical_leads.csv``, in file order, that was created before the dataset's ``test_from``, is not dropped as a
+    bot or repeat and has only levels ``bundle`` knows (``values_from_lead``); the built-in example again if no lead
+    qualifies. Deterministic.
+    """
+    defaults = defaults_for(data)
+    if not level_problems(bundle, featurise(bundle, lead_from_form(clean_values(defaults)), data)):
+        return Example(defaults)
+    raw = read_leads(Path(data) / "historical_leads.csv")
+    X = featurise(bundle, raw, data)
+    ok = ~X.bot.astype(bool) & ~X.dup.astype(bool) & \
+        (X.created_at < pd.Timestamp(dataset_dates(data)[1], tz="UTC"))
+    for feature, allowed in bundle.levels.items():
+        ok &= X[feature].astype(str).isin(allowed)
+    if not ok.any():
+        return Example(defaults)
+    lead_id = str(X.index[ok.to_numpy()][0])
+    return Example(values_from_lead(raw.loc[lead_id]), lead_id)
 
 
 @dataclass(frozen=True)
@@ -200,14 +308,15 @@ def run_mapping(root: str | Path, dataset: str) -> DatasetMapping | None:
 class SourceField:
     """One raw column a new lead in the source format carries: its ``file`` and ``column``, the allowed ``options``
     (None = free input; a value map's keys, or a generic bundle's training levels of a categorical extra ending with
-    ``other``), ``feeds``, what the mapping makes of it (for the form's help text), and ``numeric`` (a numeric extra:
-    a number input)."""
+    ``other``), ``feeds``, what the mapping makes of it (for the form's help text), ``numeric`` (a numeric extra:
+    a number input) and ``required`` (a column of the ``created_at`` expression: ``convert_leads`` refuses a blank)."""
 
     file: str
     column: str
     options: tuple[str, ...] | None
     feeds: str
     numeric: bool = False
+    required: bool = False
 
     @property
     def key(self) -> str:
@@ -254,10 +363,11 @@ def _feeds(mapping: DatasetMapping) -> dict[tuple[str, str], tuple[str, tuple[st
         if opts is not None:
             options[key] = opts
 
-    for role in ("lead_id", "created_at"):
-        e = getattr(mapping.lead, role)
-        for c in e.columns() if e is not None else []:
-            add(c, f"lead {role} (optional: blank = {'a new id' if role == 'lead_id' else 'now'})")
+    if mapping.lead.lead_id is not None:
+        for c in mapping.lead.lead_id.columns():
+            add(c, "lead lead_id (optional: blank = a new id)")
+    for c in mapping.lead.created_at.columns():
+        add(c, "lead created_at (required)")
     for f in mapping.fields:
         if f.target == IGNORE:
             continue
@@ -290,14 +400,16 @@ def source_fields(mapping: DatasetMapping, bundle: ModelBundle | None = None) ->
     """The raw columns a new lead needs, per file in ``DatasetMapping.source_columns(submit_time_only=True)`` order.
 
     A joined file's join column is not listed (the form copies the primary file's value into it); a column with a
-    value map offers its keys, since any other value is refused by the conversion. With a generic ``bundle``, a
-    plain-column extra it uses is a number input (numeric) or offers its training levels (categorical, unless a value
-    map already fixes the options).
+    value map offers its keys, since any other value is refused by the conversion. The ``created_at`` column(s) are
+    ``required``. With a generic ``bundle``, a plain-column extra it uses is a number input (numeric) or offers its
+    training levels (categorical, unless a value map already fixes the options).
     """
     feeds = _feeds(mapping)
     extras = _extra_inputs(mapping, bundle)
     joins = {s.file: s.join_on for s in mapping.sources[1:]}
     primary = mapping.sources[0].file
+    by_name = {s.name: s.file for s in mapping.sources}
+    required = {(by_name[ref.split(".", 1)[0]], ref.split(".", 1)[1]) for ref in mapping.lead.created_at.columns()}
     out = []
     for file, columns in mapping.source_columns(submit_time_only=True).items():
         for c in columns:
@@ -307,7 +419,7 @@ def source_fields(mapping: DatasetMapping, bundle: ModelBundle | None = None) ->
             numeric = (file, c) in extras and extras[(file, c)] is None and options is None
             if options is None and extras.get((file, c)) is not None:
                 options = extras[(file, c)]
-            out.append(SourceField(file, c, options, what, numeric))
+            out.append(SourceField(file, c, options, what, numeric, (file, c) in required))
     return out
 
 
@@ -322,8 +434,9 @@ def number_text(value: float | int | None) -> str | None:
 def frames_from_source_form(mapping: DatasetMapping, values: dict[str, object]) -> dict[str, pd.DataFrame]:
     """One new lead as raw frames (file -> one-row frame of text) from form ``values`` keyed by ``SourceField.key``.
 
-    Blank values are missing cells; a blank lead id leaves its column out (``convert_leads`` then numbers the lead),
-    and each joined file's join column gets the primary file's value.
+    Blank values are missing cells (a blank ``created_at`` is refused by ``convert_leads``); a blank lead id leaves
+    its column out (``convert_leads`` then numbers the lead), and each joined file's join column gets the primary
+    file's value.
     """
     fields = source_fields(mapping)
     rows: dict[str, dict[str, object]] = {file: {} for file in mapping.source_columns(submit_time_only=True)}
@@ -388,7 +501,8 @@ def score_source(bundle: ModelBundle, mapping: DatasetMapping, frames: dict[str,
     """Convert raw source ``frames`` with ``mapping`` (``emva.ingest.convert_leads``) and score them with ``bundle``
     (``score_leads``; ``data`` holds the ``companies.csv`` the enrichment join reads).
 
-    Raises ``ValueError`` for what ``convert_leads`` refuses (e.g. a value outside a value map, a repeated lead id)
+    Raises ``ValueError`` for what ``convert_leads`` refuses (e.g. a blank ``created_at``, a value outside a value map,
+    a repeated lead id)
     and ``UnknownLevelError`` (a ``ValueError``) for a value the model was not trained with.
     """
     leads = convert_leads(frames, mapping)
@@ -420,7 +534,8 @@ def describe_transform(bundle: ModelBundle) -> str:
     return "p × expected deal value, " + ", then ".join(steps) + "." if steps else "p × expected deal value."
 
 
-__all__ = ["DEFAULTS", "FormField", "LeadScore", "SECTIONS", "SourceField", "SourceScores", "blank_session_fields",
-           "clean_values", "defaults_for", "describe_transform", "extra_names", "form_sections",
-           "frames_from_source_form", "frames_from_source_uploads", "number_text", "run_mapping", "score_form",
-           "score_source", "source_fields", "source_lead_score", "values_from_lead"]
+__all__ = ["DEFAULTS", "FEATURE_FIELDS", "Example", "FormField", "LeadScore", "SECTIONS", "SourceField", "SourceScores",
+           "TYPED_LEVEL_FEATURES", "blank_session_fields", "clean_values", "defaults_for", "describe_transform",
+           "example_for", "extra_names", "form_problem_lines", "form_sections", "frames_from_source_form",
+           "frames_from_source_uploads", "number_text", "run_mapping", "score_form", "score_source", "source_fields",
+           "source_lead_score", "source_problem_lines", "values_from_lead"]
