@@ -16,6 +16,9 @@ from emva.scoring import FieldType, UnknownLevelError
 
 LONG_TEXT = {"what_to_solve", "user_agent", "landing_url"}
 MODES = {"emva": "EMVA form", "source": "Source format"}
+# The EMVA form's last result: (form key, LeadScore), the form key naming the model and the starting lead it was
+# scored from, so a new model or a new starting lead shows no result until it is scored.
+SCORE_KEY = "score_emva"
 
 
 def _widget(f: FormField, default: object, key: str) -> object:
@@ -240,26 +243,31 @@ def render() -> None:
                 defaults = scoring.values_from_lead(row)
         if example.note is not None and not lead_id:
             ui.html(C.callout(example.note, "info"))
-        values = _form(defaults, f"{run.run_id}_{lead_id or 'example'}")
+        form_key = f"{run.run_id}_{lead_id or 'example'}"
+        values = _form(defaults, form_key)
     with right:
-        if values is None and f"score_{run.run_id}" not in st.session_state:
+        held = st.session_state.get(SCORE_KEY)
+        if held is not None and held[0] != form_key:  # another model or starting lead: its result is not this form's
+            st.session_state.pop(SCORE_KEY)
+            held = None
+        if values is None and held is None:
             ui.html(C.empty_state("Ready when you are",
                                   "Adjust the example lead on the left and press Score this lead."))
             return
         if values is not None:
             try:
-                st.session_state[f"score_{run.run_id}"] = scoring.score_form(bundle, values, run.dataset_path)
+                st.session_state[SCORE_KEY] = (form_key, scoring.score_form(bundle, values, run.dataset_path))
             except UnknownLevelError as e:
-                st.session_state.pop(f"score_{run.run_id}", None)
+                st.session_state.pop(SCORE_KEY, None)
                 ui.html(C.callout(" ".join(f"{line}." for line in scoring.form_problem_lines(e))
                                   + " Change these fields to give an allowed value, or retrain on data that contains "
                                     "it.", "bad", lead="This model has not seen some of these values."))
                 return
             except ValueError as e:
-                st.session_state.pop(f"score_{run.run_id}", None)
+                st.session_state.pop(SCORE_KEY, None)
                 ui.html(C.callout(str(e), "bad", lead="Check the form."))
                 return
-        res = st.session_state[f"score_{run.run_id}"]
+        res = st.session_state[SCORE_KEY][1]
         _result(res, ui.base_rate(run.run_id, run.out_dir, run.dataset_path), run, bundle)
 
 

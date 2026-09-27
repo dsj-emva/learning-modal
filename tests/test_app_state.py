@@ -140,3 +140,19 @@ def test_a_test_set_switch_replaces_every_test_set_section_at_once(monkeypatch: 
     assert _top_level(at, "Generic vs v2") == _top_level(at, "Stability by month") == slot
     assert _top_level(at, "Scorecard") != slot
     assert "Legacy labels (frozen POC)" in _text(at) and "Mature leads (horizon labels)" not in _text(at)
+
+
+def test_a_new_starting_lead_clears_the_score(monkeypatch: pytest.MonkeyPatch, app_trained) -> None:
+    """Keel QA m7: after a score, an unknown "Start from a lead" id shows the example form without the old result,
+    and going back to the example does not bring it back."""
+    root, run = app_trained
+    at = _sign_in(_app(monkeypatch, root), "letmein")
+    at.switch_page("views/score.py").run()
+    next(b for b in at.button if b.label == "Score this lead").click()
+    at.run()
+    assert "Chance this lead closes" in _text(at)
+    at.text_input(key=f"prefill_{run.run_id}").input("NO-SUCH-LEAD").run()
+    assert not at.exception, at.exception
+    assert "No lead NO-SUCH-LEAD in this dataset." in _text(at) and "Chance this lead closes" not in _text(at)
+    at.text_input(key=f"prefill_{run.run_id}").input("").run()
+    assert "Chance this lead closes" not in _text(at) and "Ready when you are" in _text(at)
