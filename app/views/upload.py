@@ -11,7 +11,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from app import charts, ingest, storage, training, ui
+from app import charts, ingest, storage, training, ui, uploads
 from app import components as C
 from app.storage import StorageError
 from app.validation import FILL_GAP_ADVICE, FILL_GAP_LEAD, FILL_GAP_WHY, ValidationReport, validate_files
@@ -47,12 +47,43 @@ OUTCOME_LABELS: dict[str, str] = {"stage": "A column of CRM stages", "won_flag":
                                   "presence": "Won when a column is filled"}
 LOST_LABELS: dict[str, str] = {"error": "Refuse the conversion", "as_of": "Date the Lost row at as_of"}
 # Session-state keys of Map & convert (prefix mc_) and of the shared check / save steps.
+# MC_EDITED: the mapping under review with the widgets' edits applied, kept so the review survives a page switch.
 MC_SIG, MC_FORM, MC_VERSION, MC_MSG, MC_CONV = "mc_sig", "mc_form", "mc_version", "mc_msg", "mc_conv"
+MC_EDITED, MC_RULES = "mc_edited", "mc_rules"
 VALIDATION, VALIDATED_FILES, VALIDATED_ORIGIN = "validation", "validated_files", "validated_origin"
+VALIDATED_REFUSED = "validated_refused"
 LABEL_MODES = {"horizon": "Horizon", "legacy": "Legacy (POC)"}
 FEATURE_SETS = {"v2": "v2", "generic": "Generic (v2 + extras)", "legacy": "Legacy (POC)"}
 PROCS_KEY, ACTIVE_KEY = "training_procs", "active_run"
 LOG_TAIL_LINES = 60
+# Held-upload slots (``app.uploads``): the EMVA-format slots, then Map & convert's raw files and rules.
+UPLOAD_SLOTS: tuple[str, ...] = tuple(f"up_{name}" for name, _, _ in SLOTS)
+MAP_SLOTS: tuple[str, ...] = (*(key for key, _, _ in RAW_SLOTS), MC_RULES)
+
+
+def _hold_upload(slot: str) -> None:
+    """``on_change`` of a held slot's uploader: hold the file it received (``app.uploads.hold``). The uploader is not
+    rendered while its slot holds a file, so Streamlit drops the widget's own copy at the end of the run."""
+    up = st.session_state.get(slot)
+    if up is not None:
+        uploads.hold(st.session_state, slot, up.name, up.getvalue())
+
+
+def _held_slot(slot: str, label: str, types: list[str], help_text: str | None) -> uploads.HeldFile | None:
+    """A file slot that survives page switches: an uploader until a file arrives, then the held file's name and size
+    with a Replace button (which empties the slot). A ground-truth-looking file is shown refused."""
+    f = uploads.held(st.session_state, slot)
+    if f is None:
+        st.file_uploader(label, type=types, key=slot, help=help_text, on_change=_hold_upload, args=(slot,))
+        return None
+    if f.refused:
+        ui.html(C.callout("evaluation-only ground-truth files are never accepted.", "bad", lead=f"Refused {f.name}:"))
+    else:
+        ui.html(C.callout(f"{f.size}, kept while you use other pages.", "info", lead=f"{label}: using {f.name}"))
+    st.button("Replace", key=f"{slot}_replace", icon=":material/swap_horiz:", type="tertiary",
+              help="Empties this slot: upload another file, or leave it empty.",
+              on_click=uploads.release, args=(st.session_state, [slot]))
+    return f
 
 
 def _collect() -> tuple[dict[str, bytes], list[str]]:
@@ -61,17 +92,17 @@ def _collect() -> tuple[dict[str, bytes], list[str]]:
     files: dict[str, bytes] = {}
     refused: list[str] = []
     cols = st.columns(3, gap="medium")
-    for i, (name, label, help_text) in enumerate(SLOTS):
+    for i, ((name, label, help_text), slot) in enumerate(zip(SLOTS, UPLOAD_SLOTS)):
         with cols[i % 3]:
-            up = st.file_uploader(f"{label} · {name}", type=[Path(name).suffix[1:]], key=f"up_{name}", help=help_text)
+            up = _held_slot(slot, f"{label} · {name}", [Path(name).suffix[1:]], help_text)
             if up is None:
                 continue
-            if up.name.lower().startswith(storage.FORBIDDEN_PREFIX):
+            if up.refused:
                 refused.append(up.name)
             elif up.name in storage.TRAINING_FILES and up.name != name:
                 ui.html(C.callout("belongs in its own slot, not here.", "warn", lead=up.name))
             else:
-                files[name] = up.getvalue()
+                files[name] = up.data
     return files, refused
 
 
@@ -106,36 +137,36 @@ def _render_report(report: ValidationReport, provided: set[str]) -> None:
 
 # --- 01 Map & convert ------------------------------------------------------------------------------------------------
 
-def _raw_uploads() -> tuple[dict[str, bytes], list[str]]:
-    """The raw-file slots: file name -> bytes (primary first), plus refused ground-truth-looking names."""
-    files: dict[str, bytes] = {}
+def _raw_uploads() -> tuple[dict[str, uploads.HeldFile], list[str]]:
+    """The raw-file slots: file name -> held file (primary first), plus refused ground-truth-looking names."""
+    files: dict[str, uploads.HeldFile] = {}
     refused: list[str] = []
     cols = st.columns(3, gap="medium")
     for (key, label, help_text), col in zip(RAW_SLOTS, cols):
         with col:
-            up = st.file_uploader(label, type=["csv"], key=key, help=help_text)
+            up = _held_slot(key, label, ["csv"], help_text)
         if up is None:
             continue
-        if up.name.lower().startswith(storage.FORBIDDEN_PREFIX):
+        if up.refused:
             refused.append(up.name)
         elif up.name in files:
             with col:
                 ui.html(C.callout("is already uploaded in another slot.", "warn", lead=up.name))
         else:
-            files[up.name] = up.getvalue()
+            files[up.name] = up
     return files, refused
 
 
-def _signature(files: dict[str, bytes]) -> tuple[tuple[str, str], ...]:
+def _signature(files: dict[str, uploads.HeldFile]) -> tuple[tuple[str, str], ...]:
     """Names and content hashes of the raw files, in slot order (a change resets the mapping under review)."""
-    return tuple((n, hashlib.sha256(b).hexdigest()) for n, b in files.items())
+    return tuple((n, f.sha256) for n, f in files.items())
 
 
 @st.cache_data(show_spinner="Reading and profiling the files…", max_entries=4)
-def _parsed(sig: tuple[tuple[str, str], ...], _files: dict[str, bytes]) -> tuple[dict[str, pd.DataFrame],
-                                                                                 list[ColumnProfile]]:
+def _parsed(sig: tuple[tuple[str, str], ...], _files: dict[str, uploads.HeldFile]) -> tuple[dict[str, pd.DataFrame],
+                                                                                           list[ColumnProfile]]:
     """The raw frames and their column profiles (cached by ``sig``, the files' names and hashes)."""
-    frames = ingest.raw_frames(_files)
+    frames = ingest.raw_frames({n: f.data for n, f in _files.items()})
     return frames, ingest.profile(frames)
 
 
@@ -144,16 +175,17 @@ def _set_form(form: ingest.MappingForm, kind: str, text: str, lead: str = "") ->
     st.session_state[MC_FORM] = form
     st.session_state[MC_VERSION] = st.session_state.get(MC_VERSION, 0) + 1
     st.session_state[MC_MSG] = (kind, text, lead)
-    st.session_state.pop(MC_CONV, None)
+    for k in (MC_CONV, MC_EDITED):
+        st.session_state.pop(k, None)
 
 
 def _reset_mapping() -> None:
-    """Forget the mapping under review and its conversion (the raw files changed)."""
-    for k in (MC_FORM, MC_MSG, MC_CONV):
+    """Forget the mapping under review, its edits, its conversion and the review widgets' mirrored values (the raw
+    files changed, or the dataset was saved)."""
+    for k in (MC_FORM, MC_MSG, MC_CONV, MC_EDITED):
         st.session_state.pop(k, None)
-    if st.session_state.get(VALIDATED_ORIGIN) == "convert":
-        for k in (VALIDATION, VALIDATED_FILES, VALIDATED_ORIGIN):
-            st.session_state.pop(k, None)
+    ui.forget_kept("mc_")
+    _drop_convert_check()
 
 
 def _start_buttons(root: Path, frames: dict[str, pd.DataFrame], profiles: list[ColumnProfile]) -> None:
@@ -182,8 +214,10 @@ def _start_buttons(root: Path, frames: dict[str, pd.DataFrame], profiles: list[C
     with b:
         choices = ingest.mapping_choices(root)
         by_key = {ch.key: ch for ch in choices}
-        key = st.selectbox("Use saved mapping", list(by_key), key="mc_choice", index=None,
+        ui.restore("mc_choice", None, list(by_key))
+        key = st.selectbox("Use saved mapping", list(by_key), key="mc_choice",
                            placeholder="Choose a saved or built-in mapping", format_func=lambda k: by_key[k].label)
+        ui.keep("mc_choice")
     with c:
         if st.button("Load mapping", icon=":material/upload_file:", key="mc_load", disabled=key is None,
                      width="stretch"):
@@ -244,8 +278,9 @@ def _review_note(form: ingest.MappingForm, key: str) -> None:
 
 
 def _lead_and_outcome(form: ingest.MappingForm, edited: ingest.MappingForm, frames: dict[str, pd.DataFrame],
-                      v: int) -> ingest.MappingForm:
-    """Join columns, the lead columns and the outcome."""
+                      v: int, problems: list[str]) -> ingest.MappingForm:
+    """Join columns, the lead columns and the outcome; an outcome edit that cannot be applied is shown and appended
+    to ``problems`` (the mapping is then not complete)."""
     refs = form.refs()
     f = edited
     joined = list(form.sources[1:])
@@ -300,12 +335,15 @@ def _lead_and_outcome(form: ingest.MappingForm, edited: ingest.MappingForm, fram
         return ingest.apply_outcome(f, kind, column, table, lost)
     except ValueError as e:
         ui.html(C.callout(str(e), "bad"))
+        problems.append(str(e))
         return replace(f, outcome_kind=kind, outcome_column=column, lost_without_close=lost)
 
 
-def _field_table(form: ingest.MappingForm, edited: ingest.MappingForm, v: int) -> ingest.MappingForm:
+def _field_table(form: ingest.MappingForm, edited: ingest.MappingForm, v: int,
+                 problems: list[str]) -> ingest.MappingForm:
     """The review table of field rows and extra features (low-confidence rows highlighted), the read-only value maps
-    and the read-only derived features."""
+    and the read-only derived features (``VALUE_MAP_TARGET`` offered only when a row shows it,
+    ``ingest.review_targets``); a table edit that cannot be applied is shown and appended to ``problems``."""
     st.markdown("**Fields and extra features** (one row per uploaded column; ignore = not used as a field)")
     st.caption("Tick Feature to use a column as an extra feature of the generic feature set (v2 + extras): numeric "
                "columns are cut into 5 bins, categorical ones keep levels with at least 30 training leads. Only "
@@ -319,8 +357,8 @@ def _field_table(form: ingest.MappingForm, edited: ingest.MappingForm, v: int) -
     table = st.data_editor(styled, key=f"mc_fields_{v}", hide_index=True, width="stretch",
                            height=min(38 + 35 * len(rf), 460), disabled=["source", "check"], column_config={
                                "source": st.column_config.TextColumn("Source column"),
-                               "target": st.column_config.SelectboxColumn("Target", options=[
-                                   *ingest.TARGET_OPTIONS, ingest.VALUE_MAP_TARGET], required=True),
+                               "target": st.column_config.SelectboxColumn("Target", options=ingest.review_targets(rf),
+                                                                           required=True),
                                "reason": st.column_config.TextColumn("Reason", width="medium"),
                                "confidence": st.column_config.SelectboxColumn(
                                    "Confidence", options=["", *CONFIDENCES]),
@@ -336,6 +374,7 @@ def _field_table(form: ingest.MappingForm, edited: ingest.MappingForm, v: int) -
         edited = ingest.apply_review(edited, table)
     except ValueError as e:
         ui.html(C.callout(str(e), "bad"))
+        problems.append(str(e))
     vm = ingest.value_map_frame(form)
     if not vm.empty:
         st.markdown("**Value maps** (read-only here; edit them as TOML below)")
@@ -368,35 +407,39 @@ def _toml_editor(edited: ingest.MappingForm, frames: dict[str, pd.DataFrame]) ->
 
 def _convert_step(root: Path, mapping: DatasetMapping | None, error: str | None,
                   frames: dict[str, pd.DataFrame]) -> None:
-    """Confirm the outcome mapping, convert, and show the coverage card; the result goes to the check step."""
+    """Confirm the outcome mapping, convert, and show the coverage card; the result goes to the check step. A held
+    conversion of another mapping (or rules), or of a mapping that is no longer complete, is stale: its check results
+    are withdrawn until it is converted again (``_stale_conversion``)."""
     ui.html(C.section("Confirm and convert", "The conversion is deterministic code: every value comes from a "
                       "mapped column or a documented rule, and anything the mapping does not cover is refused.",
                       step="1e"))
     if mapping is None:
         ui.html(C.callout(error or "", "warn", lead="The mapping is not complete:"))
+        _stale_conversion(None)
         return
     toml = dump_mapping(mapping)
-    up = st.file_uploader(f"Status-quo rules (optional) · {storage.RULES_FILE}", type=["json"], key="mc_rules",
-                          help="Today's bucket values for this source, in the sample's format: saved with the dataset "
-                               "so the standard report gets a status-quo row. Converted leads all have form variant "
-                               f"{DEFAULT_FORM_VARIANT}, so base_value_by_form needs it.")
-    rules = None
-    if up is not None and up.name.lower().startswith(storage.FORBIDDEN_PREFIX):
-        ui.html(C.callout(f"Refused {up.name}: evaluation-only ground-truth files are never accepted.", "bad"))
-    elif up is not None:
-        rules = up.getvalue()
+    up = _held_slot(MC_RULES, f"Status-quo rules (optional) · {storage.RULES_FILE}", ["json"],
+                    "Today's bucket values for this source, in the sample's format: saved with the dataset so the "
+                    "standard report gets a status-quo row. Converted leads all have form variant "
+                    f"{DEFAULT_FORM_VARIANT}, so base_value_by_form needs it.")
+    rules = up.data if up is not None else None
     digest = hashlib.sha256(toml.encode("utf-8") + (rules or b"")).hexdigest()[:12]
+    confirm_key = f"mc_confirm_{digest}"
+    ui.restore(confirm_key, False)
     ok = st.checkbox("Outcome mapping confirmed: I checked which leads count as won and lost, and the dates.",
-                     key=f"mc_confirm_{digest}")
+                     key=confirm_key)
+    ui.keep(confirm_key)
     features_ok = True
     if mapping.features:
         ui.html(C.callout(", ".join(f"{f.name} ({f.kind})" for f in mapping.features), "info",
                           lead=f"{len(mapping.features)} extra feature(s) declared:"))
         # keyed by the features alone: any change to them (source, kind, name) clears the tick
-        features_ok = st.checkbox("Extra features are known when the lead is submitted",
-                                  key=f"mc_features_confirm_{ingest.features_signature(mapping.features)}",
+        features_key = f"mc_features_confirm_{ingest.features_signature(mapping.features)}"
+        ui.restore(features_key, False)
+        features_ok = st.checkbox("Extra features are known when the lead is submitted", key=features_key,
                                   help="None of them is filled in or changed after the lead arrives (a column like "
                                        "that would leak the outcome into the model). Required to convert.")
+        ui.keep(features_key)
     if st.button("Convert", type="primary", icon=":material/transform:", key="mc_convert",
                  disabled=not (ok and features_ok)):
         try:
@@ -405,20 +448,43 @@ def _convert_step(root: Path, mapping: DatasetMapping | None, error: str | None,
                                           datetime.now(timezone.utc).date().isoformat(), rules)
         except ValueError as e:
             st.session_state.pop(MC_CONV, None)
+            _drop_convert_check()
             ui.html(C.callout(str(e), "bad", lead="The conversion refused these files:"))
             return
         st.session_state[MC_CONV] = (digest, conv)
-        st.session_state[VALIDATION] = conv.report
-        st.session_state[VALIDATED_FILES] = conv.files
-        st.session_state[VALIDATED_ORIGIN] = "convert"
+        _show_conversion(conv)
     held = st.session_state.get(MC_CONV)
-    if held is None:
+    if held is None or _stale_conversion(digest):
         return
-    if held[0] != digest:
-        ui.html(C.callout("Convert again before saving.", "warn",
-                          lead="The mapping or the rules changed since the conversion."))
-        return
+    if VALIDATION not in st.session_state and st.session_state.get(VALIDATED_ORIGIN) != "upload":
+        _show_conversion(held[1])  # back to the converted mapping: its check results again
     _coverage(held[1].meta)
+
+
+def _show_conversion(conv: ingest.Conversion) -> None:
+    """Hand a conversion to the check and save steps."""
+    st.session_state[VALIDATION] = conv.report
+    st.session_state[VALIDATED_FILES] = conv.files
+    st.session_state[VALIDATED_ORIGIN] = "convert"
+
+
+def _stale_conversion(digest: str | None) -> bool:
+    """True (with a warning, and the conversion's check results withdrawn) when a conversion is held and ``digest``
+    (of the mapping and rules on screen; None = the mapping is not complete) is not the one it was made from."""
+    held = st.session_state.get(MC_CONV)
+    if held is None or held[0] == digest:
+        return False
+    ui.html(C.callout("Convert again before saving.", "warn", lead="The mapping or the rules changed since the "
+                      "conversion." if digest is not None else "The mapping changed since the conversion."))
+    _drop_convert_check()
+    return True
+
+
+def _drop_convert_check() -> None:
+    """Withdraw the check results of a conversion (none of an upload in EMVA's format)."""
+    if st.session_state.get(VALIDATED_ORIGIN) == "convert":
+        for k in (VALIDATION, VALIDATED_FILES, VALIDATED_ORIGIN):
+            st.session_state.pop(k, None)
 
 
 def _coverage(meta: dict) -> None:
@@ -468,10 +534,7 @@ def _map_section() -> None:
     ui.html(C.section("Raw files", "The primary file has one row per lead; joined files add columns to it.",
                       step="1a"))
     root = ui.data_root()
-    files, refused = _raw_uploads()
-    if refused:
-        ui.html(C.callout(f"Refused {', '.join(refused)}: evaluation-only ground-truth files are never accepted.",
-                          "bad"))
+    files, _ = _raw_uploads()
     if not files:
         st.session_state.pop(MC_SIG, None)
         _reset_mapping()
@@ -497,17 +560,26 @@ def _map_section() -> None:
     form: ingest.MappingForm | None = st.session_state.get(MC_FORM)
     if form is None:
         return
+    if MC_EDITED in st.session_state and f"mc_name_{st.session_state.get(MC_VERSION, 0)}" not in st.session_state:
+        # Streamlit dropped the review widgets while another page was open: rebuild them from the edits they held
+        form = st.session_state.pop(MC_EDITED)
+        st.session_state[MC_FORM] = form
+        st.session_state[MC_VERSION] = st.session_state.get(MC_VERSION, 0) + 1
     v = st.session_state.get(MC_VERSION, 0)
     ui.html(C.section("Review the mapping", f"Started from: {form.origin}. Check every target, the lead columns, "
                       "the outcome and the dates.", step="1d"))
+    problems: list[str] = []
     edited = _text_inputs(form, v)
-    edited = _lead_and_outcome(form, edited, frames, v)
-    edited = _field_table(form, edited, v)
+    edited = _lead_and_outcome(form, edited, frames, v, problems)
+    edited = _field_table(form, edited, v, problems)
+    st.session_state[MC_EDITED] = edited
     _toml_editor(edited, frames)
     try:
         mapping, error = ingest.mapping_from_form(edited), None
     except ValueError as e:
         mapping, error = None, str(e)
+    if problems:  # an edit that was not applied: converting the rest would not be the mapping on screen
+        mapping, error = None, "; ".join(problems)
     _convert_step(root, mapping, error, frames)
 
 
@@ -523,8 +595,13 @@ def _upload_section() -> None:
         st.session_state[VALIDATION] = validate_files({**files, **{n: b"" for n in refused}})
         st.session_state[VALIDATED_FILES] = files
         st.session_state[VALIDATED_ORIGIN] = "upload"
-        st.session_state["validated_refused"] = refused
-    if st.session_state.get(VALIDATED_ORIGIN) == "upload" and st.session_state.get(VALIDATED_FILES) != files:
+        st.session_state[VALIDATED_REFUSED] = refused
+    if st.session_state.get(VALIDATED_ORIGIN) != "upload":
+        return
+    if not (files or refused):  # every file removed: nothing left to check
+        for k in (VALIDATION, VALIDATED_FILES, VALIDATED_ORIGIN, VALIDATED_REFUSED):
+            st.session_state.pop(k, None)
+    elif st.session_state.get(VALIDATED_FILES) != files or st.session_state.get(VALIDATED_REFUSED) != refused:
         ui.html(C.callout("Validate again before saving.", "warn", lead="The files changed since the last check."))
         st.session_state.pop(VALIDATION, None)
 
@@ -539,7 +616,7 @@ def _check_and_save() -> None:
     ui.html(C.section("Check results", ("The converted files, checked like any upload. " if converted else "")
                       + "Errors (red) must be fixed; notes (amber) are worth a look but do not block training.",
                       step="03"))
-    _render_report(report, set(files) | set(st.session_state.get("validated_refused", []) if not converted else []))
+    _render_report(report, set(files) | set(st.session_state.get(VALIDATED_REFUSED, []) if not converted else []))
     if not report.ok:
         ui.html(C.callout("before this can be saved.", "bad", lead=f"{len(report.errors)} problem(s) to fix"))
         return
@@ -558,8 +635,10 @@ def _check_and_save() -> None:
         else:
             st.session_state["train_dataset"] = ds.name
             st.session_state["train_ds"] = ds.name  # the picker keeps its own state; point it at the new dataset
-            for k in (VALIDATION, VALIDATED_FILES, VALIDATED_ORIGIN):
+            for k in (VALIDATION, VALIDATED_FILES, VALIDATED_ORIGIN, VALIDATED_REFUSED, MC_SIG):
                 st.session_state.pop(k, None)
+            _reset_mapping()  # saved: drop every held upload and the mapping under review (one copy, not a history)
+            uploads.release(st.session_state, (*UPLOAD_SLOTS, *MAP_SLOTS))
             st.toast(f"Saved {ds.name}: {ds.n_leads:,} leads", icon=":material/check_circle:")
             st.rerun()
 
@@ -580,18 +659,26 @@ def _train_section() -> None:
     by_name = {d.name: d for d in datasets}
     wanted = st.session_state.get("train_dataset")
     c1, c2, c3 = st.columns([3, 2, 3], gap="medium")
+    # the choices outlive a page switch (``ui.restore`` / ``ui.keep``: Streamlit drops unrendered widgets' state)
     with c1:
-        ds_name = st.selectbox("Dataset", names, index=names.index(wanted) if wanted in names else 0, key="train_ds",
+        ui.restore("train_ds", wanted if wanted in names else names[0], names)
+        ds_name = st.selectbox("Dataset", names, key="train_ds",
                                format_func=lambda n: f"{n} · {by_name[n].n_leads:,} leads"
                                + (" · bundled sample, read-only" if by_name[n].read_only else ""))
+        ui.keep("train_ds")
     with c2:
-        label_mode = st.segmented_control("Labels", list(LABEL_MODES), default="horizon", required=True,
-                                          format_func=LABEL_MODES.get, key="label_mode")
+        ui.restore("label_mode", "horizon", list(LABEL_MODES))
+        label_mode = st.segmented_control("Labels", list(LABEL_MODES), required=True, format_func=LABEL_MODES.get,
+                                          key="label_mode")
+        ui.keep("label_mode")
     ds = by_name[ds_name]
     options = training.feature_set_options(ds)
+    feature_key = f"feature_set_{len(options)}"
     with c3:  # keyed per offer, so a choice of generic does not outlive a switch to a dataset without extras
-        feature_set = st.segmented_control("Features", options, default="v2", required=True,
-                                           format_func=FEATURE_SETS.get, key=f"feature_set_{len(options)}")
+        ui.restore(feature_key, "v2", options)
+        feature_set = st.segmented_control("Features", options, required=True, format_func=FEATURE_SETS.get,
+                                           key=feature_key)
+        ui.keep(feature_key)
     st.caption("Recommended: horizon labels and v2 features. Horizon labels count a lead as won only if it closed "
                "within 120 days, and leave out leads too young to know. Legacy reproduces the frozen proof of "
                "concept, which counted slow or neglected leads as lost and let missing data fall into the "

@@ -176,6 +176,18 @@ def test_review_table_refuses_bad_feature_rows(frames: dict[str, pd.DataFrame]) 
     assert ingest.default_feature_name("deal.lead_type", {"lead_type"}) == "deal_lead_type"
 
 
+def test_value_map_target_is_offered_only_when_a_row_shows_it(frames: dict[str, pd.DataFrame]) -> None:
+    """Keel QA m10: olist_funnel's one value-mapped column (mql.origin) is not in the table, so "(value map)" is not a
+    target choice; once mql.origin is ticked as a feature its row shows it, and the choice is offered."""
+    form = ingest.form_from_mapping(_olist(), frames)
+    table = ingest.review_frame(form)
+    assert ingest.review_targets(table) == list(ingest.TARGET_OPTIONS)
+    table = table.set_index("source")
+    table.loc["mql.origin", ["feature", "kind", "name"]] = [True, "categorical", "origin_raw"]
+    again = ingest.review_frame(ingest.apply_review(form, table.reset_index()))
+    assert ingest.review_targets(again) == [*ingest.TARGET_OPTIONS, ingest.VALUE_MAP_TARGET]
+
+
 def test_confirm_sets_the_features_confirmation_only_with_features() -> None:
     m = ingest.mapping_from_form(ingest.form_from_mapping(_olist()))
     assert ingest.confirm(m).outcome_confirmed and not ingest.confirm(m).features_confirmed
