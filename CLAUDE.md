@@ -200,7 +200,7 @@ single leads through `emva.scoring` and computes its charts with `emva.eval`; it
   compared canonically and top-k has a tie-averaged figure).
 - The path has spaces: quote it in shell, Makefile (`"$(PY)"`) and subprocess calls.
 
-## Status (2026-09-26)
+## Status (2026-09-27)
 
 | phase | state | branch | report |
 |---|---|---|---|
@@ -217,6 +217,7 @@ single leads through `emva.scoring` and computes its charts with `emva.eval`; it
 | 9 dataset converter + per-dataset dates + Keel Map & convert | merged (be2f674) | `claude/epic-edison-onl83z` | `reports/phase9.md`, ADRs 0020-0023 (Proposed) |
 | 10 generic feature set + Keel support + live mapping-draft check | merged (febc0a3) | `phase10-generic-features` | `reports/phase10.md`, ADRs 0024-0025 (Proposed) |
 | Keel QA fix round (M1-M4, M6) | merged (ac53fb4) | `keel-fix-scoring`, `keel-fix-claims`, `keel-fix-leak-warning` | `reports/keel-fixes.md`, ADR 0026 (Proposed) |
+| Keel QA fix round 2 (M5, M7, minor and cosmetic) | merged (58b4623) | `keel-fix2-state`, `keel-fix2-source`, `keel-fix2-polish` | `reports/keel-fixes-2.md`, ADR 0027 (Proposed) |
 | 11 target-customer steering (plan item) | planned, not started | `phase11-target-steering` | `REBUILD_PLAN.md` Phase 11 |
 
 ## Do not

@@ -116,7 +116,7 @@ wins and this file is wrong: fix it in the same PR. State: `main` 92168cf, 2026-
   variation) or `unfilled` (no input mapped). Placeholders for unmapped required fields (email
   `<lead_id>@unmapped.invalid`, form_variant "A", lead_id `<name>-000001`) count as unfilled.
 - **Source-format scoring**: new leads in the source's own format scored through the confirmed mapping
-  (`emva.ingest.convert.convert_leads`, `python -m emva.ingest score`, Keel's Score page "Source format").
+  (`emva.ingest.convert.convert_leads`, `python -m emva.ingest score`, Keel's Score page "Source format"); a lead with a value its value map does not list is refused on its own, the rest are scored (ADR 0027).
 
 ### Context layer and generator
 
@@ -173,7 +173,7 @@ opportunities and hotel bookings (bookings, not enquiries) 0 of 39, AUC 0.500 ex
 The mature test set spans 26 days, so its CI is about ±0.05, twice the legacy width; compare models on
 it with the paired bootstrap.
 
-## Status (2026-09-26)
+## Status (2026-09-27)
 
 | phase | state | branch | report |
 |---|---|---|---|
@@ -190,6 +190,7 @@ it with the paired bootstrap.
 | 9 generic dataset converter, per-dataset dates, Keel Map & convert | merged (be2f674) | `claude/epic-edison-onl83z` | `reports/phase9.md`, ADRs 0020-0023 (Proposed) |
 | 10 (a) generic feature set (`--feature-set generic`), (b) Keel support, live mapping-draft check | merged (febc0a3) | `phase10-generic-features` | `reports/phase10.md`, ADRs 0024-0025 (Proposed) |
 | Keel QA fix round (M1-M4, M6) | merged (ac53fb4) | `keel-fix-scoring`, `keel-fix-claims`, `keel-fix-leak-warning` | `reports/keel-fixes.md`, ADR 0026 (Proposed) |
+| Keel QA fix round 2 (M5, M7, minor and cosmetic) | merged (58b4623) | `keel-fix2-state`, `keel-fix2-source`, `keel-fix2-polish` | `reports/keel-fixes-2.md`, ADR 0027 (Proposed) |
 | 11 target-customer steering (plan item) | planned, not started | `phase11-target-steering` | `REBUILD_PLAN.md` Phase 11 |
 
 Open question carried from Phase 1 (not yet ruled): should young `crm_lost` leads be 0 rather than NaN?
