@@ -137,24 +137,22 @@ def _render_report(report: ValidationReport, provided: set[str]) -> None:
 
 # --- 01 Map & convert ------------------------------------------------------------------------------------------------
 
-def _raw_uploads() -> tuple[dict[str, uploads.HeldFile], list[str]]:
-    """The raw-file slots: file name -> held file (primary first), plus refused ground-truth-looking names."""
+def _raw_uploads() -> dict[str, uploads.HeldFile]:
+    """The raw-file slots: file name -> held file (primary first). A ground-truth-looking file is shown refused in its
+    slot (``_held_slot``) and left out."""
     files: dict[str, uploads.HeldFile] = {}
-    refused: list[str] = []
     cols = st.columns(3, gap="medium")
     for (key, label, help_text), col in zip(RAW_SLOTS, cols):
         with col:
             up = _held_slot(key, label, ["csv"], help_text)
-        if up is None:
+        if up is None or up.refused:
             continue
-        if up.refused:
-            refused.append(up.name)
-        elif up.name in files:
+        if up.name in files:
             with col:
                 ui.html(C.callout("is already uploaded in another slot.", "warn", lead=up.name))
         else:
             files[up.name] = up
-    return files, refused
+    return files
 
 
 def _signature(files: dict[str, uploads.HeldFile]) -> tuple[tuple[str, str], ...]:
@@ -534,7 +532,7 @@ def _map_section() -> None:
     ui.html(C.section("Raw files", "The primary file has one row per lead; joined files add columns to it.",
                       step="1a"))
     root = ui.data_root()
-    files, _ = _raw_uploads()
+    files = _raw_uploads()
     if not files:
         st.session_state.pop(MC_SIG, None)
         _reset_mapping()
