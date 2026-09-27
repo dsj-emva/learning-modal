@@ -216,6 +216,7 @@ single leads through `emva.scoring` and computes its charts with `emva.eval`; it
 | 8 hosted app (Keel) | merged (c3da2b0) | `app-ui` | `reports/app.md`, ADR 0018/0019 (Proposed) |
 | 9 dataset converter + per-dataset dates + Keel Map & convert | merged (be2f674) | `claude/epic-edison-onl83z` | `reports/phase9.md`, ADRs 0020-0023 (Proposed) |
 | 10 generic feature set + Keel support + live mapping-draft check | merged (febc0a3) | `phase10-generic-features` | `reports/phase10.md`, ADRs 0024-0025 (Proposed) |
+| 11 target-customer steering (plan item) | planned, not started | `phase11-target-steering` | `REBUILD_PLAN.md` Phase 11 |
 
 ## Do not
 

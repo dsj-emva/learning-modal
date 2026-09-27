@@ -267,6 +267,76 @@ the minimum lead volume at which EMVA should decline a customer.
 
 ---
 
+## Phase 11: steer the ad platforms toward a target customer (major; after Phases 3, 9 and 10)
+
+Added 2026-09-27. Phases 8-10 (Keel, the dataset converter, the generic feature set) came after this plan was
+written and are recorded in `CLAUDE.md` and their reports; this phase builds on all three.
+
+**Goal:** let a customer say which completed sales they actually want (e.g. a luxury hotel: guests spending
+$10,000, not $3,000) and send Google Ads and Meta a value signal strong and early enough that their bidding
+finds more people like that. The platforms already know far more about who a person is than EMVA does; what
+they lack is which of the people they sent became the customer's target. The value EMVA uploads is how they
+learn it, so the size of the gap between target and non-target values is the steering wheel.
+
+Starting point (read first): `emva/value.py`, `emva/value_transform.py` (cap / log / floor / tiers; ADR 0012),
+`emva/troas.py`, `docs/platform_contract.md` (two-stage upload design, click ids, hashed email; nothing calls a
+platform yet), `reports/production.md` (feedback loop, holdouts, volume thresholds), `reports/phase10.md`.
+Today the default transform deliberately softens the value gap (a 3.3× difference in expected value leaves the
+log compression as about 2.1×, and the p97 cap can trim the top): right for "every sale is welcome", too weak
+for "find me this kind of guest".
+
+Tasks:
+- 11.1 **Target definition in the mapping and the CLI.** A customer-level `target` rule, fixed before any
+  training: `--objective {win,revenue,target}`. `win` = today's horizon label; `revenue` = today's
+  `p × E[value] × margin`; `target` = won within H **and** recorded deal value ≥ a threshold the customer
+  states (`--target-min-value`), optionally plus a condition on a declared column (e.g. room type = suite).
+  Stored in the mapping / `dataset.json` so a run is reproducible. The legacy and default (`revenue`) outputs
+  stay byte-identical.
+- 11.2 **Signal strength.** A value mode for steering: no compression and no cap by default under
+  `--objective target`, target leads valued at `p_target × E[value | target]`, non-target leads at a stated
+  low value or 0 (`--non-target-value`). Report the ratio of mean uploaded value, target vs non-target, under
+  each transform (the "steering gap").
+- 11.3 **Small-segment guard.** Refuse `target` (and say why) when the training set has too few target wins to
+  learn from; the threshold comes from `reports/production.md` section 10 (and `emva.troas` for conversions per
+  campaign), not from the results. Keel offers the fallback (`revenue`, uncompressed) instead.
+- 11.4 **Form check.** Report how well the submit-time fields separate target from non-target leads (AUC of the
+  target model with CI, and the top features), so a customer knows whether to add questions to the enquiry
+  form (budget band, room type, length of stay, party size, occasion). Report only; no feature tuning.
+- 11.5 **Keel.** An "Optimise for" choice at training (all sales / revenue / target guest ≥ value), the
+  guard's message, and on the results page: target-segment revenue captured in the top 20%, the steering
+  gap, and target share by month.
+- 11.6 **Upload files (still no platform calls).** Export the values in the platforms' formats, per
+  `docs/platform_contract.md`: a Google Ads offline click conversion CSV (gclid, conversion time, value,
+  currency) and Meta Conversions API event payloads (fbclid / fbp, SHA-256-hashed email, value, currency),
+  with the unattributable share reported. Every field name and limit marked **verify** in the contract is
+  checked against current platform documentation and cited. Live uploads need credentials and a separate
+  ADR; this task only writes and validates the files.
+- 11.7 **Measurement design (document, no code).** Add to `reports/production.md`: a holdout campaign (or a
+  share of spend not optimised on the target value) as the control, and the success metrics that matter
+  after launch: target share of new leads and revenue per pound of ad spend, target-optimised vs holdout, by
+  month. Note the loop risk: once the platforms bring more target guests, the training data follows them.
+
+Acceptance (pre-registered; ground rule 5, report the fail rather than tune):
+- On `hotel_bookings` (converted, public data) with the target fixed before any run as "kept booking and
+  deal value ≥ the 75th percentile of won deal value among training leads": the `target` objective captures
+  more target-segment revenue in the top 20% of the test set than the `revenue` objective, with a paired
+  bootstrap CI of the difference (1000 resamples, seed 0) excluding 0. Reported on the dataset's own test set
+  (ADR 0020), labelled "on public data". Also reported, not gated: the same on `data/v2` with a target defined
+  the same way, on simulated data.
+- The steering gap under `--objective target` is at least the ratio of target to non-target mean expected
+  value (no transform shrinks it), and is reported for every transform.
+- `--objective revenue` (the default) and `--label-mode legacy` outputs are byte-identical to before; `make
+  baseline` passes; the frozen test sets are unchanged.
+- The upload files validate against the cited formats (tests with hand-built fixtures, including a lead with
+  no click id and one with a hashed email only).
+- Keel: the choice, the guard and the three result views work end to end (tests in `tests/test_app_*.py`, a
+  screenshot per view in `reports/phase11/`).
+
+Report: `reports/phase11.md` with the standard report for each objective, the steering-gap table, the form
+check and the acceptance verdicts. Branch `phase11-target-steering`. Rulings go in an ADR.
+
+---
+
 ## Dependency order and parallelism
 
 ```
@@ -274,6 +344,9 @@ Phase 0 ──► Phase 1 ──► Phase 2 ──► Phase 3 ─┐
                                    └► Phase 4 ─┼─► Phase 6 ──► Phase 7
 Phase 0 ──► Phase 5 ─────────────────────────┘
 ```
+
+Phase 11 (added later) follows Phases 3, 9 and 10: 11.1-11.4 first, then 11.5 (Keel) and 11.6 (upload files) in
+parallel, 11.7 at any time.
 
 Phases 3, 4 and 5 can run as three parallel agents once Phase 2 lands (Phase 5 can start
 right after Phase 0). Phase 6 waits for 2 and 5. Phase 7 waits for everything.
