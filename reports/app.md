@@ -131,6 +131,19 @@ lead is scored from the example and from a dataset lead, escaped error text, sig
 (the `make docker` recipe never echoes the password, `.dockerignore` excludes `runs`, `serve.sh` refuses an
 unwritable `DATA_DIR`) and `test_scoring.py` (`is_blank`, `FieldType`).
 
+## Deployment
+
+Railway project `learning-modal`, service `app`, environment `production`
+(`app-production-7665d.up.railway.app`), built from the `Dockerfile` with data on the `/data` volume.
+
+- **Autodeploy on merge (2026-09-27).** The service follows `main`: every push to `main` (each phase merge) builds
+  and deploys. Phase 9 and 10 merges had not deployed (the service was still on Phase 8, c3da2b0) because the GitHub
+  trigger was missing; reconnecting the source to `dsj-emva/learning-modal@main` recreated it and deployed 31dd8b8.
+- **After every merge:** check the new deployment is SUCCESS in Railway (the healthcheck is `/_stcore/health`),
+  sign in, open an existing run's results, and, when the change touches Map & convert, press "Draft mapping with
+  AI" twice (live, then "from the draft cache: no request made"). Roll back in Railway if any step fails.
+- Secrets (`APP_PASSWORD`, `ANTHROPIC_API_KEY`, `ANTHROPIC_WORKSPACE_ID`) live only in the Railway service variables.
+
 ## Orchestrator decisions
 
 - R17 (ADR 0018): single-lead scores may differ from the batch run by ≤ 64 ulp; whole-batch must be byte-equal.
