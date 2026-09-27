@@ -1,5 +1,10 @@
 """Keel's custom components as HTML strings, plus number formatting. Pure Python (no Streamlit import).
 
+Amounts go through one formatter, ``money``, given the dataset's currency (``emva.dataset_meta.dataset_currency``):
+``£12,345`` for GBP (the bundled sample and any dataset without ``dataset.json``), ``BRL 12,345`` for another declared
+ISO 4217 code, and a plain ``12,345`` when a converted dataset's mapping recorded none; the page then shows
+``currency_note``. ``money_format`` is the same rule as a printf format for ``st.column_config.NumberColumn``.
+
 Every builder escapes the text it is given; the pages pass the result to ``st.markdown(..., unsafe_allow_html=True)``.
 Classes are styled by ``app.theme.inject_css``.
 """
@@ -9,6 +14,7 @@ import math
 import html
 
 from app.validation import Issue
+from emva.dataset_meta import V1_CURRENCY
 from emva.scoring import is_blank
 
 # Keel glyph: a keel line under a hull, drawn in white on the accent square.
@@ -22,9 +28,32 @@ def esc(value: object) -> str:
     return "" if value is None else html.escape(str(value), quote=True)
 
 
-def gbp(x: float | None, dp: int = 0) -> str:
-    """``£12,345`` (``–`` when missing)."""
-    return "–" if is_blank(x) else f"£{x:,.{dp}f}"
+# Currencies shown by symbol; any other ISO 4217 code is written before the amount.
+CURRENCY_SYMBOLS: dict[str, str] = {"GBP": "£"}
+UNKNOWN_CURRENCY_NOTE: str = "Amounts are in the source's currency (not recorded in its mapping)."
+
+
+def _prefix(currency: str | None) -> str:
+    """What goes before an amount: ``£`` for GBP, ``"BRL "`` for another code, nothing when unknown (None)."""
+    if currency is None:
+        return ""
+    return CURRENCY_SYMBOLS.get(currency, f"{currency} ")
+
+
+def money(x: float | None, currency: str | None = V1_CURRENCY, dp: int = 0) -> str:
+    """An amount in ``currency`` (module docstring): ``£12,345``, ``BRL 12,345`` or ``12,345`` (None = unknown);
+    ``–`` when missing."""
+    return "–" if is_blank(x) else f"{_prefix(currency)}{x:,.{dp}f}"
+
+
+def money_format(currency: str | None) -> str:
+    """``money``'s rule as a printf format for a Streamlit number column: ``£%.0f``, ``BRL %.0f`` or ``%.0f``."""
+    return f"{_prefix(currency)}%.0f"
+
+
+def currency_note(currency: str | None) -> str:
+    """``UNKNOWN_CURRENCY_NOTE`` when the currency is unknown (None), else ``""``."""
+    return UNKNOWN_CURRENCY_NOTE if currency is None else ""
 
 
 def pct(x: float | None, dp: int = 1) -> str:
@@ -163,9 +192,10 @@ def file_card(name: str, label: str, errors: list[Issue], warnings: list[Issue],
 
 
 def result_card(p: float, base_rate: float, deal_value: float, value_at_submit: float, value_formula: float,
-                transform: str, flags_html: str) -> str:
+                transform: str, flags_html: str, currency: str | None = V1_CURRENCY) -> str:
     """The scored-lead card: P(close) large with the base rate for context, expected deal value, the value sent at
-    submit (or p × value for legacy-label runs) with how it is derived, and bot/duplicate flags."""
+    submit (or p × value for legacy-label runs) with how it is derived, and bot/duplicate flags; amounts in
+    ``currency`` (``money``)."""
     ratio = p / base_rate if base_rate > 0 else math.nan
     rel = "" if is_blank(ratio) else f" · {ratio:.1f}× the average lead"
     submit_label = "Value sent at submit" if not is_blank(value_at_submit) else "p × deal value"
@@ -175,12 +205,15 @@ def result_card(p: float, base_rate: float, deal_value: float, value_at_submit: 
         f'<div class="big">{esc(pct(p))}</div>'
         f'<div class="context">Training win rate {esc(pct(base_rate))}{esc(rel)}</div>'
         '<div class="grid">'
-        f'<div><div class="label">Expected deal value if won</div><div class="v">{esc(gbp(deal_value))}</div></div>'
-        f'<div><div class="label">{esc(submit_label)}</div><div class="v">{esc(gbp(submit_value))}</div></div>'
+        '<div><div class="label">Expected deal value if won</div>'
+        f'<div class="v">{esc(money(deal_value, currency))}</div></div>'
+        f'<div><div class="label">{esc(submit_label)}</div>'
+        f'<div class="v">{esc(money(submit_value, currency))}</div></div>'
         '</div>'
         f'<div class="note">{esc(transform)}</div>'
         f'<div class="flags">{flags_html}</div></div>')
 
 
-__all__ = ["callout", "delta", "esc", "empty_state", "file_card", "gbp", "kpi", "kpi_row", "num", "page_header", "pct",
-           "pill", "points", "result_card", "run_header", "section", "stats", "status_pill", "table", "wordmark"]
+__all__ = ["CURRENCY_SYMBOLS", "UNKNOWN_CURRENCY_NOTE", "callout", "currency_note", "delta", "esc", "empty_state",
+           "file_card", "kpi", "kpi_row", "money", "money_format", "num", "page_header", "pct", "pill", "points",
+           "result_card", "run_header", "section", "stats", "status_pill", "table", "wordmark"]

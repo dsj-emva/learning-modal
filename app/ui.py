@@ -14,7 +14,7 @@ import streamlit as st
 from app import components as C
 from app import results, storage
 from app.storage import Run
-from emva.dataset_meta import dataset_dates
+from emva.dataset_meta import dataset_currency, dataset_dates
 from emva.persist import BUNDLE_FILE, ModelBundle, load_bundle
 
 DATA_DIR_ENV: str = "DATA_DIR"
@@ -90,6 +90,13 @@ def generic_section(run_id: str, out_dir: str, dataset_path: str, label_mode: st
 
 
 @st.cache_data(show_spinner=False)
+def currency(dataset_path: str) -> str | None:
+    """The dataset's currency code (``emva.dataset_meta.dataset_currency``: GBP without ``dataset.json``, None when a
+    converted dataset's mapping recorded none), cached per path."""
+    return dataset_currency(dataset_path)
+
+
+@st.cache_data(show_spinner=False)
 def _raw_leads(dataset_path: str) -> pd.DataFrame:
     """The dataset's ``historical_leads.csv`` as ``emva.io.read_leads`` reads it (cached per path)."""
     from emva.io import read_leads
@@ -116,5 +123,5 @@ def no_runs_state(message: str) -> None:
     st.page_link("views/upload.py", label="Upload data and train a model", icon=":material/arrow_forward:")
 
 
-__all__ = ["bundle", "base_rate", "data_root", "evaluation", "generic_section", "has_bundle", "html", "no_runs_state",
-           "pick_run", "raw_lead", "run_label"]
+__all__ = ["bundle", "base_rate", "currency", "data_root", "evaluation", "generic_section", "has_bundle", "html",
+           "no_runs_state", "pick_run", "raw_lead", "run_label"]

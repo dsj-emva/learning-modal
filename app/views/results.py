@@ -147,7 +147,11 @@ def _generic(run: storage.Run, test_set: str) -> None:
 
 
 def _values(run: storage.Run) -> None:
-    """Value distribution: stats per value column and a log-scale histogram."""
+    """Value distribution: stats per value column and a log-scale histogram, amounts in the dataset's currency
+    (``C.money``; a note when a converted dataset's mapping recorded none)."""
+    cur = ui.currency(run.dataset_path)
+    if C.currency_note(cur):
+        st.caption(C.currency_note(cur))
     vd = results.value_distribution(run.out_dir)
     if vd.empty:
         st.caption("No value columns in this run's scores.")
@@ -160,12 +164,14 @@ def _values(run: storage.Run) -> None:
         return
     for _, r in vd.iterrows():
         st.markdown(f"**{r.label}** · {int(r.n):,} scored leads")
-        ui.html(C.stats([("p1", C.gbp(r.p1)), ("median", C.gbp(r.p50)), ("p90", C.gbp(r.p90)), ("p99", C.gbp(r.p99)),
-                         ("max", C.gbp(r["max"])), ("max / median", f"{r.max_over_median:.1f}×"),
+        ui.html(C.stats([("p1", C.money(r.p1, cur)), ("median", C.money(r.p50, cur)), ("p90", C.money(r.p90, cur)),
+                         ("p99", C.money(r.p99, cur)), ("max", C.money(r["max"], cur)),
+                         ("max / median", f"{r.max_over_median:.1f}×"),
                          ("top 1% share", C.pct(r.top1pct_share))]))
     scores = results.load_scores(run.out_dir)
     series = {r.label: scores[r.column].dropna().to_numpy() for _, r in vd.iterrows()}
-    st.plotly_chart(charts.value_histogram(series), config=charts.CONFIG, theme=None, width="stretch", key="value_hist")
+    st.plotly_chart(charts.value_histogram(series, cur), config=charts.CONFIG, theme=None, width="stretch",
+                    key="value_hist")
 
 
 def render() -> None:

@@ -30,9 +30,11 @@ from pathlib import Path
 
 import pandas as pd
 
+from app.components import money
 from app.results import feature_label
 from app.storage import get_dataset, read_mapping
 from emva.constants import MISSING
+from emva.dataset_meta import V1_CURRENCY
 from emva.features import SESSION_INPUTS
 from emva.generic import EXTRA_PREFIX, OTHER, ExtraKind
 from emva.ingest.convert import convert_leads, frames_from_bytes
@@ -145,7 +147,7 @@ def blank_session_fields(values: dict[str, object]) -> list[str]:
 
 @dataclass(frozen=True)
 class LeadScore:
-    """One scored lead: ``p`` (P(close)), ``deal_value`` (expected deal value if won, GBP), ``value_formula``
+    """One scored lead: ``p`` (P(close)), ``deal_value`` (expected deal value if won), ``value_formula``
     (p × deal value × margin), ``value_at_submit`` (after the run's value transform; NaN for legacy labels),
     ``is_bot`` / ``is_duplicate``, ``points`` (the intercept row then active features, with plain labels) and
     ``blank_session`` (session fields left blank, each of which makes the model treat the session as missing)."""
@@ -402,25 +404,27 @@ def source_lead_score(bundle: ModelBundle, result: SourceScores, lead_id: str, d
     return _lead_score(bundle, lead, result.scores.loc[lead_id], data, blank)
 
 
-def describe_transform(bundle: ModelBundle) -> str:
-    """One sentence on how ``value_at_submit`` is derived from p × deal value for this bundle."""
+def describe_transform(bundle: ModelBundle, currency: str | None = V1_CURRENCY) -> str:
+    """One sentence on how ``value_at_submit`` is derived from p × deal value for this bundle, amounts in
+    ``currency`` (``app.components.money``: the run's dataset currency)."""
     vt = bundle.value_transform
     if vt is None:
         return "This run used legacy labels, so no value is sent at submit; p × deal value is the value."
     steps = []
     if vt.cap is not None:
-        steps.append(f"capped at £{vt.cap:,.0f} (the {vt.spec.cap_percentile:g}th percentile of training leads)")
+        steps.append(f"capped at {money(vt.cap, currency)} (the {vt.spec.cap_percentile:g}th percentile of training "
+                     "leads)")
     if vt.anchor is not None:
-        steps.append(f"{vt.spec.compression.value}-compressed around the median £{vt.anchor:,.0f} and rescaled so "
-                     "totals stay on the revenue scale")
+        steps.append(f"{vt.spec.compression.value}-compressed around the median {money(vt.anchor, currency)} and "
+                     "rescaled so totals stay on the revenue scale")
     if vt.spec.floor is not None:
-        steps.append(f"floored at £{vt.spec.floor:,.0f}")
+        steps.append(f"floored at {money(vt.spec.floor, currency)}")
     if vt.tier_values:
         steps.append(f"mapped to {len(vt.tier_values)} value tiers")
     return "p × expected deal value, " + ", then ".join(steps) + "." if steps else "p × expected deal value."
 
 
-__all__ = ["DEFAULTS", "FormField", "LeadScore", "SECTIONS", "SourceField", "SourceScores", "blank_session_fields",
-           "clean_values", "defaults_for", "describe_transform", "extra_names", "form_sections",
+__all__ = ["DEFAULTS", "FormField", "LeadScore", "SECTIONS", "SourceField", "SourceScores",
+           "blank_session_fields", "clean_values", "defaults_for", "describe_transform", "extra_names", "form_sections",
            "frames_from_source_form", "frames_from_source_uploads", "number_text", "run_mapping", "score_form",
            "score_source", "source_fields", "source_lead_score", "values_from_lead"]

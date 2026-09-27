@@ -89,6 +89,10 @@ def test_bot_flag_is_reported_not_dropped(trained) -> None:
 def test_describe_transform(trained) -> None:
     text = scoring.describe_transform(trained[0])
     assert text.startswith("p × expected deal value, capped at £") and "floored at £25" in text
+    brl = scoring.describe_transform(trained[0], "BRL")
+    assert brl.startswith("p × expected deal value, capped at BRL ") and "floored at BRL 25" in brl
+    plain = scoring.describe_transform(trained[0], None)
+    assert "£" not in plain and "floored at 25" in plain
 
 
 # --- source format (Phase 9): leads as the source sends them, converted with the dataset's mapping -----------------
