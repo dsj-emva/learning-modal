@@ -183,8 +183,8 @@ def _values(run: storage.Run) -> None:
 def render() -> None:
     """The page."""
     ui.html(C.page_header("Model results", "How well the model ranks leads",
-                          "Each trained run scored on held-out leads it never saw: ranking quality against the "
-                          "status-quo rules, calibration, stability by month, and the scorecard behind every score."))
+                          "Each trained run scored on held-out leads it never saw: ranking quality, calibration, "
+                          "stability by month, and the scorecard behind every score."))
     root = ui.data_root()
     runs = storage.list_runs(root)
     if not runs:
@@ -200,6 +200,9 @@ def render() -> None:
                                         format_func=TEST_SET_LABELS.get, key=f"test_set_{run.run_id}")
     ui.html(C.run_header(run.status, run.run_id, f"dataset {run.dataset} · {run.args.get('label_mode')} labels · "
                                                  f"{run.args.get('feature_set')} features"))
+    note = results.data_note(run.dataset, run.dataset_path)
+    if note:
+        ui.html(C.callout(note, "info"))
     if run.status != "succeeded":
         msg = run.error or "This run has not finished yet; its progress is on the Upload & train page."
         ui.html(C.callout(msg, "bad" if run.status == "failed" else "info", lead="No results for this run."))
@@ -256,16 +259,11 @@ def render() -> None:
         with cols[2]:
             st.download_button("Standard report", report_text.encode("utf-8"), file_name=f"{run.run_id}-report.md",
                                mime="text/markdown", icon=":material/description:", width="stretch", key="dl_report")
-        with st.expander("Full standard report (baseline vs model vs status quo)"):
+        with st.expander(results.report_title(None if ev is None else ev["headline"].model)):
             st.markdown(report_text)
     else:
         st.caption("No standard report for this run (the dataset is in the sample's format without "
                    "status_quo_rules.json, or the report failed; see the training log).")
-    if run.dataset == storage.SAMPLE_DATASET_NAME:
-        st.caption("Trained on the bundled synthetic sample: every number here is on simulated data.")
-    elif storage.is_converted(run.dataset_path):
-        st.caption("Trained on a converted dataset (dataset.json): every number here is on that source's data, not "
-                   "on simulated data. For a public export, say \"on public data\"; check its licence before quoting.")
 
 
 render()

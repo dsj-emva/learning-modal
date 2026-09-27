@@ -125,6 +125,26 @@ def test_kpi_reference(models: list[str], expected: str | None) -> None:
     assert results.kpi_reference(models) == expected
 
 
+@pytest.mark.parametrize(("models", "expected"), [
+    ([results.BASELINE, results.CANDIDATE, results.STATUS_QUO], "(baseline vs model vs status quo)"),
+    ([results.CANDIDATE, results.STATUS_QUO], "(model vs status quo)"),
+    ([results.BASELINE, results.CANDIDATE], "(baseline vs model)"),
+    ([results.CANDIDATE], "(model only)"),
+])
+def test_report_title_names_the_rows_the_run_has(models: list[str], expected: str) -> None:
+    assert results.report_title(models) == f"{results.REPORT_TITLE} {expected}"
+    assert results.report_title(None) == results.REPORT_TITLE
+
+
+def test_data_note_by_dataset(app_trained, tmp_path: Path) -> None:
+    """Simulated for the bundled sample, "on public data" advice for a converted dataset, nothing for an upload."""
+    _, run = app_trained
+    converted = _copy(run, tmp_path / "converted", rules=False, converted=True)
+    assert results.data_note(storage.SAMPLE_DATASET_NAME, storage.SAMPLE_DATASET_PATH) == results.SAMPLE_DATA_NOTE
+    assert results.data_note("olist", converted) == results.CONVERTED_DATA_NOTE
+    assert results.data_note(run.dataset, run.dataset_path) == ""
+
+
 @pytest.mark.parametrize("rules", [True, False])
 def test_results_page_renders_a_converted_dataset(app_trained, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
                                                   rules: bool) -> None:
@@ -134,7 +154,8 @@ def test_results_page_renders_a_converted_dataset(app_trained, tmp_path: Path, m
     ds = storage.save_dataset(root, "converted", _dataset_files(trained, rules=rules, converted=True))
     run = storage.register_run(root, storage.new_run(root, ds, dict(trained.args)))
     shutil.copytree(trained.out_dir, run.out_dir, dirs_exist_ok=True)
-    storage.update_run(root, run.run_id, status="succeeded", metrics=trained.metrics, finished_at=storage.utc_now())
+    storage.update_run(root, run.run_id, status="succeeded", metrics=trained.metrics, finished_at=storage.utc_now(),
+                       has_report=trained.has_report)
     monkeypatch.setenv("DATA_DIR", str(root))
     monkeypatch.setenv("APP_PASSWORD", "letmein")
     at = AppTest.from_file(MAIN, default_timeout=120)
@@ -143,9 +164,15 @@ def test_results_page_renders_a_converted_dataset(app_trained, tmp_path: Path, m
     at.button[0].click()
     at.run()
     assert not at.exception, at.exception
-    page = "\n".join(m.value for m in at.markdown)
+    # the page itself, without the copied run's report text (a v1 report, with its baseline) in the expander
+    page = "\n".join(m.value for m in at.markdown).split("raw outputs, identical")[0]
     assert "Standard table" in page and "No baseline row: this dataset was converted" in page
     assert "Compared with the frozen baseline" not in page
     assert ("vs status quo" in page) == rules and "vs baseline" not in page
-    captions = "\n".join(c.value for c in at.caption)
-    assert "on that source's data, not on simulated data" in captions and "bundled synthetic sample" not in captions
+    # the data note sits above the headline; the report's title names only the rows it has (m3)
+    assert "not on simulated data. For a public export" in page and "bundled synthetic sample" not in page
+    assert page.index("not on simulated data") < page.index("Headline")
+    assert "status-quo rules" not in page
+    titles = [e.label for e in at.expander]
+    assert results.report_title([results.CANDIDATE, *([results.STATUS_QUO] if rules else [])]) in titles
+    assert not any("baseline" in t for t in titles)

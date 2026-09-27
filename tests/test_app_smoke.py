@@ -92,6 +92,7 @@ def test_results_page_amounts_and_constant_signals(monkeypatch: pytest.MonkeyPat
 
     at = _sign_in(_app(monkeypatch, app_trained[0]), "letmein")
     assert not at.exception and "£" in _stats(at) and "same on every training lead" not in _captions(at)
+    assert "status-quo rules" not in _text(at)  # the subtitle promises no comparison (m3)
     at = _sign_in(_app(monkeypatch, app_converted[0]), "letmein")
     assert not at.exception, at.exception
     assert "BRL " in _stats(at) and "£" not in _stats(at)
