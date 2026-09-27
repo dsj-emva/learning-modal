@@ -18,9 +18,9 @@ from emva.dataset_meta import V1_CURRENCY
 from emva.scoring import is_blank
 
 # Keel glyph: a keel line under a hull, drawn in white on the accent square.
-_GLYPH = ('<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">'
-          '<path d="M2 5h12l-2.5 4.5h-7z" fill="#fff"/><path d="M8 9.5V14" stroke="#fff" stroke-width="1.8" '
-          'stroke-linecap="round"/></svg>')
+_GLYPH_PATHS = ('<path d="M2 5h12l-2.5 4.5h-7z" fill="#fff"/><path d="M8 9.5V14" stroke="#fff" stroke-width="1.8" '
+                'stroke-linecap="round"/>')
+_GLYPH = f'<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">{_GLYPH_PATHS}</svg>'
 
 
 def esc(value: object) -> str:
@@ -75,9 +75,22 @@ def points(x: float | None) -> str:
 
 
 def wordmark(name: str, tagline: str) -> str:
-    """The sidebar wordmark: glyph, name in the display face, tagline in small caps."""
+    """The sign-in wordmark: glyph, name in the display face, tagline in small caps."""
     return (f'<div class="k-wordmark"><div class="glyph">{_GLYPH}</div><div><div class="name">{esc(name)}</div>'
             f'<div class="tag">{esc(tagline)}</div></div></div>')
+
+
+def logo_svg(palette: dict[str, str], name: str | None = None) -> str:
+    """The logo for ``st.logo`` as SVG markup: the glyph on a square in ``palette["accent"]``, then ``name`` in a serif
+    in ``palette["ink"]`` (an image cannot use the page's web fonts, so the display face falls back to Georgia);
+    without ``name``, the square alone (the icon shown while the sidebar is collapsed)."""
+    square = (f'<rect x="0" y="2" width="28" height="28" rx="8" fill="{esc(palette["accent"])}"/>'
+              f'<g transform="translate(6 8)">{_GLYPH_PATHS}</g>')
+    if name is None:
+        return f'<svg xmlns="http://www.w3.org/2000/svg" width="28" height="32" viewBox="0 0 28 32">{square}</svg>'
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" width="120" height="32" viewBox="0 0 120 32">{square}'
+            f'<text x="38" y="26" font-family="Instrument Serif, Georgia, serif" font-size="28" '
+            f'fill="{esc(palette["ink"])}">{esc(name)}</text></svg>')
 
 
 def page_header(eyebrow: str, title: str, lede: str) -> str:
@@ -215,5 +228,5 @@ def result_card(p: float, base_rate: float, deal_value: float, value_at_submit: 
 
 
 __all__ = ["CURRENCY_SYMBOLS", "UNKNOWN_CURRENCY_NOTE", "callout", "currency_note", "delta", "esc", "empty_state",
-           "file_card", "kpi", "kpi_row", "money", "money_format", "num", "page_header", "pct", "pill", "points",
+           "file_card", "kpi", "kpi_row", "logo_svg", "money", "money_format", "num", "page_header", "pct", "pill", "points",
            "result_card", "run_header", "section", "stats", "status_pill", "table", "wordmark"]

@@ -1,4 +1,4 @@
-"""Keel entrypoint: ``streamlit run app/main.py``. Password gate, sidebar identity and page navigation.
+"""Keel entrypoint: ``streamlit run app/main.py``. Password gate, logo and page navigation (Streamlit's sidebar nav).
 
 Environment: ``APP_PASSWORD`` (required; without it the app shows a refusal screen and never opens) and
 ``DATA_DIR`` (data root, default ``runs/app``; created on first start with ``datasets/``, ``runs/`` and
@@ -72,12 +72,11 @@ def main() -> None:
         st.Page("views/upload.py", title="Upload & train", icon=":material/upload_file:", url_path="train"),
         st.Page("views/score.py", title="Score a lead", icon=":material/target:", url_path="score"),
     ]
-    nav = st.navigation(pages, position="hidden")
+    # Streamlit's own sidebar navigation: on a phone it collapses the sidebar after a page is chosen (st.page_link
+    # does not); the wordmark moves into st.logo, above the links.
+    st.logo(C.logo_svg(theme.PALETTE, theme.APP_NAME), size="large", icon_image=C.logo_svg(theme.PALETTE))
+    nav = st.navigation(pages, position="sidebar")
     with st.sidebar:
-        ui.html(C.wordmark(theme.APP_NAME, theme.APP_TAGLINE))
-        for page in pages:
-            st.page_link(page, label=page.title, icon=page.icon)
-        st.space("medium")
         if st.button("Sign out", icon=":material/logout:", key="sign_out", type="tertiary"):
             st.session_state.clear()
             st.rerun()

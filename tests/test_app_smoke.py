@@ -114,6 +114,15 @@ def test_components_escape_user_text() -> None:
     assert C.points(-7.4) == "−7" and C.points(3) == "+3" and C.pct(0.2345) == "23.4%"
 
 
+def test_logo_is_the_glyph_then_the_escaped_name() -> None:
+    """st.logo's image (glyph square in the accent, then the name) and its collapsed-sidebar icon (the square)."""
+    from app import theme
+
+    logo, icon = C.logo_svg(theme.PALETTE, "<Keel>"), C.logo_svg(theme.PALETTE)
+    assert logo.startswith("<svg") and theme.PALETTE["accent"] in logo and "&lt;Keel&gt;</text>" in logo
+    assert icon.startswith("<svg") and theme.PALETTE["accent"] in icon and "<text" not in icon
+
+
 def test_money_formats_by_the_dataset_currency() -> None:
     """GBP (the sample, any dataset without dataset.json) as £; another code before the amount; unknown as a plain
     number with a note for the page."""
