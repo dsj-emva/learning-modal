@@ -414,6 +414,10 @@ def test_map_with_extras_confirm_both_convert_save_train_generic_and_see_the_com
         time.sleep(0.5)
     run = storage.get_run(tmp_path, run_id)
     assert run.status == "succeeded" and run.args["feature_set"] == "generic" and run.has_report, run.error
+    at.run()  # the finished run's log panel says whose summary table it shows (c5)
+    assert not at.exception, at.exception
+    from app import training
+    assert training.LOG_SUMMARY_NOTE in _captions(at) and "top20_revenue" in "".join(c.value for c in at.code)
     at.switch_page("views/results.py").run()
     assert not at.exception, at.exception
     page = _text(at)

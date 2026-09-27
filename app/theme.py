@@ -46,6 +46,8 @@ code, pre, [data-testid="stCode"] {{ font-family:var(--mono) !important; }}
 .stButton button[kind="primary"], .stFormSubmitButton button[kind="primaryFormSubmit"],
 .stDownloadButton button {{ font-weight:600; letter-spacing:.01em; }}
 [data-testid="stFileUploaderDropzone"] {{ background:var(--surface); border:1px dashed var(--hairline); }}
+/* a single-file uploader (its input has no multiple attribute) gets no "Add files" button next to its file */
+[data-testid="stFileUploaderDropzone"]:not(:has(input[multiple])) button[aria-label="Add files"] {{ display:none; }}
 hr {{ border-color:var(--hairline) !important; }}
 
 /* wordmark */

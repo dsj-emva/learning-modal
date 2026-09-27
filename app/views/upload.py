@@ -659,6 +659,7 @@ def _live(root: Path, run_id: str) -> None:
         st.session_state[PROCS_KEY].pop(run_id)
     ui.html(C.run_header(run.status, run.run_id))
     st.code(_tail(run.log_path) or "Starting…", language="text", height=280, wrap_lines=True)
+    st.caption(training.LOG_SUMMARY_NOTE)
     if run.is_done:
         st.rerun(scope="app")
 
@@ -681,6 +682,7 @@ def _progress(root: Path, run_id: str) -> None:
         ui.html(C.callout(run.error or "", "bad", lead="Training failed."))
     with st.expander("Training log"):
         st.code(_tail(run.log_path), language="text", wrap_lines=True)
+        st.caption(training.LOG_SUMMARY_NOTE)
 
 
 def _history(root: Path) -> None:
