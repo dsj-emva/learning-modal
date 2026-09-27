@@ -192,8 +192,9 @@ def file_card(name: str, label: str, errors: list[Issue], warnings: list[Issue],
 
 
 def result_card(p: float, base_rate: float, deal_value: float, value_at_submit: float, value_formula: float,
-                transform: str, flags_html: str, currency: str | None = V1_CURRENCY) -> str:
-    """The scored-lead card: P(close) large with the base rate for context, expected deal value, the value sent at
+                transform: str, flags_html: str, currency: str | None = V1_CURRENCY, assumes: str = "") -> str:
+    """The scored-lead card: P(close) large with the base rate for context, then ``assumes`` (what the score assumes
+    for blank inputs, e.g. an extra's reference level; nothing when ""), expected deal value, the value sent at
     submit (or p × value for legacy-label runs) with how it is derived, and bot/duplicate flags; amounts in
     ``currency`` (``money``)."""
     ratio = p / base_rate if base_rate > 0 else math.nan
@@ -204,6 +205,7 @@ def result_card(p: float, base_rate: float, deal_value: float, value_at_submit: 
         '<div class="k-result"><div class="eyebrow">Chance this lead closes</div>'
         f'<div class="big">{esc(pct(p))}</div>'
         f'<div class="context">Training win rate {esc(pct(base_rate))}{esc(rel)}</div>'
+        + (f'<div class="context assumes">{esc(assumes)}</div>' if assumes else '') +
         '<div class="grid">'
         '<div><div class="label">Expected deal value if won</div>'
         f'<div class="v">{esc(money(deal_value, currency))}</div></div>'

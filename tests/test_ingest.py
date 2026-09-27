@@ -274,6 +274,29 @@ def test_stage_map_value_map_and_crm_rows(converted: dict[str, bytes], frames: d
     assert (times.diff().dropna() > pd.Timedelta(0)).all()  # strictly ordered per lead
 
 
+def test_won_leads_without_a_deal_value_are_all_counted(frames: dict[str, pd.DataFrame],
+                                                        mapping: DatasetMapping) -> None:
+    """Keel QA m9: a Won lead's deal value left blank because the source value, or an input of a derived expression,
+    is blank is counted (``won_deal_values_missing``) next to the non-positive ones, so the two add up to the Won CRM
+    rows without a deal value (what validation reports)."""
+    leads = frames["leads.csv"].copy()
+    won = leads.index[leads.stage == "Closed Won"]
+    leads.loc[won[:3], "amount"] = None
+    leads.loc[won[3:5], "amount"] = "0"
+    leads["seats"] = "2"
+    leads.loc[won[5:9], "seats"] = None  # a blank argument of product() blanks the value
+    derived = replace(mapping, lead=replace(mapping.lead, deal_value=Expr(
+        "product", args=(Expr.col("l.amount"), Expr.col("l.seats")))))
+    files = convert({**frames, "leads.csv": leads}, derived)
+    meta, C = json.loads(files["dataset.json"]), _csv(files, "crm_history.csv")
+    no_value = int(((C.stage == "Won") & C.deal_value.isna()).sum())
+    assert (meta["won_deal_values_missing"], meta["non_positive_deal_values_blanked"]) == (7, 2)
+    assert meta["won_deal_values_missing"] + meta["non_positive_deal_values_blanked"] == no_value == 9
+    unmapped = convert(frames, replace(mapping, lead=replace(mapping.lead, deal_value=None)))
+    assert json.loads(unmapped["dataset.json"])["won_deal_values_missing"] == len(won)
+    assert json.loads(convert(frames, mapping)["dataset.json"])["won_deal_values_missing"] == 0
+
+
 def test_unmapped_columns_are_blank_and_email_placeholder_is_derived(frames: dict[str, pd.DataFrame],
                                                                      mapping: DatasetMapping) -> None:
     no_email = replace(mapping, fields=tuple(f for f in mapping.fields if f.source != "l.mail"))
@@ -806,7 +829,7 @@ def test_new_source_rows_score_like_the_training_run(converted_dir: Path, frames
     r = run(converted_dir)
     save_bundle(r, tmp_path / "model.joblib", converted_dir, 1.0)
     new = frames["leads.csv"].iloc[[0, 1, 2, 3, 40]].drop(columns=["stage", "closed", "amount", "notes"])
-    leads = convert_leads({"leads.csv": new, "orgs.csv": frames["orgs.csv"]}, mapping)
+    leads = convert_leads({"leads.csv": new, "orgs.csv": frames["orgs.csv"]}, mapping).leads
     assert list(leads.lead_id) == list(new.id) and tuple(leads.columns) == LEAD_COLUMNS
     scores = score_leads(load_bundle(tmp_path / "model.joblib"), leads, converted_dir)
     assert np.isfinite(scores.p_formula).all()
@@ -831,7 +854,7 @@ def test_form_text_in_a_column_blank_on_every_training_lead_scores(converted_dir
                            "utm_medium": "cpc", "ip_country": "UK", "landing_url": "https://firm.example/p"})
     assert np.isfinite(score_leads(bundle, form, converted_dir).p_formula).all()
     new = frames["leads.csv"].iloc[[0, 1, 2, 3, 40]].drop(columns=["stage", "closed", "amount", "notes"])
-    leads = convert_leads({"leads.csv": new, "orgs.csv": frames["orgs.csv"]}, mapping)
+    leads = convert_leads({"leads.csv": new, "orgs.csv": frames["orgs.csv"]}, mapping).leads
     np.testing.assert_allclose(score_leads(bundle, leads, converted_dir).p_formula, r.X.p_formula.loc[new.id],
                                rtol=1e-12)
 
@@ -839,7 +862,7 @@ def test_form_text_in_a_column_blank_on_every_training_lead_scores(converted_dir
 def test_convert_leads_without_ids_or_outcome_columns(frames: dict[str, pd.DataFrame],
                                                       mapping: DatasetMapping) -> None:
     new = frames["leads.csv"].head(3)[["signup", "mail", "source", "size", "org"]]
-    leads = convert_leads({"leads.csv": new, "orgs.csv": frames["orgs.csv"]}, mapping)
+    leads = convert_leads({"leads.csv": new, "orgs.csv": frames["orgs.csv"]}, mapping).leads
     assert list(leads.lead_id) == ["new-000001", "new-000002", "new-000003"]
     assert str(leads.created_at.dt.tz) == "UTC"
     assert list(leads.created_at) == list(pd.to_datetime(new.signup, utc=True, format="ISO8601"))
@@ -868,10 +891,38 @@ def test_convert_leads_requires_created_at_on_every_lead(frames: dict[str, pd.Da
                        "orgs.csv": orgs}, mapping)
 
 
+def test_convert_leads_refuses_unlisted_value_map_values_per_row(frames: dict[str, pd.DataFrame],
+                                                                  mapping: DatasetMapping) -> None:
+    """Keel QA M7: a value map has no fallback, so a new lead whose value-map column holds an unlisted value is not
+    scored; the other leads are. The refusal names the rows (lead ids, else row numbers), the column, the values and
+    the allowed values in plain words. Every row refused raises. Training conversion keeps its whole-file refusal."""
+    new = frames["leads.csv"].head(4)[["id", "signup", "mail", "source", "size", "org"]]
+    orgs = frames["orgs.csv"]
+    bad = new.assign(source=["ppc", "tiktok", "fb", "tiktok"], size=["small", "small", "huge", "small"])
+    got = convert_leads({"leads.csv": bad, "orgs.csv": orgs}, mapping)
+    assert list(got.leads.lead_id) == [new.id.iloc[0]]
+    ids = list(new.id)
+    assert [(u.column, u.values, u.rows, u.allowed, u.ids) for u in got.refused] == [
+        ("l.source", ("tiktok",), (ids[1], ids[3]), ("ppc", "fb", "seo"), True),
+        ("l.size", ("huge",), (ids[2],), ("small", "mid", "large"), True)]
+    assert got.refused[0].text() == (f"Lead(s) {ids[1]}, {ids[3]}: source 'tiktok' is not one of the values this "
+                                     "dataset's mapping knows (ppc, fb, seo); these leads were not scored.")
+    assert got.refused[1].text().endswith("(small, mid, large); this lead was not scored.")
+    no_ids = convert_leads({"leads.csv": bad.drop(columns="id"), "orgs.csv": orgs}, mapping)
+    assert list(no_ids.leads.lead_id) == ["new-000001"]  # the kept row keeps its row number
+    assert no_ids.refused[0].rows == ("2", "4") and no_ids.refused[0].text().startswith("Row(s) 2, 4: source")
+    clean = convert_leads({"leads.csv": new, "orgs.csv": orgs}, mapping)
+    assert clean.refused == () and len(clean.leads) == 4
+    with pytest.raises(ValueError, match=r"^Lead\(s\) .*: source 'tiktok' is not one of .* not scored\.$"):
+        convert_leads({"leads.csv": new.assign(source="tiktok"), "orgs.csv": orgs}, mapping)
+    with pytest.raises(ValueError, match=r"\['tiktok'\] are not in its value_map; list every value"):
+        convert({"leads.csv": frames["leads.csv"].assign(source="tiktok"), "orgs.csv": orgs}, mapping)
+
+
 def test_convert_leads_types_booleans_for_scoring() -> None:
     m = load_mapping((REPO / "mappings" / "hotel_bookings.toml").read_text())
     raw = pd.read_csv(FIXTURES / "hotel_bookings" / "hotel_bookings.csv", dtype=str).head(10)
-    leads = convert_leads({"hotel_bookings.csv": raw.drop(columns=["is_canceled", "reservation_status_date"])}, m)
+    leads = convert_leads({"hotel_bookings.csv": raw.drop(columns=["is_canceled", "reservation_status_date"])}, m).leads
     assert set(leads.returned_visitor) <= {True, False} and leads.lead_id.iloc[0] == "new-000001"
 
 
@@ -892,6 +943,20 @@ def test_cli_score_prints_scores(converted_dir: Path, frames: dict[str, pd.DataF
     blank.loc[blank.index[2], "signup"] = None
     blank.to_csv(tmp_path / "new.csv", index=False)
     with pytest.raises(ValueError, match=r"created_at is blank on 1 new lead\(s\) \(rows \[3\]\)"):
+        main(["score", "--mapping", str(tmp_path / "mapping.toml"), "--raw", str(tmp_path / "new.csv"), "--run",
+              str(tmp_path), "--data", str(converted_dir)])
+    unlisted = frames["leads.csv"].head(4).drop(columns=["stage", "closed", "amount"])
+    unlisted.loc[unlisted.index[1], "source"] = "tiktok"
+    unlisted.to_csv(tmp_path / "new.csv", index=False)
+    capsys.readouterr()
+    main(["score", "--mapping", str(tmp_path / "mapping.toml"), "--raw", str(tmp_path / "new.csv"), "--run",
+          str(tmp_path), "--data", str(converted_dir)])
+    printed = capsys.readouterr()
+    ids = list(frames["leads.csv"].id.head(4))
+    assert list(pd.read_csv(io.StringIO(printed.out), index_col="lead_id").index) == [ids[0], ids[2], ids[3]]
+    assert printed.err.startswith(f"Lead(s) {ids[1]}: source 'tiktok' is not one of")
+    unlisted.assign(source="tiktok").to_csv(tmp_path / "new.csv", index=False)
+    with pytest.raises(ValueError, match="source 'tiktok' is not one of"):
         main(["score", "--mapping", str(tmp_path / "mapping.toml"), "--raw", str(tmp_path / "new.csv"), "--run",
               str(tmp_path), "--data", str(converted_dir)])
 

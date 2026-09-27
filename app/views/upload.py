@@ -50,6 +50,8 @@ LOST_LABELS: dict[str, str] = {"error": "Refuse the conversion", "as_of": "Date 
 # MC_EDITED: the mapping under review with the widgets' edits applied, kept so the review survives a page switch.
 MC_SIG, MC_FORM, MC_VERSION, MC_MSG, MC_CONV = "mc_sig", "mc_form", "mc_version", "mc_msg", "mc_conv"
 MC_EDITED, MC_RULES = "mc_edited", "mc_rules"
+# The last "Apply TOML" refusal, shown under the TOML editor (not at step 1c, far above it).
+MC_TOML_ERR = "mc_toml_err"
 VALIDATION, VALIDATED_FILES, VALIDATED_ORIGIN = "validation", "validated_files", "validated_origin"
 VALIDATED_REFUSED = "validated_refused"
 LABEL_MODES = {"horizon": "Horizon", "legacy": "Legacy (POC)"}
@@ -173,14 +175,14 @@ def _set_form(form: ingest.MappingForm, kind: str, text: str, lead: str = "") ->
     st.session_state[MC_FORM] = form
     st.session_state[MC_VERSION] = st.session_state.get(MC_VERSION, 0) + 1
     st.session_state[MC_MSG] = (kind, text, lead)
-    for k in (MC_CONV, MC_EDITED):
+    for k in (MC_CONV, MC_EDITED, MC_TOML_ERR):
         st.session_state.pop(k, None)
 
 
 def _reset_mapping() -> None:
     """Forget the mapping under review, its edits, its conversion and the review widgets' mirrored values (the raw
     files changed, or the dataset was saved)."""
-    for k in (MC_FORM, MC_MSG, MC_CONV, MC_EDITED):
+    for k in (MC_FORM, MC_MSG, MC_CONV, MC_EDITED, MC_TOML_ERR):
         st.session_state.pop(k, None)
     ui.forget_kept("mc_")
     _drop_convert_check()
@@ -301,7 +303,7 @@ def _lead_and_outcome(form: ingest.MappingForm, edited: ingest.MappingForm, fram
             else:
                 st.text_input(ROLE_LABELS[role], ingest.expr_text(e), key=f"mc_role_{v}_{role}", disabled=True,
                               help="A derived expression: edit it in the TOML below.")
-            _review_note(form, role)
+            _review_note(ingest.mark_edited(form, f)[0], role)
     st.markdown("**Outcome** (how a lead's final CRM stage is read)")
     c1, c2, c3 = st.columns(3, gap="medium")
     kind = c1.selectbox("Outcome kind", list(OUTCOME_KINDS), index=list(OUTCOME_KINDS).index(form.outcome_kind),
@@ -311,7 +313,7 @@ def _lead_and_outcome(form: ingest.MappingForm, edited: ingest.MappingForm, fram
     lost = c3.selectbox("A Lost lead without a close date", list(LOST_WITHOUT_CLOSE),
                         index=list(LOST_WITHOUT_CLOSE).index(form.lost_without_close), format_func=LOST_LABELS.get,
                         key=f"mc_olost_{v}")
-    _review_note(form, "outcome")
+    _review_note(ingest.mark_edited(form, replace(f, outcome_kind=kind, outcome_column=column))[0], "outcome")
     table = None
     if kind in ("stage", "won_flag") and column:
         same = kind == form.outcome_kind and column == form.outcome_column
@@ -341,7 +343,9 @@ def _field_table(form: ingest.MappingForm, edited: ingest.MappingForm, v: int,
                  problems: list[str]) -> ingest.MappingForm:
     """The review table of field rows and extra features (low-confidence rows highlighted), the read-only value maps
     and the read-only derived features (``VALUE_MAP_TARGET`` offered only when a row shows it,
-    ``ingest.review_targets``); a table edit that cannot be applied is shown and appended to ``problems``."""
+    ``ingest.review_targets``); a table edit that cannot be applied is shown and appended to ``problems``. Returns the
+    edited form with every row whose mapping changed but whose draft reason was kept marked ``ingest.EDITED_REVIEW``
+    (``ingest.mark_edited``; the page lists them)."""
     st.markdown("**Fields and extra features** (one row per uploaded column; ignore = not used as a field)")
     st.caption("Tick Feature to use a column as an extra feature of the generic feature set (v2 + extras): numeric "
                "columns are cut into 5 bins, categorical ones keep levels with at least 30 training leads. Only "
@@ -366,13 +370,19 @@ def _field_table(form: ingest.MappingForm, edited: ingest.MappingForm, v: int,
                                "name": st.column_config.TextColumn(
                                    "Feature name", help="Lower-case letters, digits and _; blank = from the column"),
                                "check": st.column_config.TextColumn("Check", width="small")})
-    if low:
-        ui.html(C.callout(", ".join(low), "warn", lead="Low confidence, check these rows:"))
     try:
         edited = ingest.apply_review(edited, table)
     except ValueError as e:
         ui.html(C.callout(str(e), "bad"))
         problems.append(str(e))
+    edited, changed = ingest.mark_edited(form, edited)
+    low = [s for s in low if s not in changed]
+    if low:
+        ui.html(C.callout(", ".join(low), "warn", lead="Low confidence, check these rows:"))
+    if changed:
+        ui.html(C.callout(f"{', '.join(changed)}. The draft's reason and confidence were written for the old mapping, "
+                          f"so they are dropped and the mapping records “{ingest.EDITED_REVIEW.reason}” instead. "
+                          "Type a reason in the table to keep your own.", "info", lead="Edited by you:"))
     vm = ingest.value_map_frame(form)
     if not vm.empty:
         st.markdown("**Value maps** (read-only here; edit them as TOML below)")
@@ -385,19 +395,23 @@ def _field_table(form: ingest.MappingForm, edited: ingest.MappingForm, v: int,
 
 
 def _toml_editor(edited: ingest.MappingForm, frames: dict[str, pd.DataFrame]) -> None:
-    """The whole mapping as TOML text, editable; "Apply TOML" loads it into the form (``load_mapping`` checks it)."""
+    """The whole mapping as TOML text, editable; "Apply TOML" loads it into the form (``load_mapping`` checks it). A
+    refusal is shown under the editor, which stays open and keeps the edited text."""
     text = ingest.form_toml(edited)
-    with st.expander("Edit the whole mapping as TOML (value maps, derived expressions)"):
+    error = st.session_state.get(MC_TOML_ERR)
+    with st.expander("Edit the whole mapping as TOML (value maps, derived expressions)", expanded=error is not None):
         st.caption("The schema is in emva/ingest/mapping.py. Applying replaces the form above.")
         start = text if text is not None else ("# The form is not complete yet; complete it above or paste a whole "
                                                "mapping here.\n")
         digest = hashlib.sha256(start.encode("utf-8")).hexdigest()[:12]
         new = st.text_area("Mapping TOML", start, height=320, key=f"mc_toml_{digest}", label_visibility="collapsed")
+        if error is not None:
+            ui.html(C.callout(error, "bad", lead="The TOML was not applied."))
         if st.button("Apply TOML", icon=":material/check:", key="mc_toml_apply"):
             try:
-                form = ingest.form_from_toml(new, frames)
+                form = ingest.mark_edited(edited, ingest.form_from_toml(new, frames))[0]
             except ValueError as e:
-                st.session_state[MC_MSG] = ("bad", str(e), "The TOML was not applied.")
+                st.session_state[MC_TOML_ERR] = str(e)
             else:
                 _set_form(form, "info", "Review it, then confirm.", lead="TOML applied.")
             st.rerun()

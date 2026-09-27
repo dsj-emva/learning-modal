@@ -2,8 +2,10 @@
 every page renders without an exception once signed in (on a data root holding the shared trained run)."""
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
+import pandas as pd
 import pytest
 from streamlit.testing.v1 import AppTest
 
@@ -246,12 +248,51 @@ def test_fill_by_hand_then_apply_a_hand_written_toml(monkeypatch: pytest.MonkeyP
     at.text_area[0].input("name = ").run()
     at.button(key="mc_toml_apply").click().run()
     assert "The TOML was not applied" in _text(at) and "not valid TOML" in _text(at)
+    # m8: the refusal is shown in the TOML expander, next to the editor (not at step 1c), and the text is kept
+    toml_box = next(e for e in at.expander if e.label.startswith("Edit the whole mapping as TOML"))
+    assert any("The TOML was not applied" in m.value for m in toml_box.markdown)
+    assert at.text_area[0].value == "name = " and "Empty mapping" in _text(at)
     at.text_area[0].input((REPO / "mappings" / "olist_funnel.toml").read_text(encoding="utf-8")).run()
     at.button(key="mc_toml_apply").click().run()
     assert not at.exception, at.exception
-    assert "TOML applied" in _text(at)
+    assert "TOML applied" in _text(at) and "The TOML was not applied" not in _text(at)
     at = _confirm_and_convert(at)
     assert not at.exception and "of 39 signals" in _text(at)
+
+
+def test_a_role_edited_as_toml_drops_its_draft_reason_and_blanked_values_are_counted(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Keel QA m9: deal_value switched to a derived product() through TOML no longer shows the draft's reason and
+    confidence; after Convert, "Derived during conversion" counts the Won leads left without a deal value by a blank
+    input, so it agrees with the check results."""
+    from conftest import olist_raw
+
+    _no_model_call(monkeypatch)
+    at = _sign_in(_app(monkeypatch, tmp_path), "letmein")
+    at.switch_page("views/upload.py").run()
+    at = _upload_raw(at, olist_raw())
+    at.selectbox(key="mc_choice").select("builtin:olist_funnel").run()
+    at.button(key="mc_load").click().run()
+    notes = "\n".join(t.value for t in at.text)
+    assert "low confidence · Declared monthly revenue" in notes
+    text = at.text_area[0].value
+    derived = text.replace('deal_value = "deal.declared_monthly_revenue"', 'deal_value = { op = "product", args = '
+                           '["deal.declared_monthly_revenue", "deal.declared_product_catalog_size"] }')
+    assert derived != text
+    at.text_area[0].input(derived).run()
+    at.button(key="mc_toml_apply").click().run()
+    assert not at.exception and "TOML applied" in _text(at)
+    notes = "\n".join(t.value for t in at.text)
+    assert "Declared monthly revenue" not in notes and "no confidence · edited by the reviewer" in notes
+    assert 'deal_value = { reason = "edited by the reviewer" }' in at.text_area[0].value  # what is saved
+    at = _confirm_and_convert(at)
+    assert not at.exception, at.exception
+    derived_text = "\n".join(t.value for t in at.text)
+    assert "Won leads with no deal value: blank in the source, a blank input of its expression" in derived_text
+    counts = {line.split("  ", 1)[1]: int(line.split("  ", 1)[0].replace(",", ""))
+              for line in derived_text.splitlines() if "deal value" in line and "  " in line}
+    missing = sum(counts.values())
+    assert f"{missing:,} Won row(s) have no deal value" in _text(at)
 
 
 def test_a_won_only_column_mapped_to_a_field_is_flagged_after_convert(monkeypatch: pytest.MonkeyPatch,
@@ -321,6 +362,8 @@ def test_score_page_source_format(monkeypatch: pytest.MonkeyPatch, app_converted
     assert [t.label for t in at.text_input if t.key.startswith("src_")] == ["mql_id", "first_contact_date *",
                                                                             "landing_page_id"]
     origin = next(s for s in at.selectbox if s.key.endswith(":origin"))
+    # a value map offers exactly its values: the raw value "other" is one of them, not "any value not listed" (M7)
+    assert "other" in origin.options and not any("not listed" in o for o in origin.options)
     origin.select("paid_search")
     next(b for b in at.button if b.label == "Score this lead").click()
     at.run()
@@ -339,12 +382,22 @@ def test_score_page_source_format(monkeypatch: pytest.MonkeyPatch, app_converted
     at.button(key=f"src_score_file_{run.run_id}").click().run()
     assert not at.exception, at.exception
     assert at.selectbox(key=f"src_pick_{run.run_id}").options and "Chance this lead closes" in _text(at)
+    n_rows = len(at.selectbox(key=f"src_pick_{run.run_id}").options)
     bad = raw.replace(b"paid_search", b"<b>pigeon</b>", 1)
     at.file_uploader(key=f"src_upload_{run.run_id}").clear().upload("new.csv", bad, "text/csv").run()
     at.button(key=f"src_score_file_{run.run_id}").click().run()
     page = _text(at)
-    assert not at.exception and "These leads cannot be scored" in page
+    # one unlisted value refuses its own lead, in plain words; the rest of the file is scored (M7)
+    assert not at.exception and "Some leads were not scored:" in page and "Chance this lead closes" in page
+    assert "mapping knows (paid_search, social" in page and "these leads were not scored" not in page
+    assert "value_map" not in page and len(at.selectbox(key=f"src_pick_{run.run_id}").options) == n_rows - 1
     assert "<b>pigeon</b>" not in page and "&lt;b&gt;pigeon&lt;/b&gt;" in page
+    every = pd.read_csv(io.BytesIO(raw), dtype=str).assign(origin="tiktok").to_csv(index=False).encode()
+    at.file_uploader(key=f"src_upload_{run.run_id}").clear().upload("new.csv", every, "text/csv").run()
+    at.button(key=f"src_score_file_{run.run_id}").click().run()
+    page = _text(at)
+    assert not at.exception and "These leads cannot be scored" in page and "tiktok" in page
+    assert "Chance this lead closes" not in page and not at.dataframe
 
 
 # --- the generic feature set in Keel (Phase 10 (b)) ------------------------------------------------------------------
@@ -419,6 +472,11 @@ def test_generic_run_score_page_offers_the_extras(monkeypatch: pytest.MonkeyPatc
     assert "reference level wherever the model never saw a missing value" in _text(at)
     unseen = scoring.missing_unseen(load_bundle(Path(run.out_dir) / "model.joblib"))
     assert all(f"Blank {name} scores as {ref}." in _text(at) for name, ref in unseen.items())
+    next(b for b in at.button if b.label == "Score this lead").click()
+    at.run()
+    card = next(m.value for m in at.markdown if m.value.startswith("<div class=\"k-result\""))
+    assert all(f"{name} = {ref}" in card for name, ref in unseen.items())  # the card says what it assumes (m6)
+    assert ("Assumes " in card) == bool(unseen)
     at.segmented_control(key=f"score_mode_{run.run_id}").set_value("source").run()
     assert not at.exception, at.exception
     page = next(s for s in at.selectbox if s.key.endswith(":landing_page_id"))
@@ -429,3 +487,14 @@ def test_generic_run_score_page_offers_the_extras(monkeypatch: pytest.MonkeyPatc
     at.run()
     assert not at.exception, at.exception
     assert "Chance this lead closes" in _text(at)
+    from conftest import INGEST_FIXTURES, OLIST_MQL
+
+    raw = pd.read_csv(INGEST_FIXTURES / "olist_funnel" / OLIST_MQL, dtype=str).head(3)
+    unseen = raw.assign(landing_page_id=raw.landing_page_id.mask(raw.index == 1, "never-seen-page"))
+    at.file_uploader(key=f"src_upload_{run.run_id}").upload("new.csv", unseen.to_csv(index=False).encode(),
+                                                            "text/csv").run()
+    at.button(key=f"src_score_file_{run.run_id}").click().run()
+    assert not at.exception, at.exception
+    page = _text(at)  # an unseen extra value is scored as other, with a note naming the lead (M7)
+    assert "Unlisted landing_page scores as other." in page and "Some leads were not scored" not in page
+    assert f"never-seen-page&#x27; (lead {raw.mql_id.iloc[1]})" in page

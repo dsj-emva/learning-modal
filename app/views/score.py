@@ -74,7 +74,7 @@ def _result(res: scoring.LeadScore, base: float, run: storage.Run, bundle: Model
     else:
         flags.append(C.pill("Scored alone: duplicates are checked in batches", "info"))
     ui.html(C.result_card(res.p, base, res.deal_value, res.value_at_submit, res.value_formula,
-                          scoring.describe_transform(bundle, cur), "".join(flags), cur))
+                          scoring.describe_transform(bundle, cur), "".join(flags), cur, res.assumes))
     if C.currency_note(cur):
         st.caption(C.currency_note(cur))
     if res.blank_session:
@@ -97,9 +97,10 @@ def _result(res: scoring.LeadScore, base: float, run: storage.Run, bundle: Model
                     key="lead_points")
 
 
-def _option_label(o: str) -> str:
-    """A source-form option: "" is a blank cell; ``other`` stands for any value the model was not trained with."""
-    return "— blank —" if o == "" else "other (any value not listed)" if o == OTHER else o
+def _option_label(o: str, open_other: bool) -> str:
+    """A source-form option: "" is a blank cell; ``other`` of an extra's levels (``open_other``) stands for any value
+    not listed (ADR 0024); a value map's options are shown as they are."""
+    return "— blank —" if o == "" else "other (any value not listed)" if open_other and o == OTHER else o
 
 
 def _source_form(mapping: DatasetMapping, bundle: ModelBundle, run_id: str) -> dict[str, object] | None:
@@ -118,7 +119,7 @@ def _source_form(mapping: DatasetMapping, bundle: ModelBundle, run_id: str) -> d
                                                                         placeholder="blank", format="%g"))
                 elif f.options is not None:
                     values[f.key] = st.selectbox(label, ["", *f.options], key=key, help=help_text,
-                                                 format_func=_option_label)
+                                                 format_func=lambda o, f=f: _option_label(o, f.open_other))
                 else:
                     values[f.key] = st.text_input(label, key=key, help=help_text)
         submitted = st.form_submit_button("Score this lead", type="primary", icon=":material/target:",
@@ -133,6 +134,12 @@ def _warn_unseen(unseen: dict[str, str]) -> None:
         ui.html(C.callout(f"No training lead had {name} missing, so the model learned nothing for a blank {name}: "
                           f"it is scored as the reference level ({reference}).", "warn",
                           lead=f"Blank {name} scores as {reference}."))
+
+
+def _warn_other(values: dict[str, dict[str, tuple[str, ...]]]) -> None:
+    """One warning per extra with values scored as ``other`` (``scoring.other_extra_values``), naming the leads."""
+    for name, by_value in values.items():
+        ui.html(C.callout(scoring.other_extra_text(name, by_value), "warn", lead=f"Unlisted {name} scores as other."))
 
 
 def _source_mode(run: storage.Run, bundle: ModelBundle, mapping: DatasetMapping) -> None:
@@ -175,7 +182,11 @@ def _source_mode(run: storage.Run, bundle: ModelBundle, mapping: DatasetMapping)
             ui.html(C.empty_state("Ready when you are", "Fill in a lead as the source sends it, or upload a CSV of "
                                                         "new leads, and score it."))
             return
+        if result.refused:
+            ui.html(C.callout(" ".join(r.text() for r in result.refused), "bad",
+                              lead="Some leads were not scored:"))
         _warn_unseen(scoring.blank_unseen(bundle, result))
+        _warn_other(scoring.other_extra_values(bundle, result))
         table = result.table()
         money = C.money_format(ui.currency(run.dataset_path))
         st.dataframe(table, hide_index=True, width="stretch", height=min(38 + 35 * len(table), 250), column_config={
