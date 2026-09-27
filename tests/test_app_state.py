@@ -118,3 +118,25 @@ def test_removing_a_refused_upload_withdraws_its_check_results(monkeypatch: pyte
     at.button(key="up_historical_leads.csv_replace").click().run()
     page = _text(at)
     assert "Validate again" not in page and "Check results" not in page
+
+
+def _top_level(at: AppTest, needle: str) -> int:
+    """The index of the main area's top-level element whose subtree holds a markdown containing ``needle``."""
+    def texts(node) -> list[str]:
+        own = [node.value] if getattr(node, "type", None) == "markdown" else []
+        return own + [t for c in getattr(node, "children", {}).values() for t in texts(c)]
+    return next(i for i, node in at.main.children.items() if any(needle in t for t in texts(node)))
+
+
+def test_a_test_set_switch_replaces_every_test_set_section_at_once(monkeypatch: pytest.MonkeyPatch,
+                                                                    app_generic) -> None:
+    """Keel QA m2: the headline, the standard table, Generic vs v2 and the charts of a test set render into one slot,
+    which is emptied before the new test set's numbers are computed; the scorecard (the same on both) is outside."""
+    root, run = app_generic
+    at = _sign_in(_app(monkeypatch, root), "letmein")
+    at.segmented_control(key=f"test_set_{run.run_id}").set_value("legacy").run()
+    assert not at.exception, at.exception
+    slot = _top_level(at, "Headline")
+    assert _top_level(at, "Generic vs v2") == _top_level(at, "Stability by month") == slot
+    assert _top_level(at, "Scorecard") != slot
+    assert "Legacy labels (frozen POC)" in _text(at) and "Mature leads (horizon labels)" not in _text(at)

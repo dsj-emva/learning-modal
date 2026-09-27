@@ -110,17 +110,24 @@ def _scorecard(run: storage.Run, extras: GenericEncoder | None) -> None:
             _scorecard_table(card, 520, "scorecard_all")
 
 
-def _generic(run: storage.Run, test_set: str) -> None:
-    """Generic vs v2 (a generic-feature-set run): the paired AUC difference on this test set, the generic design's
-    collinearity check and the extras' leakage screen (``results.generic_comparison``)."""
+def _generic_comparison(run: storage.Run, test_set: str) -> results.GenericSection | str | None:
+    """``ui.generic_section`` for a generic-feature-set run on this test set: the section, None when the test set
+    cannot be compared, or the message of the ``ValueError`` that refused it."""
+    try:
+        return ui.generic_section(run.run_id, run.out_dir, run.dataset_path,
+                                  run.args.get("label_mode", LabelMode.HORIZON.value), test_set)
+    except ValueError as e:
+        return str(e)
+
+
+def _generic(g: results.GenericSection | str | None, test_set: str) -> None:
+    """Generic vs v2 (a generic-feature-set run; ``_generic_comparison``): the paired AUC difference on this test set,
+    the generic design's collinearity check and the extras' leakage screen (``results.generic_comparison``)."""
     ui.html(C.section("Generic vs v2", "The same leads, labels and split trained twice: v2 (the fixed design) and "
                       "generic (v2 plus the extra features). AUC difference on shared bootstrap resamples; an "
                       "interval that excludes 0 is a real difference, not noise."))
-    try:
-        g = ui.generic_section(run.run_id, run.out_dir, run.dataset_path,
-                               run.args.get("label_mode", LabelMode.HORIZON.value), test_set)
-    except ValueError as e:
-        ui.html(C.callout(str(e), "bad", lead="The comparison cannot be computed:"))
+    if isinstance(g, str):
+        ui.html(C.callout(g, "bad", lead="The comparison cannot be computed:"))
         return
     if g is None:
         ui.html(C.callout("This test set is empty or has a single class.", "warn", lead="No comparison."))
@@ -180,6 +187,38 @@ def _values(run: storage.Run) -> None:
                     key="value_hist")
 
 
+def _test_set_sections(run: storage.Run, test_set: str, ev: dict[str, object] | None, generic: bool,
+                       g: results.GenericSection | str | None) -> None:
+    """Headline, standard table, Generic vs v2 (a generic run) and the calibration and month charts of one test set
+    (``ev`` from ``ui.evaluation``, None when the test set is empty; ``g`` from ``_generic_comparison``)."""
+    if ev is None:
+        test_from = dataset_dates(run.dataset_path)[1]
+        ui.html(C.callout(f"It needs labelled leads created on or after {test_from} with both wins and losses.",
+                          "warn", lead="This test set is empty for this dataset."))
+    else:
+        head = ev["headline"]
+        ui.html(C.section("Headline", f"{ev['n']:,} test leads, {ev['wins']:,} won. AUC is the chance the model "
+                                      "ranks a random winner above a random loser (0.5 = coin flip); the top-20% "
+                                      "figures are the share of wins and recorded revenue in the leads it ranks "
+                                      "highest."))
+        _kpis(head)
+        ui.html(C.section("Standard table", "The evaluation every change to the model is judged by, on this test set."))
+        _standard_table(head, ev["paired"], ev["notes"], ev["baseline_missing"])
+        if generic:
+            _generic(g, test_set)
+        left, right = st.columns(2, gap="large")
+        with left:
+            ui.html(C.section("Calibration", "Predicted chance vs what actually happened, by tenth of the test "
+                                             "set. On the dotted line the probabilities can be taken at face value."))
+            st.plotly_chart(charts.calibration_chart(ev["calibration"]), config=charts.CONFIG, theme=None, width="stretch",
+                            key="cal_chart")
+        with right:
+            ui.html(C.section("Stability by month", "AUC for leads created in each test month, with a 95% "
+                                                    "bootstrap interval where the month is large enough."))
+            st.plotly_chart(charts.auc_month_chart(ev["auc_month"]), config=charts.CONFIG, theme=None, width="stretch",
+                            key="month_chart")
+
+
 def render() -> None:
     """The page."""
     ui.html(C.page_header("Model results", "How well the model ranks leads",
@@ -206,33 +245,14 @@ def render() -> None:
         return
 
     generic = run.args.get("feature_set") == FeatureSet.GENERIC.value
-    ev = ui.evaluation(run.run_id, run.out_dir, run.dataset_path, test_set)
-    if ev is None:
-        test_from = dataset_dates(run.dataset_path)[1]
-        ui.html(C.callout(f"It needs labelled leads created on or after {test_from} with both wins and losses.",
-                          "warn", lead="This test set is empty for this dataset."))
-    else:
-        head = ev["headline"]
-        ui.html(C.section("Headline", f"{ev['n']:,} test leads, {ev['wins']:,} won. AUC is the chance the model "
-                                      "ranks a random winner above a random loser (0.5 = coin flip); the top-20% "
-                                      "figures are the share of wins and recorded revenue in the leads it ranks "
-                                      "highest."))
-        _kpis(head)
-        ui.html(C.section("Standard table", "The evaluation every change to the model is judged by, on this test set."))
-        _standard_table(head, ev["paired"], ev["notes"], ev["baseline_missing"])
-        if generic:
-            _generic(run, test_set)
-        left, right = st.columns(2, gap="large")
-        with left:
-            ui.html(C.section("Calibration", "Predicted chance vs what actually happened, by tenth of the test "
-                                             "set. On the dotted line the probabilities can be taken at face value."))
-            st.plotly_chart(charts.calibration_chart(ev["calibration"]), config=charts.CONFIG, theme=None, width="stretch",
-                            key="cal_chart")
-        with right:
-            ui.html(C.section("Stability by month", "AUC for leads created in each test month, with a 95% "
-                                                    "bootstrap interval where the month is large enough."))
-            st.plotly_chart(charts.auc_month_chart(ev["auc_month"]), config=charts.CONFIG, theme=None, width="stretch",
-                            key="month_chart")
+    # Everything that depends on the test set is computed first, inside one slot: the slot replaces the previous test
+    # set's sections at once (with the computations' spinners), so old and new numbers are never on screen together.
+    body = st.empty()
+    with body:
+        ev = ui.evaluation(run.run_id, run.out_dir, run.dataset_path, test_set)
+        g = _generic_comparison(run, test_set) if generic and ev is not None else None
+    with body.container():
+        _test_set_sections(run, test_set, ev, generic, g)
 
     ui.html(C.section("Scorecard", "What moves a lead's score. Each signal adds or removes points relative to its "
                                    "comparison level; 20 points doubles the odds of closing."))
