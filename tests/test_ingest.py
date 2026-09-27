@@ -178,6 +178,22 @@ def test_mapping_round_trips_through_toml(mapping: DatasetMapping) -> None:
     assert dump_mapping(load_mapping(text)) == dump_mapping(mapping)  # deterministic
 
 
+def test_currency_round_trips_and_is_optional(frames: dict[str, pd.DataFrame], mapping: DatasetMapping) -> None:
+    """A mapping without currency dumps with no currency line (as before the key existed); a declared ISO 4217 code
+    round-trips, reaches dataset.json, and a malformed one is refused."""
+    assert mapping.currency == "" and "currency" not in dump_mapping(mapping)
+    assert json.loads(convert(frames, mapping)["dataset.json"])["currency"] is None
+    brl = replace(mapping, currency="BRL")
+    text = dump_mapping(brl)
+    assert 'licence = "test fixture"\ncurrency = "BRL"\n' in text and load_mapping(text) == brl
+    assert json.loads(convert(frames, brl)["dataset.json"])["currency"] == "BRL"
+    for bad in ("brl", "BR", "BRLX", "R$"):
+        with pytest.raises(ValueError, match="ISO 4217"):
+            load_mapping(MAPPING.replace('licence = "test fixture"', f'licence = "test fixture"\ncurrency = "{bad}"'))
+    with pytest.raises(ValueError, match="ISO 4217"):
+        replace(mapping, currency=3)
+
+
 def test_hotel_style_mapping_round_trips() -> None:
     m = load_mapping((REPO / "mappings" / "hotel_bookings.toml").read_text())
     assert m.lead.lead_id is None and m.lead.created_at.op == "minus_days"
@@ -726,6 +742,11 @@ def test_draft_targets_are_the_schema_plus_roles() -> None:
 
 # --- the committed Kaggle mappings on their hand-built fixtures -------------------------------------------------------
 
+# Currencies the committed mappings declare (None: their documentation does not state one; see each header).
+COMMITTED_CURRENCIES: dict[str, str | None] = {"olist_funnel": "BRL", "crm_opportunities": None,
+                                               "hotel_bookings": None}
+
+
 @pytest.mark.parametrize("name", ["olist_funnel", "crm_opportunities", "hotel_bookings"])
 def test_committed_mapping_converts_its_fixture(name: str) -> None:
     text = (REPO / "mappings" / f"{name}.toml").read_text()
@@ -739,6 +760,7 @@ def test_committed_mapping_converts_its_fixture(name: str) -> None:
     meta = json.loads(files["dataset.json"])
     assert len(meta["coverage"]) == 39 and meta["mapping"] == name
     assert meta["outcome_fill_gaps"] == []  # the hand-written mappings ignore every won-only column
+    assert meta["currency"] == COMMITTED_CURRENCIES[name]
 
 
 def test_cli_convert_writes_the_dataset_and_refuses_a_draft(tmp_path: Path,

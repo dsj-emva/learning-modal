@@ -155,6 +155,43 @@ def test_generic_comparison_refuses_scores_it_cannot_reproduce(app_generic, tmp_
         results.generic_comparison(tmp_path, DATA_V1, "horizon", "mature", n_resamples=50)
 
 
+def test_constant_columns_on_the_olist_fixture_and_none_on_v1(app_converted) -> None:
+    """M3: on the Olist-shaped fixture the signals true for every lead (no session, no enrichment, ...) are
+    constant on the training rows and named in one note with their points; on v1 no column is constant."""
+    _, run = app_converted
+    constant = results.constant_columns(run.dataset_path, "horizon", "v2")
+    on = {c for c, v in constant.items() if v == 1.0}
+    assert {"session_missing=yes", "enrichment_missing=yes", "band=missing"} <= on
+    assert set(constant.values()) <= {0.0, 1.0}
+    card = results.scorecard(run.out_dir)
+    assert set(constant) <= set(card.column)
+    note = results.constant_note(card, constant)
+    pts = int(round(card[card.column.isin(on)].points.sum()))
+    assert note.startswith(f"{len(constant)} signals are the same on every training lead: {len(on)} are on for every")
+    sign = "+" if pts > 0 else "−"
+    tail = "add no points" if pts == 0 else f"{sign}{abs(pts)} points are part of the starting score"
+    assert "No on-site session · yes" in note and tail in note
+    assert "3 signals are the same on every training lead: 2 are on for every one (A · x, B · y) and their −9 points " \
+        "are part of the starting score; 1 is never on and scores 0." == results.constant_note(
+            pd.DataFrame({"feature": ["A", "B", "C", "D"], "level": ["x", "y", "z", "w"], "points": [-4.6, -4.2, 0, 3],
+                          "column": ["a", "b", "c", "d"]}), {"a": 1.0, "b": 1.0, "c": 0.0})
+    for lm in ("horizon", "legacy"):
+        for fs in ("v2", "legacy"):
+            assert results.constant_columns(DATA_V1, lm, fs) == {}
+    assert results.constant_note(results.scorecard(run.out_dir), {}) == ""
+
+
+def test_constant_columns_of_a_generic_run_need_its_encoder(app_generic) -> None:
+    from emva.persist import load_bundle
+
+    _, run = app_generic
+    with pytest.raises(ValueError, match="extras encoder"):
+        results.constant_columns(run.dataset_path, "horizon", "generic")
+    constant = results.constant_columns(run.dataset_path, "horizon", "generic",
+                                        load_bundle(Path(run.out_dir) / "model.joblib").extras)
+    assert "session_missing=yes" in constant and set(constant) <= set(results.scorecard(run.out_dir).column)
+
+
 def test_generic_scorecard_names_the_extras(app_generic) -> None:
     from emva.persist import load_bundle
 

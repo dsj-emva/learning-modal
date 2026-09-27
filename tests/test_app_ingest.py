@@ -49,6 +49,7 @@ def test_raw_frames_reads_text_and_refuses_bad_input() -> None:
 def test_committed_mappings_round_trip_through_the_form(path: Path) -> None:
     m = load_mapping(path.read_text(encoding="utf-8"))
     form = ingest.form_from_mapping(m)
+    assert form.currency == m.currency  # carried through the form (olist_funnel: BRL)
     assert ingest.confirm(ingest.mapping_from_form(form), features_confirmed=True) == m
     draft = ingest.mapping_from_form(form)
     assert not draft.outcome_confirmed and not draft.features_confirmed  # a person must confirm again in the app

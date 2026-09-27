@@ -12,6 +12,7 @@ from emva.constants import AS_OF, TEST_FROM
 from emva.dataset_meta import (
     FORMAT_KEY,
     check_test_from,
+    dataset_currency,
     dataset_dates,
     has_dataset_meta,
     parse_as_of,
@@ -53,6 +54,8 @@ def test_dates_read_from_dataset_json(tmp_path: Path) -> None:
     ({FORMAT_KEY: 1, "as_of": "2018-12-01", "test_from": "March 2018"}, "date string"),
     ({FORMAT_KEY: 1, "as_of": "", "test_from": "2018-03-01"}, "ISO"),
     ({FORMAT_KEY: 1, "as_of": "2018-01-01", "test_from": "2018-03-01"}, "after as_of"),
+    ({FORMAT_KEY: 1, "as_of": "2018-12-01", "test_from": "2018-03-01", "currency": "brl"}, "ISO 4217"),
+    ({FORMAT_KEY: 1, "as_of": "2018-12-01", "test_from": "2018-03-01", "currency": ""}, "ISO 4217"),
 ])
 def test_malformed_dataset_json_is_refused(tmp_path: Path, meta: object, match: str) -> None:
     (tmp_path / "dataset.json").write_text(json.dumps(meta))
@@ -74,6 +77,19 @@ def test_read_dataset_meta_returns_the_whole_file(tmp_path: Path) -> None:
     meta = {"as_of": "2018-12-01", "test_from": "2018-03-01", "coverage": [{"column": "channel=meta"}]}
     (tmp_path / "dataset.json").write_text(json.dumps(meta))
     assert read_dataset_meta(tmp_path) == meta
+
+
+def test_dataset_currency(data_v1: Path, tmp_path: Path) -> None:
+    """GBP without dataset.json (the v1 format); the declared code; None when unknown or when the file predates the
+    key (older converted datasets still load)."""
+    assert dataset_currency(data_v1) == "GBP"
+    dates = {FORMAT_KEY: 1, "as_of": "2018-12-01", "test_from": "2018-03-01"}
+    for i, (extra, want) in enumerate([({"currency": "BRL"}, "BRL"), ({"currency": None}, None), ({}, None)]):
+        d = tmp_path / str(i)
+        d.mkdir()
+        (d / "dataset.json").write_text(json.dumps({**dates, **extra}))
+        assert dataset_currency(d) == want
+        assert dataset_dates(d)[1] == "2018-03-01"
 
 
 def test_parse_as_of_is_utc() -> None:

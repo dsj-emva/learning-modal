@@ -11,7 +11,9 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.io as pio
 
+from app.components import money
 from app.theme import FONT_MONO, FONT_UI, PALETTE
+from emva.dataset_meta import V1_CURRENCY
 
 TEMPLATE_NAME: str = "keel"
 # Passed to st.plotly_chart: no mode bar, no Plotly logo, no scroll zoom.
@@ -100,8 +102,9 @@ def points_chart(labels: list[str], values: list[float], height_per_bar: int = 2
     return fig
 
 
-def value_histogram(series: dict[str, np.ndarray]) -> go.Figure:
-    """Overlaid histograms of value columns on a log x axis (GBP); first series in the accent."""
+def value_histogram(series: dict[str, np.ndarray], currency: str | None = V1_CURRENCY) -> go.Figure:
+    """Overlaid histograms of value columns on a log x axis, ticks as amounts in ``currency``
+    (``app.components.money``); first series in the accent."""
     p = PALETTE
     colors = [p["accent"], p["sand"]]
     fig = _fig(320)
@@ -113,7 +116,8 @@ def value_histogram(series: dict[str, np.ndarray]) -> go.Figure:
     lo = int(np.floor(min(np.log10(np.asarray(v)[np.asarray(v) > 0]).min() for v in series.values())))
     hi = int(np.ceil(max(np.log10(np.asarray(v)[np.asarray(v) > 0]).max() for v in series.values())))
     ticks = list(range(lo, hi + 1))
-    fig.update_xaxes(tickvals=ticks, ticktext=[f"£{10 ** t:,.0f}" for t in ticks], title="Value per lead (log scale)")
+    fig.update_xaxes(tickvals=ticks, ticktext=[money(10 ** t, currency) for t in ticks],
+                     title="Value per lead (log scale)")
     fig.update_yaxes(title="Leads")
     fig.update_layout(barmode="overlay")
     return fig

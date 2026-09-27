@@ -73,6 +73,34 @@ def test_every_page_renders_with_a_trained_run(monkeypatch: pytest.MonkeyPatch, 
     assert "Chance this lead closes" in _text(at) and "Why this score" in _text(at)
 
 
+def _stats(at: AppTest) -> str:
+    """The value-per-lead stats rows on the results page."""
+    return "\n".join(m.value for m in at.markdown if "k-stats" in m.value)
+
+
+def _captions(at: AppTest) -> str:
+    return "\n".join(c.value for c in at.caption)
+
+
+def test_results_page_amounts_and_constant_signals(monkeypatch: pytest.MonkeyPatch, app_trained,
+                                                    app_converted) -> None:
+    """The sample shows £ and no constant-signal note; the converted Olist fixture (currency BRL) shows BRL, never £,
+    and says which signals are the same on every training lead (M3, M4)."""
+    import numpy as np
+
+    from app import charts
+
+    at = _sign_in(_app(monkeypatch, app_trained[0]), "letmein")
+    assert not at.exception and "£" in _stats(at) and "same on every training lead" not in _captions(at)
+    at = _sign_in(_app(monkeypatch, app_converted[0]), "letmein")
+    assert not at.exception, at.exception
+    assert "BRL " in _stats(at) and "£" not in _stats(at)
+    assert "same on every training lead" in _captions(at) and "source's currency" not in _captions(at)
+    ticks = charts.value_histogram({"v": np.array([5.0, 500.0])}, "BRL").layout.xaxis.ticktext
+    assert ticks[0] == "BRL 1" and all("£" not in t for t in ticks)
+    assert charts.value_histogram({"v": np.array([5.0])}, None).layout.xaxis.ticktext[0] == "1"
+
+
 def test_sign_out(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     at = _sign_in(_app(monkeypatch, tmp_path), "letmein")
     at.button(key="sign_out").click()
@@ -83,7 +111,18 @@ def test_sign_out(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 def test_components_escape_user_text() -> None:
     html = C.file_card("<x>.csv", "Leads", [Issue("f", "<col>", "<script>alert(1)</script>", (1, 2))], [], True)
     assert "<script>" not in html and "&lt;script&gt;" in html and "&lt;col&gt;" in html
-    assert C.points(-7.4) == "−7" and C.points(3) == "+3" and C.gbp(12345.6) == "£12,346" and C.pct(0.2345) == "23.4%"
+    assert C.points(-7.4) == "−7" and C.points(3) == "+3" and C.pct(0.2345) == "23.4%"
+
+
+def test_money_formats_by_the_dataset_currency() -> None:
+    """GBP (the sample, any dataset without dataset.json) as £; another code before the amount; unknown as a plain
+    number with a note for the page."""
+    assert C.money(12345.6) == C.money(12345.6, "GBP") == "£12,346" and C.money(None) == "–"
+    assert C.money(41106, "BRL") == "BRL 41,106" and C.money(41106, None) == "41,106"
+    assert (C.money_format("GBP"), C.money_format("BRL"), C.money_format(None)) == ("£%.0f", "BRL %.0f", "%.0f")
+    assert C.currency_note("GBP") == C.currency_note("BRL") == "" and "source's currency" in C.currency_note(None)
+    card = C.result_card(0.2, 0.1, 41106, 900, 800, "t", "", "BRL")
+    assert "BRL 41,106" in card and "£" not in card
 
 
 def test_run_error_and_names_render_escaped(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -292,6 +331,9 @@ def test_score_page_source_format(monkeypatch: pytest.MonkeyPatch, app_converted
     at.run()
     assert not at.exception, at.exception
     assert "Chance this lead closes" in _text(at) and "Why this score" in _text(at)
+    card = next(m.value for m in at.markdown if m.value.startswith("<div class=\"k-result\""))
+    assert "BRL " in card and "£" not in card  # the mapping declares BRL (M4)
+    assert "same on every training lead" in _text(at)  # the constant signals are in the starting score (M3)
     raw = (INGEST_FIXTURES / "olist_funnel" / OLIST_MQL).read_bytes()
     at.file_uploader(key=f"src_upload_{run.run_id}").upload("new.csv", raw, "text/csv").run()
     at.button(key=f"src_score_file_{run.run_id}").click().run()

@@ -37,9 +37,9 @@ dataset store take:
   the raw value of its source expression (text for a column, numbers for ``sum`` / ``product``), no encoding: the
   generic feature set (``emva.generic``) fits the encoding on the training leads. A numeric feature with a non-number,
   or a date-valued feature expression, is refused. ``historical_leads.csv`` stays exactly the fixed schema.
-- ``dataset.json``: ``emva_dataset_format``, ``mapping``, ``as_of``, ``test_from``, ``source_url``, ``licence``, row
-  counts, the derived-value counts above, ``mapped_targets``, and ``coverage``: one entry per v2 design column (the 39
-  of ``emva.design.fixed_design`` over ``emva.features.CATS_V2``) with its feature, the mapped inputs feeding it, the
+- ``dataset.json``: ``emva_dataset_format``, ``mapping``, ``as_of``, ``test_from``, ``source_url``, ``licence``,
+  ``currency`` (the mapping's ISO 4217 code of the amounts; null when unknown), row counts, the derived-value counts
+  above, ``mapped_targets``, and ``coverage``: one entry per v2 design column (the 39 of ``emva.design.fixed_design`` over ``emva.features.CATS_V2``) with its feature, the mapped inputs feeding it, the
   number of cleaned leads with a 1, and a status: ``data`` (varies across leads), ``constant`` (inputs mapped, but no
   variation) or ``unfilled`` (no input mapped). With ``[[features]]`` it also has ``features``: one
   ``{name, kind, source}`` per declared feature (``emva.generic.read_extra_features`` reads it).
@@ -560,7 +560,7 @@ def convert(frames: dict[str, pd.DataFrame], mapping: DatasetMapping) -> dict[st
     mapped = mapping.mapped_targets()
     meta = {FORMAT_KEY: FORMAT_VERSION, "mapping": mapping.name, "as_of": mapping.as_of,
             "test_from": mapping.test_from, "source_url": mapping.source_url, "licence": mapping.licence,
-            "leads": len(raw), "rows_dropped_without_created_at": int(no_created.sum()),
+            "currency": mapping.currency or None, "leads": len(raw), "rows_dropped_without_created_at": int(no_created.sum()),
             "final_stage_counts": {k: int(v) for k, v in stage.value_counts().sort_index().items()},
             "placeholder_emails": placeholders, "lost_dated_at_as_of": int(lost_no_close.sum()),
             "non_positive_deal_values_blanked": int(non_positive.sum()), "crm_ties_separated": ties,

@@ -12,6 +12,8 @@ TOML schema (every key below; unknown keys are refused so typos fail loudly)::
     test_from = "2017-01-01"               # frozen train/test boundary (YYYY-MM-DD) -> dataset.json
     source_url = "https://..."
     licence = "CC BY 4.0"
+    # currency = "EUR"                     # optional: ISO 4217 code of the amounts (deal_value) -> dataset.json;
+                                           # absent = unknown (Keel then shows plain numbers, not £)
     outcome_confirmed = false              # true only after a person reviewed the outcome mapping
     drop_rows_without_created_at = false   # true: rows with a blank created_at are dropped (counted), else refused
     features_confirmed = false             # with [[features]] only: true once a person checked that every feature
@@ -128,6 +130,7 @@ CONFIDENCES: tuple[str, ...] = ("high", "medium", "low")
 LEAD_ROLES: tuple[str, ...] = ("lead_id", "created_at", "contacted_at", "won_at", "close_at", "deal_value")
 REVIEW_KEYS: tuple[str, ...] = (*LEAD_ROLES, "outcome")
 
+_CURRENCY = re.compile(r"^[A-Z]{3}$")
 _SLUG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 _BARE_KEY = re.compile(r"^[A-Za-z0-9_-]+$")
 
@@ -325,11 +328,16 @@ class DatasetMapping:
     review: Mapping[str, Review] = field(default_factory=dict)
     features: tuple[FeatureMap, ...] = ()
     features_confirmed: bool = False
+    currency: str = ""
 
     def __post_init__(self) -> None:
-        """Validate names, sources and joins, column references, targets, feature names, dates and review keys."""
+        """Validate names, sources and joins, column references, targets, feature names, dates, the currency code
+        (``""`` = unknown, else three upper-case letters as in ISO 4217) and review keys."""
         if not _SLUG.match(self.name):
             raise ValueError(f"mapping name {self.name!r} must be letters, digits, '_' or '-'")
+        if not isinstance(self.currency, str) or (self.currency and not _CURRENCY.match(self.currency)):
+            raise ValueError(f"currency {self.currency!r} must be an ISO 4217 code of three upper-case letters "
+                             "(e.g. BRL, EUR, GBP, USD), or left out when unknown")
         if not 1 <= len(self.sources) <= MAX_SOURCES:
             raise ValueError(f"a mapping has 1 to {MAX_SOURCES} sources, got {len(self.sources)}")
         names = [s.name for s in self.sources]
@@ -405,7 +413,7 @@ class DatasetMapping:
 # --- TOML -> DatasetMapping ------------------------------------------------------------------------------------------
 
 _TOP_KEYS = {"name", "as_of", "test_from", "source_url", "licence", "outcome_confirmed", "drop_rows_without_created_at",
-             "sources", "lead", "outcome", "review", "fields", "features", "features_confirmed"}
+             "sources", "lead", "outcome", "review", "fields", "features", "features_confirmed", "currency"}
 _REQUIRED_TOP = ("name", "as_of", "test_from", "sources", "lead", "outcome")
 
 
@@ -510,7 +518,7 @@ def load_mapping(text: str, require_confirmed: bool = False) -> DatasetMapping:
         name=doc["name"], sources=tuple(sources),
         lead=LeadColumns(**{r: _expr(lead[r], f"[lead].{r}") for r in LEAD_ROLES if r in lead}),
         outcome=outcome, as_of=str(doc["as_of"]), test_from=str(doc["test_from"]), fields=tuple(fields_),
-        source_url=doc.get("source_url", ""), licence=doc.get("licence", ""),
+        source_url=doc.get("source_url", ""), licence=doc.get("licence", ""), currency=doc.get("currency", ""),
         outcome_confirmed=_bool(doc.get("outcome_confirmed", False), "outcome_confirmed"),
         drop_rows_without_created_at=_bool(doc.get("drop_rows_without_created_at", False),
                                            "drop_rows_without_created_at"),
@@ -590,6 +598,7 @@ def dump_mapping(m: DatasetMapping, header: str = "") -> str:
         out.append("")
     out += [f"name = {_s(m.name)}", f"as_of = {_s(m.as_of)}", f"test_from = {_s(m.test_from)}",
             f"source_url = {_s(m.source_url)}", f"licence = {_s(m.licence)}",
+            *([f"currency = {_s(m.currency)}"] if m.currency else []),
             f"outcome_confirmed = {str(m.outcome_confirmed).lower()}",
             f"drop_rows_without_created_at = {str(m.drop_rows_without_created_at).lower()}"]
     if m.features or m.features_confirmed:

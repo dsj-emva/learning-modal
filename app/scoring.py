@@ -31,20 +31,23 @@ source-format leads with a blank extra): the page warns per extra.
 from __future__ import annotations
 
 import json
+from collections.abc import Collection
 from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
 
+from app.components import money
 from app.results import feature_label
 from app.storage import get_dataset, read_mapping
 from emva.constants import MISSING
-from emva.dataset_meta import dataset_dates
+from emva.dataset_meta import V1_CURRENCY, dataset_dates
 from emva.features import SESSION_INPUTS
 from emva.generic import EXTRA_PREFIX, OTHER, ExtraKind
 from emva.ingest.convert import convert_leads, frames_from_bytes
 from emva.ingest.mapping import COLUMN_OP, IGNORE, DatasetMapping, load_mapping
 from emva.io import read_leads
+from emva.model import INTERCEPT
 from emva.persist import ModelBundle
 from emva.scoring import (
     LEADS_LISTED,
@@ -253,7 +256,7 @@ def blank_session_fields(values: dict[str, object]) -> list[str]:
 
 @dataclass(frozen=True)
 class LeadScore:
-    """One scored lead: ``p`` (P(close)), ``deal_value`` (expected deal value if won, GBP), ``value_formula``
+    """One scored lead: ``p`` (P(close)), ``deal_value`` (expected deal value if won), ``value_formula``
     (p × deal value × margin), ``value_at_submit`` (after the run's value transform; NaN for legacy labels),
     ``is_bot`` / ``is_duplicate``, ``points`` (the intercept row then active features, with plain labels) and
     ``blank_session`` (session fields left blank, each of which makes the model treat the session as missing)."""
@@ -288,6 +291,37 @@ def _lead_score(bundle: ModelBundle, lead: pd.DataFrame, s: pd.Series, data: str
     return LeadScore(p=float(s.p_formula), deal_value=float(s.deal_value_hat), value_formula=float(s.value_formula),
                      value_at_submit=float(s.value_at_submit), is_bot=bool(s.is_bot),
                      is_duplicate=bool(s.is_duplicate), points=pts, blank_session=blank)
+
+
+@dataclass(frozen=True)
+class Breakdown:
+    """A lead's points split for the page (``breakdown``): ``starting`` (unrounded points of the intercept plus the
+    lead's active columns that are constant on the training rows, ``folded`` of them), ``signals_points`` (unrounded
+    sum of every other active column) and ``signals`` (those rows whose points round to a non-zero integer, highest
+    first; columns as ``LeadScore.points``). ``starting + signals_points`` is the lead's logit(p) in points."""
+
+    starting: float
+    signals_points: float
+    signals: pd.DataFrame
+    folded: int
+
+    def shown(self) -> tuple[int, int, int]:
+        """``(starting, signals, total)`` as the page prints them: each part rounded, the total their sum, so the
+        three always add up as displayed."""
+        a, b = int(round(self.starting)), int(round(self.signals_points))
+        return a, b, a + b
+
+
+def breakdown(points: pd.DataFrame, constant: Collection[str] = ()) -> Breakdown:
+    """``LeadScore.points`` split into the starting score and the signals that move this lead: the intercept row and
+    the ``constant`` design columns (``app.results.constant_columns``: the same on every training lead, so their
+    points belong to the starting score) are folded together, rows rounding to 0 points are not listed."""
+    column = points.feature.where(points.level == "", points.feature + "=" + points.level)
+    start = (points.feature == INTERCEPT) | column.isin(set(constant))
+    rest = points[~start]
+    shown = rest[rest.points.round().astype(int) != 0].sort_values("points", ascending=False, kind="stable")
+    return Breakdown(starting=float(points.points[start].sum()), signals_points=float(rest.points.sum()),
+                     signals=shown, folded=int(start.sum()) - int((points.feature == INTERCEPT).sum()))
 
 
 # --- source format ---------------------------------------------------------------------------------------------------
@@ -516,26 +550,28 @@ def source_lead_score(bundle: ModelBundle, result: SourceScores, lead_id: str, d
     return _lead_score(bundle, lead, result.scores.loc[lead_id], data, blank)
 
 
-def describe_transform(bundle: ModelBundle) -> str:
-    """One sentence on how ``value_at_submit`` is derived from p × deal value for this bundle."""
+def describe_transform(bundle: ModelBundle, currency: str | None = V1_CURRENCY) -> str:
+    """One sentence on how ``value_at_submit`` is derived from p × deal value for this bundle, amounts in
+    ``currency`` (``app.components.money``: the run's dataset currency)."""
     vt = bundle.value_transform
     if vt is None:
         return "This run used legacy labels, so no value is sent at submit; p × deal value is the value."
     steps = []
     if vt.cap is not None:
-        steps.append(f"capped at £{vt.cap:,.0f} (the {vt.spec.cap_percentile:g}th percentile of training leads)")
+        steps.append(f"capped at {money(vt.cap, currency)} (the {vt.spec.cap_percentile:g}th percentile of training "
+                     "leads)")
     if vt.anchor is not None:
-        steps.append(f"{vt.spec.compression.value}-compressed around the median £{vt.anchor:,.0f} and rescaled so "
-                     "totals stay on the revenue scale")
+        steps.append(f"{vt.spec.compression.value}-compressed around the median {money(vt.anchor, currency)} and "
+                     "rescaled so totals stay on the revenue scale")
     if vt.spec.floor is not None:
-        steps.append(f"floored at £{vt.spec.floor:,.0f}")
+        steps.append(f"floored at {money(vt.spec.floor, currency)}")
     if vt.tier_values:
         steps.append(f"mapped to {len(vt.tier_values)} value tiers")
     return "p × expected deal value, " + ", then ".join(steps) + "." if steps else "p × expected deal value."
 
 
-__all__ = ["DEFAULTS", "FEATURE_FIELDS", "Example", "FormField", "LeadScore", "SECTIONS", "SourceField", "SourceScores",
-           "TYPED_LEVEL_FEATURES", "blank_session_fields", "clean_values", "defaults_for", "describe_transform",
-           "example_for", "extra_names", "form_problem_lines", "form_sections", "frames_from_source_form",
-           "frames_from_source_uploads", "number_text", "run_mapping", "score_form", "score_source", "source_fields",
-           "source_lead_score", "source_problem_lines", "values_from_lead"]
+__all__ = ["Breakdown", "DEFAULTS", "FEATURE_FIELDS", "Example", "FormField", "LeadScore", "SECTIONS", "SourceField",
+           "SourceScores", "TYPED_LEVEL_FEATURES", "blank_session_fields", "breakdown", "clean_values", "defaults_for",
+           "describe_transform", "example_for", "extra_names", "form_problem_lines", "form_sections",
+           "frames_from_source_form", "frames_from_source_uploads", "number_text", "run_mapping", "score_form",
+           "score_source", "source_fields", "source_lead_score", "source_problem_lines", "values_from_lead"]

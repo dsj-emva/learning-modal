@@ -15,7 +15,9 @@ import streamlit as st
 from app import components as C
 from app import results, scoring, storage
 from app.storage import Run
-from emva.dataset_meta import dataset_dates
+from emva.dataset_meta import dataset_currency, dataset_dates
+from emva.features import FeatureSet
+from emva.labels import LabelMode
 from emva.persist import BUNDLE_FILE, ModelBundle, load_bundle
 
 DATA_DIR_ENV: str = "DATA_DIR"
@@ -90,6 +92,30 @@ def generic_section(run_id: str, out_dir: str, dataset_path: str, label_mode: st
     return results.generic_comparison(out_dir, dataset_path, label_mode, test_set)
 
 
+@st.cache_data(show_spinner="Checking which signals vary across training leads…")
+def constant_columns(run_id: str, out_dir: str, dataset_path: str, label_mode: str,
+                     feature_set: str) -> dict[str, float]:
+    """``results.constant_columns`` for one run (cached per run): design columns the same on every training lead; a
+    generic run's extras are encoded with the run's bundle."""
+    extras = bundle(run_id, str(Path(out_dir) / BUNDLE_FILE)).extras \
+        if feature_set == FeatureSet.GENERIC.value else None
+    return results.constant_columns(dataset_path, label_mode, feature_set, extras)
+
+
+def run_constant_columns(run: Run) -> dict[str, float]:
+    """``constant_columns`` for ``run`` with its stored options (``Run.args``; the CLI defaults when absent)."""
+    return constant_columns(run.run_id, run.out_dir, run.dataset_path,
+                            run.args.get("label_mode", LabelMode.HORIZON.value),
+                            run.args.get("feature_set", FeatureSet.V2.value))
+
+
+@st.cache_data(show_spinner=False)
+def currency(dataset_path: str) -> str | None:
+    """The dataset's currency code (``emva.dataset_meta.dataset_currency``: GBP without ``dataset.json``, None when a
+    converted dataset's mapping recorded none), cached per path."""
+    return dataset_currency(dataset_path)
+
+
 @st.cache_data(show_spinner=False)
 def _raw_leads(dataset_path: str) -> pd.DataFrame:
     """The dataset's ``historical_leads.csv`` as ``emva.io.read_leads`` reads it (cached per path)."""
@@ -124,5 +150,5 @@ def no_runs_state(message: str) -> None:
     st.page_link("views/upload.py", label="Upload data and train a model", icon=":material/arrow_forward:")
 
 
-__all__ = ["bundle", "base_rate", "data_root", "evaluation", "example", "generic_section", "has_bundle", "html",
-           "no_runs_state", "pick_run", "raw_lead", "run_label"]
+__all__ = ["bundle", "base_rate", "constant_columns", "currency", "data_root", "evaluation", "example", "generic_section",
+           "has_bundle", "html", "no_runs_state", "pick_run", "raw_lead", "run_constant_columns", "run_label"]

@@ -289,7 +289,7 @@ def _check_crm(c: _Checker, C: pd.DataFrame, lead_ids: pd.Series | None) -> None
                             f"(e.g. {C.lead_id[multi].iloc[0]!r}); the deal value would be ambiguous", multi)
     no_value = won & _blank(C.deal_value)
     if no_value.any():
-        c.warn(f, "deal_value", f"{_n(no_value)} Won row(s) have no deal value; they count as £0 revenue", no_value)
+        c.warn(f, "deal_value", f"{_n(no_value)} Won row(s) have no deal value; they count as zero revenue", no_value)
     if lead_ids is not None:
         orphan = ~C.lead_id.isin(set(lead_ids))
         if orphan.any():

@@ -39,6 +39,10 @@
 # the last close). Mature (H = 120) = engaged on or before 2017-09-03. test_from = 2017-07-01: the last ~20% of the
 # mature span (the horizon test set, July to early September 2017) and the last ~42% of the engage-date span (the
 # legacy test set). A later boundary would leave the horizon test set empty. Frozen here (ground rule 4).
+#
+# Currency: not set (unknown). The dataset's data dictionary (Maven Analytics CRM Sales Opportunities, the source of the
+# Kaggle upload; read 2026-09-27) gives accounts.revenue "in millions of USD" but no currency for close_value
+# ("Revenue from the deal"), so Keel shows deal values as plain numbers in the source's currency.
 
 name = "crm_opportunities"
 as_of = "2018-01-01"

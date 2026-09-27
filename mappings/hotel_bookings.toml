@@ -38,6 +38,10 @@
 # against 24% for every other country. The reviewer's reading, not verified against the dataset paper: nationality is
 # reportedly entered as the home country at booking and corrected at check-in, so a kept booking is more likely to
 # carry its guest's real nationality than a cancelled one, and country may partly encode the outcome.
+#
+# Currency: not set (unknown). The dataset paper (Antonio, Almeida and Nunes 2019; read 2026-09-27 on PMC6297060)
+# defines adr as the sum of lodging transactions over staying nights and names no currency (the hotels are in
+# Portugal, which suggests EUR, but no source states it), so Keel shows deal values as plain numbers.
 
 name = "hotel_bookings"
 as_of = "2017-09-01"

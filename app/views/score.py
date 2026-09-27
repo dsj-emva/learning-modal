@@ -11,7 +11,6 @@ from app import components as C
 from app.scoring import FormField
 from emva.generic import OTHER
 from emva.ingest.mapping import DatasetMapping
-from emva.model import INTERCEPT
 from emva.persist import BUNDLE_FILE, ModelBundle
 from emva.scoring import FieldType, UnknownLevelError
 
@@ -60,30 +59,36 @@ def _form(defaults: dict[str, object], form_key: str) -> dict[str, object] | Non
     return values if submitted else None
 
 
-def _result(res: scoring.LeadScore, base: float, transform: str, batch: bool = False) -> None:
-    """The result card, then the points breakdown (``batch``: the lead was scored with others from a file)."""
+def _result(res: scoring.LeadScore, base: float, run: storage.Run, bundle: ModelBundle, batch: bool = False) -> None:
+    """The result card (amounts in the run's dataset currency), then the points breakdown with the columns that are
+    the same on every training lead folded into the starting score (``scoring.breakdown``; ``batch``: the lead was
+    scored with others from a file)."""
+    cur = ui.currency(run.dataset_path)
     flags = [C.pill("Looks like a bot", "bad") if res.is_bot else C.pill("Not a bot", "ok")]
     if batch:
         flags.append(C.pill("Duplicate within the file", "warn") if res.is_duplicate else
                      C.pill("No duplicate within the file", "ok"))
     else:
         flags.append(C.pill("Scored alone: duplicates are checked in batches", "info"))
-    ui.html(C.result_card(res.p, base, res.deal_value, res.value_at_submit, res.value_formula, transform,
-                          "".join(flags)))
+    ui.html(C.result_card(res.p, base, res.deal_value, res.value_at_submit, res.value_formula,
+                          scoring.describe_transform(bundle, cur), "".join(flags), cur))
+    if C.currency_note(cur):
+        st.caption(C.currency_note(cur))
     if res.blank_session:
         ui.html(C.callout(f"Blank: {', '.join(res.blank_session)}. The model scored this lead as having no on-site "
                           "session (session_missing).", "warn", lead="No session data."))
     if res.is_bot:
         ui.html(C.callout("Under 15 seconds on the page or a headless browser: the batch pipeline would drop this "
                           "lead before training and scoring. It is scored here anyway.", "warn"))
-    pts = res.points
-    icpt = pts[pts.feature == INTERCEPT]
-    rest = pts[pts.feature != INTERCEPT].sort_values("points", ascending=False, kind="stable")
+    b = scoring.breakdown(res.points, ui.run_constant_columns(run))
+    start, signals, total = b.shown()
     ui.html(C.section("Why this score", "Every signal that moved this lead away from the starting score. Signals at "
                                         "their comparison level add nothing and are not listed."))
-    ui.html(C.stats([("Starting score", C.points(float(icpt.points.iloc[0])) + " pts"),
-                     ("Signals", C.points(float(rest.points.sum())) + " pts"),
-                     ("Total", C.points(float(pts.points.sum())) + " pts")]))
+    start_label = "Starting score" if not b.folded else \
+        f"Starting score (incl. {b.folded} signal{'s' * (b.folded != 1)} the same on every training lead)"
+    ui.html(C.stats([(start_label, C.points(start) + " pts"), ("Signals", C.points(signals) + " pts"),
+                     ("Total", C.points(total) + " pts")]))
+    rest = b.signals
     labels = [f"{lbl} · {lvl}" for lbl, lvl in zip(rest.label, rest.level)]
     st.plotly_chart(charts.points_chart(labels, rest.points.tolist()), config=charts.CONFIG, theme=None, width="stretch",
                     key="lead_points")
@@ -169,12 +174,13 @@ def _source_mode(run: storage.Run, bundle: ModelBundle, mapping: DatasetMapping)
             return
         _warn_unseen(scoring.blank_unseen(bundle, result))
         table = result.table()
+        money = C.money_format(ui.currency(run.dataset_path))
         st.dataframe(table, hide_index=True, width="stretch", height=min(38 + 35 * len(table), 250), column_config={
             "lead_id": st.column_config.TextColumn("Lead"),
             "p": st.column_config.NumberColumn("P(close)", format="percent"),
-            "deal_value": st.column_config.NumberColumn("Deal value if won", format="£%.0f"),
-            "value_at_submit": st.column_config.NumberColumn("Value sent", format="£%.0f"),
-            "value_formula": st.column_config.NumberColumn("p × value", format="£%.0f"),
+            "deal_value": st.column_config.NumberColumn("Deal value if won", format=money),
+            "value_at_submit": st.column_config.NumberColumn("Value sent", format=money),
+            "value_formula": st.column_config.NumberColumn("p × value", format=money),
             "is_bot": st.column_config.CheckboxColumn("Bot"), "is_duplicate": st.column_config.CheckboxColumn("Dup")})
         st.download_button("Scores CSV", table.to_csv(index=False).encode("utf-8"),
                            file_name=f"{run.run_id}-source-scores.csv", mime="text/csv", icon=":material/download:",
@@ -182,8 +188,7 @@ def _source_mode(run: storage.Run, bundle: ModelBundle, mapping: DatasetMapping)
         ids = table.lead_id.tolist()
         lead_id = st.selectbox("Why this score: lead", ids, key=f"src_pick_{run.run_id}") if len(ids) > 1 else ids[0]
         res = scoring.source_lead_score(bundle, result, lead_id, run.dataset_path)
-        _result(res, ui.base_rate(run.run_id, run.out_dir, run.dataset_path), scoring.describe_transform(bundle),
-                batch=len(ids) > 1)
+        _result(res, ui.base_rate(run.run_id, run.out_dir, run.dataset_path), run, bundle, batch=len(ids) > 1)
 
 
 def render() -> None:
@@ -255,7 +260,7 @@ def render() -> None:
                 ui.html(C.callout(str(e), "bad", lead="Check the form."))
                 return
         res = st.session_state[f"score_{run.run_id}"]
-        _result(res, ui.base_rate(run.run_id, run.out_dir, run.dataset_path), scoring.describe_transform(bundle))
+        _result(res, ui.base_rate(run.run_id, run.out_dir, run.dataset_path), run, bundle)
 
 
 render()

@@ -144,6 +144,46 @@ def test_bot_flag_is_reported_not_dropped(trained) -> None:
 def test_describe_transform(trained) -> None:
     text = scoring.describe_transform(trained[0])
     assert text.startswith("p × expected deal value, capped at £") and "floored at £25" in text
+    brl = scoring.describe_transform(trained[0], "BRL")
+    assert brl.startswith("p × expected deal value, capped at BRL ") and "floored at BRL 25" in brl
+    plain = scoring.describe_transform(trained[0], None)
+    assert "£" not in plain and "floored at 25" in plain
+
+
+def _points(rows: list[tuple[str, str, float]]) -> pd.DataFrame:
+    """A ``LeadScore.points``-shaped frame from ``(feature, level, points)`` rows."""
+    return pd.DataFrame([{"lead_id": "L1", "feature": f, "level": lvl, "points": p, "label": f} for f, lvl, p in rows])
+
+
+def test_breakdown_folds_constant_columns_and_adds_up_as_shown() -> None:
+    """Constant columns join the starting score, 0-point rows are not listed, and the displayed parts add up
+    (Stage B saw "−75 + 0 = −74": a total rounded on its own)."""
+    from emva.model import INTERCEPT
+
+    pts = _points([(INTERCEPT, "", -30.4), ("session_missing", "yes", -9.3), ("text", "vague", -9.2),
+                   ("channel", "meta", 6.6), ("form_variant", "B", 0.3), ("crm", "hubspot_sf", -0.2)])
+    b = scoring.breakdown(pts, {"session_missing=yes": 1.0, "text=vague": 1.0, "band=1000+": 0.0})
+    assert b.folded == 2 and b.starting == pytest.approx(-48.9) and b.signals_points == pytest.approx(6.7)
+    assert b.starting + b.signals_points == pytest.approx(pts.points.sum())  # logit(p) in points
+    assert list(b.signals.feature) == ["channel"]  # the ±0.x rows round to 0 and are not listed
+    assert b.shown() == (-49, 7, -42)
+    edge = scoring.breakdown(_points([(INTERCEPT, "", -74.6), ("channel", "meta", 0.4)]))
+    start, signals, total = edge.shown()
+    assert (start, signals, total) == (-75, 0, -75) and start + signals == total and edge.folded == 0
+
+
+def test_breakdown_invariant_on_a_scored_lead(trained, converted) -> None:
+    """On the Olist-shaped run the constant columns are folded and the parts still sum to logit(p); on the v1
+    sample nothing is constant, so the breakdown is the intercept plus every active signal."""
+    for bundle, data, constant in ((trained[0], trained[1], {}),
+                                   (converted[0], converted[1], results.constant_columns(converted[1], "horizon",
+                                                                                         "v2"))):
+        got = scoring.score_form(bundle, scoring.defaults_for(data), data)
+        b = scoring.breakdown(got.points, constant)
+        logit = np.log(got.p / (1 - got.p)) * 20 / np.log(2)
+        assert b.starting + b.signals_points == pytest.approx(logit, abs=1e-6)
+        assert (b.signals.points.round() != 0).all()
+        assert (b.folded > 0) == bool(constant)
 
 
 # --- source format (Phase 9): leads as the source sends them, converted with the dataset's mapping -----------------
