@@ -235,7 +235,7 @@ def test_source_form_lead_scores_like_convert_leads_then_score_leads(converted) 
     res = scoring.score_source(bundle, mapping, frames, data)
     t = res.table()
     assert list(t.lead_id) == ["new-000001"] and 0 < t.p.iloc[0] < 1
-    direct = score_leads(bundle, convert_leads(frames, mapping), data)
+    direct = score_leads(bundle, convert_leads(frames, mapping).leads, data)
     assert t.p.iloc[0] == direct.p_formula.iloc[0] and t.value_at_submit.iloc[0] == direct.value_at_submit.iloc[0]
     one = scoring.source_lead_score(bundle, res, "new-000001", data)
     logit = np.log(one.p / (1 - one.p))
@@ -259,7 +259,9 @@ def test_source_refusals_are_clear(converted) -> None:
     keys = {f.column: f.key for f in scoring.source_fields(mapping)}
     frames = scoring.frames_from_source_form(mapping, {keys["first_contact_date"]: "2018-04-01",
                                                        keys["origin"]: "carrier_pigeon"})
-    with pytest.raises(ValueError, match="not in its value_map"):
+    with pytest.raises(ValueError, match=r"^Row\(s\) 1: origin 'carrier_pigeon' is not one of the values this "
+                                         r"dataset's mapping knows \(paid_search, social, .*\); this lead was not "
+                                         r"scored\.$"):
         scoring.score_source(bundle, mapping, frames, data)
     raw = pd.read_csv(io.BytesIO(_mql_csv()), dtype=str)
     dup = pd.concat([raw.head(2), raw.head(1)]).to_csv(index=False).encode()
@@ -267,6 +269,28 @@ def test_source_refusals_are_clear(converted) -> None:
         scoring.score_source(bundle, mapping, scoring.frames_from_source_uploads(mapping, {"x.csv": dup}), data)
     with pytest.raises(ValueError, match="missing source file"):
         scoring.frames_from_source_uploads(mapping, {"a.csv": b"x\n1\n", "b.csv": b"y\n2\n"})
+
+
+def test_unlisted_value_map_value_refuses_its_lead_only(converted) -> None:
+    """Keel QA M7: in a CSV, a lead whose value-map column holds a value the map does not list is not scored (value
+    maps have no fallback) and is named with the allowed values; the others score as they would alone. The form
+    offers exactly the listed values (the raw value "other" is one of them, not an open bucket)."""
+    bundle, data, mapping = converted
+    origin = next(f for f in scoring.source_fields(mapping, bundle) if f.column == "origin")
+    assert "other" in origin.options and not origin.open_other
+    raw = pd.read_csv(io.BytesIO(_mql_csv()), dtype=str).head(6)
+    ok = scoring.score_source(bundle, mapping, scoring.frames_from_source_uploads(
+        mapping, {"x.csv": raw.to_csv(index=False).encode()}), data)
+    bad = raw.assign(origin=raw.origin.mask(raw.index.isin([1, 4]), "tiktok"))
+    res = scoring.score_source(bundle, mapping, scoring.frames_from_source_uploads(
+        mapping, {"x.csv": bad.to_csv(index=False).encode()}), data)
+    kept = [i for k, i in enumerate(raw.mql_id) if k not in (1, 4)]
+    assert list(res.table().lead_id) == kept
+    assert res.table().p.tolist() == ok.table().set_index("lead_id").p.loc[kept].tolist()
+    (u,) = res.refused
+    assert u.rows == (raw.mql_id.iloc[1], raw.mql_id.iloc[4]) and u.values == ("tiktok",) and "other" in u.allowed
+    assert u.text().startswith(f"Lead(s) {raw.mql_id.iloc[1]}, {raw.mql_id.iloc[4]}: origin 'tiktok' is not one of")
+    assert ok.refused == ()
 
 
 def test_source_leads_need_created_at(converted) -> None:
@@ -331,12 +355,33 @@ def test_source_fields_offer_a_generic_bundles_levels(generic, converted) -> Non
     assert scoring.extra_names(bundle) == ["landing_page"] and scoring.extra_names(converted[0]) == []
     page = next(f for f in scoring.source_fields(mapping, bundle) if f.column == "landing_page_id")
     kept = [lvl for lvl in bundle.extras.extras[0].levels if lvl not in ("other", "missing")]
-    assert page.options == (*kept, "other") and not page.numeric
+    assert page.options == (*kept, "other") and not page.numeric and page.open_other
     assert "utm_content" in page.feeds and "extra feature landing_page (categorical)" in page.feeds
     plain = next(f for f in scoring.source_fields(mapping, converted[0]) if f.column == "landing_page_id")
     assert plain.options is None  # a v2 bundle does not use the extra: free text, as before
     origin = next(f for f in scoring.source_fields(mapping, bundle) if f.column == "origin")
     assert origin.options is not None and "paid_search" in origin.options  # a value map keeps its keys
+
+
+def test_unseen_extra_value_scores_as_other_and_is_named(generic) -> None:
+    """Keel QA M7 / ADR 0024: an extra's value the model did not keep from training scores as other (never refused);
+    ``other_extra_values`` names the leads and values for the page's note. A kept level or a raw "other" is not
+    named."""
+    bundle, data, mapping, _ = generic
+    e = bundle.extras.extras[0]
+    kept = next(lvl for lvl in e.levels if lvl not in ("other", "missing"))
+    raw = pd.read_csv(io.BytesIO(_mql_csv()), dtype=str).head(4)
+    new = raw.assign(landing_page_id=[kept, "never-seen-page", "other", "never-seen-page"])
+    res = scoring.score_source(bundle, mapping, scoring.frames_from_source_uploads(
+        mapping, {"x.csv": new.to_csv(index=False).encode()}), data)
+    got = scoring.other_extra_values(bundle, res)
+    assert got == {"landing_page": {"never-seen-page": (raw.mql_id.iloc[1], raw.mql_id.iloc[3])}}
+    assert scoring.other_extra_text("landing_page", got["landing_page"]) == (
+        f"landing_page 'never-seen-page' (leads {raw.mql_id.iloc[1]}, {raw.mql_id.iloc[3]}) is not among the levels "
+        "the model kept from training (unseen, or too rare), so it scores as other.")
+    assert list(bundle.extras.levels(res.leads).x_landing_page) == [kept, "other", "other", "other"]
+    assert scoring.other_extra_values(bundle, scoring.score_source(bundle, mapping, scoring.frames_from_source_uploads(
+        mapping, {"x.csv": raw.assign(landing_page_id=kept).to_csv(index=False).encode()}), data)) == {}
 
 
 def test_numeric_extra_is_a_number_input(generic) -> None:

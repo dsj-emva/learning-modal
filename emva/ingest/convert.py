@@ -62,6 +62,7 @@ import io
 import json
 import operator
 from collections.abc import Mapping
+from dataclasses import dataclass
 from functools import reduce
 
 import numpy as np
@@ -80,6 +81,7 @@ from emva.ingest.mapping import (
     COLUMN_OP,
     DatasetMapping,
     Expr,
+    FieldMap,
     check_confirmed,
 )
 from emva.io import add_crm_outcomes, clean, enrich, read_leads
@@ -291,13 +293,74 @@ def _field_values(raw: pd.DataFrame, mapping: DatasetMapping) -> dict[str, pd.Se
         if f.value_map is None:
             out[f.target] = src
             continue
-        unmapped = src.notna() & ~src.isin(list(f.value_map))
+        unmapped = _unlisted(src, f)
         if unmapped.any():
             raise ValueError(f"field {f.source!r}: value(s) {_examples(src[unmapped])} are not in its value_map; "
                              "list every value (map one to {} to set nothing)")
         for t in f.targets():
             out[t] = src.map(lambda v, t=t: f.value_map[v].get(t) if isinstance(v, str) else None)
     return {t: _check_target(t, s) for t, s in out.items()}
+
+
+def _unlisted(src: pd.Series, f: FieldMap) -> pd.Series:
+    """True on the rows whose non-blank value of ``src`` (field ``f``'s source column) is not a key of its value map
+    (all False for a field without one)."""
+    if f.value_map is None:
+        return pd.Series(False, index=src.index)
+    return src.notna() & ~src.isin(list(f.value_map))
+
+
+@dataclass(frozen=True)
+class UnlistedValue:
+    """New leads refused by ``convert_leads`` because a value-map column holds a value the map does not list (value
+    maps have no fallback): the source ``column`` (``<source>.<column>``), the unlisted ``values``, the refused
+    ``rows`` (their lead ids, or 1-based row numbers when the leads carry no id; ``ids`` says which) and the value
+    map's keys (``allowed``)."""
+
+    column: str
+    values: tuple[str, ...]
+    rows: tuple[str, ...]
+    allowed: tuple[str, ...]
+    ids: bool
+
+    def text(self) -> str:
+        """The refusal in plain words, e.g. "Row(s) L1, L7: origin 'tiktok' is not one of the values this dataset's
+        mapping knows (paid_search, social); these leads were not scored." (at most ``MAX_LISTED`` rows and values
+        named, with the counts)."""
+        rows = ", ".join(self.rows[:MAX_LISTED]) + (f", ... ({len(self.rows)} in all)" if len(self.rows) > MAX_LISTED
+                                                    else "")
+        values = ", ".join(repr(v) for v in self.values[:MAX_LISTED]) + (", ..." if len(self.values) > MAX_LISTED
+                                                                         else "")
+        noun = "Lead" if self.ids else "Row"
+        return (f"{noun}(s) {rows}: {self.column.split('.', 1)[1]} {values} "
+                f"{'is not one of' if len(self.values) == 1 else 'are not among'} the values this dataset's mapping "
+                f"knows ({', '.join(self.allowed)}); {'this lead was' if len(self.rows) == 1 else 'these leads were'} "
+                "not scored.")
+
+
+@dataclass(frozen=True)
+class NewLeads:
+    """``convert_leads``' result: the converted ``leads`` (``historical_leads`` rows ready for scoring) and the rows it
+    refused for an unlisted value-map value (``refused``, one ``UnlistedValue`` per column; empty when none)."""
+
+    leads: pd.DataFrame
+    refused: tuple[UnlistedValue, ...] = ()
+
+
+def unlisted_values(raw: pd.DataFrame, mapping: DatasetMapping, rows: pd.Series,
+                    ids: bool) -> tuple[UnlistedValue, ...]:
+    """One ``UnlistedValue`` per value-map field of ``mapping`` whose source column holds unlisted values in the joined
+    rows ``raw`` (mapping order); ``rows`` names each row as text (lead id or row number, ``ids`` says which)."""
+    out = []
+    for f in mapping.fields:
+        if f.target == IGNORE or f.value_map is None:
+            continue
+        src = evaluate(Expr.col(f.source), raw, f"field {f.source}")
+        bad = _unlisted(src, f)
+        if bad.any():
+            out.append(UnlistedValue(f.source, tuple(sorted(set(src[bad]))), tuple(rows[bad]),
+                                     tuple(f.value_map), ids))
+    return tuple(out)
 
 
 def _check_target(target: str, s: pd.Series) -> pd.Series:
@@ -412,9 +475,16 @@ def _lead_rows(raw: pd.DataFrame, mapping: DatasetMapping, lead_id: pd.Series,
     return leads, int(no_email.sum())
 
 
-def convert_leads(frames: dict[str, pd.DataFrame], mapping: DatasetMapping) -> pd.DataFrame:
+def convert_leads(frames: dict[str, pd.DataFrame], mapping: DatasetMapping) -> NewLeads:
     """New leads in the source format (file name -> frame, as ``frames_from_bytes`` reads them) as ``historical_leads``
-    rows ready for ``emva.scoring.score_leads``: one row per primary-source row, a ``lead_id`` column, typed values.
+    rows ready for ``emva.scoring.score_leads`` (``NewLeads.leads``): one row per primary-source row that is not
+    refused, a ``lead_id`` column, typed values.
+
+    Refused per row, not per batch (Keel QA M7): a row whose value-map column holds a value the map does not list (a
+    value map has no fallback) is left out and reported in ``NewLeads.refused`` (``UnlistedValue``: plain words, the
+    rows by lead id or row number, the allowed values); the other rows are converted. When every row is refused this
+    raises ``ValueError`` with those messages. ``convert`` (training data) still refuses the whole file, in words for
+    the mapping author.
 
     The same field rules as ``convert`` (one code path, ``_lead_rows``): mapped values checked against the form
     options, unmapped columns blank, ``form_variant`` "A" when unmapped, email placeholder
@@ -427,14 +497,15 @@ def convert_leads(frames: dict[str, pd.DataFrame], mapping: DatasetMapping) -> p
     never dropped: every lead given is scored or refused); no model feature reads it, but the batch duplicate check
     orders submissions by it. Booleans come back as ``bool``, numbers as floats, ``created_at`` as a UTC timestamp.
     Raises ``ValueError`` for a draft mapping, a missing ``created_at`` column, a blank or malformed ``created_at``
-    (naming the rows) or another value the mapping refuses.
+    (naming the rows), every row refused (above) or another value the mapping refuses.
     """
     check_confirmed(mapping)
     cols = mapping.source_columns(submit_time_only=True)
     raw = join_sources(frames, mapping, files=list(cols))
     row_number = pd.Series(np.arange(1, len(raw) + 1), index=raw.index)
     lead = mapping.lead
-    if lead.lead_id is not None and all(c in raw for c in lead.lead_id.columns()):
+    has_ids = lead.lead_id is not None and all(c in raw for c in lead.lead_id.columns())
+    if has_ids:
         lead_id = evaluate(lead.lead_id, raw, "lead_id")
         if lead_id.isna().any() or lead_id.duplicated().any():
             raise ValueError("lead_id must be filled and unique on every new lead (or leave its column out)")
@@ -446,6 +517,13 @@ def convert_leads(frames: dict[str, pd.DataFrame], mapping: DatasetMapping) -> p
         raise ValueError(f"created_at is blank on {int(blank.sum())} new lead(s) (rows "
                          f"{list(row_number[blank][:MAX_LISTED])}); every new lead needs "
                          f"{', '.join(lead.created_at.columns())} (when the lead came in)")
+    names = (lead_id if has_ids else row_number).astype(str)
+    refused = unlisted_values(raw, mapping, names, has_ids)
+    if refused:
+        keep = ~names.isin({r for u in refused for r in u.rows})  # names are unique (ids checked above)
+        if not keep.any():
+            raise ValueError(" ".join(r.text() for r in refused))
+        raw, lead_id, created = raw[keep], lead_id[keep], created[keep]
     leads, _ = _lead_rows(raw, mapping, lead_id, created)
     out = leads.astype(object)
     out["created_at"] = created
@@ -456,7 +534,7 @@ def convert_leads(frames: dict[str, pd.DataFrame], mapping: DatasetMapping) -> p
     extras = extra_values(raw, mapping)
     for name in extras.columns:
         out[EXTRA_PREFIX + name] = extras[name].astype(object)
-    return out.reset_index(drop=True)
+    return NewLeads(out.reset_index(drop=True), refused)
 
 
 def convert(frames: dict[str, pd.DataFrame], mapping: DatasetMapping) -> dict[str, bytes]:
@@ -595,5 +673,6 @@ def coverage(files: dict[str, bytes], mapped_targets: list[str]) -> list[dict[st
 
 
 __all__ = ["COMPANIES_COLUMNS", "CRM_COLUMNS", "DERIVED_COUNTS", "FEATURE_INPUTS", "FEATURE_TARGET_PREFIX",
-           "PEOPLE_COLUMNS", "PLACEHOLDER_DOMAIN", "convert", "convert_leads", "coverage", "evaluate", "extra_values",
-           "fill_gap_text", "frames_from_bytes", "join_sources", "outcome_fill_gaps"]
+           "NewLeads", "PEOPLE_COLUMNS", "PLACEHOLDER_DOMAIN", "UnlistedValue", "convert", "convert_leads", "coverage",
+           "evaluate", "extra_values", "fill_gap_text", "frames_from_bytes", "join_sources", "outcome_fill_gaps",
+           "unlisted_values"]

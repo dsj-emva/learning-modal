@@ -19,8 +19,9 @@ columns filled for won leads but not for lost ones (``outcome_fill_gaps``: proba
 ``score`` scores new leads given in the source format: ``--raw`` is a CSV of primary-source rows (other source files
 the mapping's submit-time part needs are read from the same directory) or a directory holding the source files. The
 rows go through ``emva.ingest.convert.convert_leads`` (no outcome columns needed; every row needs its ``created_at``
-column(s) filled, else the command fails naming the rows) and ``emva.scoring.score_leads``
-with ``RUN_DIR/model.joblib`` (written by ``python -m emva --out RUN_DIR``). ``--data`` is the dataset whose
+column(s) filled, else the command fails naming the rows; a row whose value-map column holds a value the map does not
+list is not scored and is named on stderr, and the command fails only when every row is) and
+``emva.scoring.score_leads`` with ``RUN_DIR/model.joblib`` (written by ``python -m emva --out RUN_DIR``). ``--data`` is the dataset whose
 ``companies.csv`` the enrichment join reads; without it an empty one is used, which is what every converted dataset
 holds (the converter writes companies.csv header-only). Writes ``--out`` or prints the scores as CSV.
 """
@@ -132,7 +133,10 @@ def _score(a: argparse.Namespace) -> None:
     missing = [str(p) for p in paths.values() if not p.is_file()]
     if missing:
         raise SystemExit(f"missing source file(s) {missing}")
-    leads = convert_leads(frames_from_bytes({f: p.read_bytes() for f, p in paths.items()}), mapping)
+    new = convert_leads(frames_from_bytes({f: p.read_bytes() for f, p in paths.items()}), mapping)
+    for refusal in new.refused:
+        print(refusal.text(), file=sys.stderr)
+    leads = new.leads
     bundle = load_bundle(Path(a.run) / BUNDLE_FILE)
     if a.data:
         scores = score_leads(bundle, leads, a.data)

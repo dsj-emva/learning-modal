@@ -394,7 +394,7 @@ def test_bundle_round_trip_scores_equal_the_batch_run(bundle, generic_run, frame
     assert bundle.design_columns == tuple(generic_run.design.columns)
     ids = list(generic_run.X.index[generic_run.test][:5]) + list(generic_run.X.index[generic_run.train][:5])
     new = frames["leads.csv"].set_index("id").loc[ids].reset_index().drop(columns=["stage", "closed", "amount"])
-    leads = convert_leads({"leads.csv": new, "orgs.csv": frames["orgs.csv"]}, mapping)
+    leads = convert_leads({"leads.csv": new, "orgs.csv": frames["orgs.csv"]}, mapping).leads
     assert [c for c in leads.columns if c.startswith("x_")] == ["x_tier", "x_seats", "x_sector"]
     scores = score_leads(bundle, leads, dataset)
     np.testing.assert_allclose(scores.p_formula, generic_run.X.p_formula.loc[ids], rtol=1e-12)
@@ -406,7 +406,7 @@ def test_bundle_round_trip_scores_equal_the_batch_run(bundle, generic_run, frame
 def test_unseen_value_at_scoring_is_other_and_absent_extras_are_missing(bundle, frames, mapping, dataset) -> None:
     new = frames["leads.csv"].head(3).drop(columns=["stage", "closed", "amount"]).assign(tier=["platinum", "gold",
                                                                                                 "gold"])
-    leads = convert_leads({"leads.csv": new, "orgs.csv": frames["orgs.csv"]}, mapping)
+    leads = convert_leads({"leads.csv": new, "orgs.csv": frames["orgs.csv"]}, mapping).leads
     got = score_leads(bundle, leads, dataset)
     assert np.isfinite(got.p_formula).all()
     other = bundle.model.coef_[0][list(bundle.design_columns).index("x_tier=other")]
@@ -435,7 +435,7 @@ def test_a_v2_bundle_accepts_and_ignores_extra_columns(dataset, frames, mapping,
     v2 = run(dataset, features=FeatureSet.V2)
     save_bundle(v2, tmp_path / "m.joblib", dataset, 1.0)
     b = load_bundle(tmp_path / "m.joblib")
-    leads = convert_leads({"leads.csv": frames["leads.csv"].head(2), "orgs.csv": frames["orgs.csv"]}, mapping)
+    leads = convert_leads({"leads.csv": frames["leads.csv"].head(2), "orgs.csv": frames["orgs.csv"]}, mapping).leads
     with_x = score_leads(b, leads, dataset)
     pd.testing.assert_frame_equal(with_x, score_leads(b, leads.drop(columns=["x_tier", "x_seats", "x_sector"]),
                                                       dataset))

@@ -2,8 +2,10 @@
 every page renders without an exception once signed in (on a data root holding the shared trained run)."""
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
+import pandas as pd
 import pytest
 from streamlit.testing.v1 import AppTest
 
@@ -321,6 +323,8 @@ def test_score_page_source_format(monkeypatch: pytest.MonkeyPatch, app_converted
     assert [t.label for t in at.text_input if t.key.startswith("src_")] == ["mql_id", "first_contact_date *",
                                                                             "landing_page_id"]
     origin = next(s for s in at.selectbox if s.key.endswith(":origin"))
+    # a value map offers exactly its values: the raw value "other" is one of them, not "any value not listed" (M7)
+    assert "other" in origin.options and not any("not listed" in o for o in origin.options)
     origin.select("paid_search")
     next(b for b in at.button if b.label == "Score this lead").click()
     at.run()
@@ -339,12 +343,22 @@ def test_score_page_source_format(monkeypatch: pytest.MonkeyPatch, app_converted
     at.button(key=f"src_score_file_{run.run_id}").click().run()
     assert not at.exception, at.exception
     assert at.selectbox(key=f"src_pick_{run.run_id}").options and "Chance this lead closes" in _text(at)
+    n_rows = len(at.selectbox(key=f"src_pick_{run.run_id}").options)
     bad = raw.replace(b"paid_search", b"<b>pigeon</b>", 1)
     at.file_uploader(key=f"src_upload_{run.run_id}").clear().upload("new.csv", bad, "text/csv").run()
     at.button(key=f"src_score_file_{run.run_id}").click().run()
     page = _text(at)
-    assert not at.exception and "These leads cannot be scored" in page
+    # one unlisted value refuses its own lead, in plain words; the rest of the file is scored (M7)
+    assert not at.exception and "Some leads were not scored:" in page and "Chance this lead closes" in page
+    assert "mapping knows (paid_search, social" in page and "these leads were not scored" not in page
+    assert "value_map" not in page and len(at.selectbox(key=f"src_pick_{run.run_id}").options) == n_rows - 1
     assert "<b>pigeon</b>" not in page and "&lt;b&gt;pigeon&lt;/b&gt;" in page
+    every = pd.read_csv(io.BytesIO(raw), dtype=str).assign(origin="tiktok").to_csv(index=False).encode()
+    at.file_uploader(key=f"src_upload_{run.run_id}").clear().upload("new.csv", every, "text/csv").run()
+    at.button(key=f"src_score_file_{run.run_id}").click().run()
+    page = _text(at)
+    assert not at.exception and "These leads cannot be scored" in page and "tiktok" in page
+    assert "Chance this lead closes" not in page and not at.dataframe
 
 
 # --- the generic feature set in Keel (Phase 10 (b)) ------------------------------------------------------------------
@@ -429,3 +443,14 @@ def test_generic_run_score_page_offers_the_extras(monkeypatch: pytest.MonkeyPatc
     at.run()
     assert not at.exception, at.exception
     assert "Chance this lead closes" in _text(at)
+    from conftest import INGEST_FIXTURES, OLIST_MQL
+
+    raw = pd.read_csv(INGEST_FIXTURES / "olist_funnel" / OLIST_MQL, dtype=str).head(3)
+    unseen = raw.assign(landing_page_id=raw.landing_page_id.mask(raw.index == 1, "never-seen-page"))
+    at.file_uploader(key=f"src_upload_{run.run_id}").upload("new.csv", unseen.to_csv(index=False).encode(),
+                                                            "text/csv").run()
+    at.button(key=f"src_score_file_{run.run_id}").click().run()
+    assert not at.exception, at.exception
+    page = _text(at)  # an unseen extra value is scored as other, with a note naming the lead (M7)
+    assert "Unlisted landing_page scores as other." in page and "Some leads were not scored" not in page
+    assert f"never-seen-page&#x27; (lead {raw.mql_id.iloc[1]})" in page

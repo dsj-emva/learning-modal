@@ -17,7 +17,9 @@ Source format (Phase 9): when the run's dataset was converted with a mapping (``
 (``DatasetMapping.source_columns(submit_time_only=True)``), ``frames_from_source_form`` /
 ``frames_from_source_uploads`` build raw frames from a form or uploaded CSVs, and ``score_source`` converts them
 with ``emva.ingest.convert_leads`` (the same field rules as the dataset's conversion) and scores them with the same
-``score_leads`` / ``points_breakdown`` as the form.
+``score_leads`` / ``points_breakdown`` as the form. A value-map column offers exactly the listed values in the form; in
+a CSV, a lead with another value is refused on its own (``SourceScores.refused``, in plain words) and the rest are
+scored (Keel QA M7).
 
 Extras (Phase 10, generic feature set): the mapping's ``[[features]]`` columns are submit-time source columns, so the
 source form lists them and a CSV upload carries them; ``convert_leads`` turns them into ``x_<name>`` columns, which a
@@ -26,7 +28,8 @@ levels (``ModelBundle.extras``: kept levels, then ``other`` for any other value)
 one (``number_text`` writes it as the text a CSV cell would hold). The EMVA form has no inputs for extras: a form
 lead has every extra ``missing`` (``extra_names`` lets the page say so). An extra that no training lead had missing
 has a zero weight on ``missing``, so a blank scores as its reference level (``missing_unseen``; ``blank_unseen`` for
-source-format leads with a blank extra): the page warns per extra.
+source-format leads with a blank extra): the page warns per extra. A categorical extra's value that is not a kept
+training level scores as ``other`` (ADR 0024); ``other_extra_values`` names those leads and values for the page.
 """
 from __future__ import annotations
 
@@ -44,7 +47,7 @@ from emva.constants import MISSING
 from emva.dataset_meta import V1_CURRENCY, dataset_dates
 from emva.features import SESSION_INPUTS
 from emva.generic import EXTRA_PREFIX, OTHER, ExtraKind
-from emva.ingest.convert import convert_leads, frames_from_bytes
+from emva.ingest.convert import UnlistedValue, convert_leads, frames_from_bytes
 from emva.ingest.mapping import COLUMN_OP, IGNORE, DatasetMapping, load_mapping
 from emva.io import read_leads
 from emva.model import INTERCEPT
@@ -343,7 +346,9 @@ class SourceField:
     """One raw column a new lead in the source format carries: its ``file`` and ``column``, the allowed ``options``
     (None = free input; a value map's keys, or a generic bundle's training levels of a categorical extra ending with
     ``other``), ``feeds``, what the mapping makes of it (for the form's help text), ``numeric`` (a numeric extra:
-    a number input) and ``required`` (a column of the ``created_at`` expression: ``convert_leads`` refuses a blank)."""
+    a number input), ``required`` (a column of the ``created_at`` expression: ``convert_leads`` refuses a blank) and
+    ``open_other`` (the options are an extra's levels, so the last one, ``other``, stands for any value not listed;
+    False for a value map, whose options are exactly the values it lists, a raw value "other" included)."""
 
     file: str
     column: str
@@ -351,6 +356,7 @@ class SourceField:
     feeds: str
     numeric: bool = False
     required: bool = False
+    open_other: bool = False
 
     @property
     def key(self) -> str:
@@ -434,8 +440,8 @@ def source_fields(mapping: DatasetMapping, bundle: ModelBundle | None = None) ->
     """The raw columns a new lead needs, per file in ``DatasetMapping.source_columns(submit_time_only=True)`` order.
 
     A joined file's join column is not listed (the form copies the primary file's value into it); a column with a
-    value map offers its keys, since any other value is refused by the conversion. The ``created_at`` column(s) are
-    ``required``. With a generic ``bundle``, a plain-column extra it uses is a number input (numeric) or offers its
+    value map offers exactly its keys, since any other value is refused by the conversion. The ``created_at`` column(s)
+    are ``required``. With a generic ``bundle``, a plain-column extra it uses is a number input (numeric) or offers its
     training levels (categorical, unless a value map already fixes the options).
     """
     feeds = _feeds(mapping)
@@ -451,9 +457,10 @@ def source_fields(mapping: DatasetMapping, bundle: ModelBundle | None = None) ->
                 continue
             what, options = feeds.get((file, c), ("join key of a joined file" if file == primary else "", None))
             numeric = (file, c) in extras and extras[(file, c)] is None and options is None
-            if options is None and extras.get((file, c)) is not None:
+            open_other = options is None and extras.get((file, c)) is not None
+            if open_other:
                 options = extras[(file, c)]
-            out.append(SourceField(file, c, options, what, numeric, (file, c) in required))
+            out.append(SourceField(file, c, options, what, numeric, (file, c) in required, open_other))
     return out
 
 
@@ -515,10 +522,12 @@ def frames_from_source_uploads(mapping: DatasetMapping, uploads: dict[str, bytes
 @dataclass(frozen=True)
 class SourceScores:
     """New leads in the source format, converted (``leads``: ``historical_leads`` rows, ``lead_id`` column) and
-    scored (``scores``: ``emva.scoring.score_leads`` output indexed by ``lead_id``)."""
+    scored (``scores``: ``emva.scoring.score_leads`` output indexed by ``lead_id``), and the leads ``convert_leads``
+    refused for a value outside a value map (``refused``; not in ``leads``)."""
 
     leads: pd.DataFrame
     scores: pd.DataFrame
+    refused: tuple[UnlistedValue, ...] = ()
 
     def table(self) -> pd.DataFrame:
         """Per lead: ``lead_id``, ``p``, ``deal_value``, ``value_at_submit``, ``value_formula``, ``is_bot``,
@@ -535,12 +544,45 @@ def score_source(bundle: ModelBundle, mapping: DatasetMapping, frames: dict[str,
     """Convert raw source ``frames`` with ``mapping`` (``emva.ingest.convert_leads``) and score them with ``bundle``
     (``score_leads``; ``data`` holds the ``companies.csv`` the enrichment join reads).
 
-    Raises ``ValueError`` for what ``convert_leads`` refuses (e.g. a blank ``created_at``, a value outside a value map,
-    a repeated lead id)
-    and ``UnknownLevelError`` (a ``ValueError``) for a value the model was not trained with.
+    A lead with a value outside a value map is not scored and is listed in ``SourceScores.refused``; the others are.
+    Raises ``ValueError`` for what ``convert_leads`` refuses for the whole batch (e.g. a blank ``created_at``, a
+    repeated lead id, every lead outside a value map) and ``UnknownLevelError`` (a ``ValueError``) for a value the
+    model was not trained with.
     """
-    leads = convert_leads(frames, mapping)
-    return SourceScores(leads, score_leads(bundle, leads, data))
+    new = convert_leads(frames, mapping)
+    return SourceScores(new.leads, score_leads(bundle, new.leads, data), new.refused)
+
+
+def other_extra_values(bundle: ModelBundle, result: SourceScores) -> dict[str, dict[str, tuple[str, ...]]]:
+    """Name -> {raw value -> lead ids} for each categorical extra of ``bundle`` whose non-blank value on a lead of
+    ``result`` is not a level the model kept from training (unseen, or rarer than ``GENERIC_MIN_LEVEL_COUNT``), so
+    it scores as ``other`` (ADR 0024). A raw value spelled ``other`` is left out (it is that level). Empty for a
+    bundle without extras."""
+    if bundle.extras is None:
+        return {}
+    levels = bundle.extras.levels(result.leads)
+    out: dict[str, dict[str, tuple[str, ...]]] = {}
+    for e in bundle.extras.extras:
+        col = e.feature.column
+        if e.feature.kind is ExtraKind.NUMERIC or col not in result.leads:
+            continue
+        raw = result.leads[col].map(lambda v: v.strip() if isinstance(v, str) else None)
+        hit = levels[col].eq(OTHER) & raw.notna() & raw.ne(OTHER)
+        if hit.any():
+            ids = result.leads.lead_id[hit].astype(str)
+            out[e.feature.name] = {v: tuple(ids[raw[hit] == v]) for v in sorted(set(raw[hit]))}
+    return out
+
+
+def other_extra_text(name: str, by_value: dict[str, tuple[str, ...]]) -> str:
+    """One ``other_extra_values`` entry in plain words, e.g. "landing_page 'lp-9' (lead new-000002) is not among the
+    levels the model kept from training (unseen, or too rare), so it scores as other." (at most ``LEADS_LISTED`` lead
+    ids per value)."""
+    parts = [f"{v!r} (lead{'s' * (len(ids) != 1)} {', '.join(ids[:LEADS_LISTED])}"
+             f"{', ...' if len(ids) > LEADS_LISTED else ''})" for v, ids in by_value.items()]
+    one = len(parts) == 1
+    return (f"{name} {'; '.join(parts)} {'is' if one else 'are'} not among the levels the model kept from training "
+            f"(unseen, or too rare), so {'it scores' if one else 'they score'} as other.")
 
 
 def source_lead_score(bundle: ModelBundle, result: SourceScores, lead_id: str, data: str | Path) -> LeadScore:
@@ -573,5 +615,6 @@ def describe_transform(bundle: ModelBundle, currency: str | None = V1_CURRENCY) 
 __all__ = ["Breakdown", "DEFAULTS", "FEATURE_FIELDS", "Example", "FormField", "LeadScore", "SECTIONS", "SourceField",
            "SourceScores", "TYPED_LEVEL_FEATURES", "blank_session_fields", "breakdown", "clean_values", "defaults_for",
            "describe_transform", "example_for", "extra_names", "form_problem_lines", "form_sections",
-           "frames_from_source_form", "frames_from_source_uploads", "number_text", "run_mapping", "score_form",
-           "score_source", "source_fields", "source_lead_score", "source_problem_lines", "values_from_lead"]
+           "frames_from_source_form", "frames_from_source_uploads", "number_text", "other_extra_text",
+           "other_extra_values", "run_mapping", "score_form", "score_source", "source_fields", "source_lead_score",
+           "source_problem_lines", "values_from_lead"]
