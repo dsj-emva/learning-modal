@@ -139,7 +139,8 @@ def test_a_test_set_switch_replaces_every_test_set_section_at_once(monkeypatch: 
     slot = _top_level(at, "Headline")
     assert _top_level(at, "Generic vs v2") == _top_level(at, "Stability by month") == slot
     assert _top_level(at, "Scorecard") != slot
-    assert "Legacy labels (frozen POC)" in _text(at) and "Mature leads (horizon labels)" not in _text(at)
+    # the Generic vs v2 KPI names the selected test set (views/results.py TEST_SET_LABELS)
+    assert "Legacy (frozen POC)" in _text(at) and "Mature leads" not in _text(at)
 
 
 def test_a_new_starting_lead_clears_the_score(monkeypatch: pytest.MonkeyPatch, app_trained) -> None:
