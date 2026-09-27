@@ -207,7 +207,7 @@ def _start_buttons(root: Path, frames: dict[str, pd.DataFrame], profiles: list[C
 
 
 def _text_inputs(form: ingest.MappingForm, v: int) -> ingest.MappingForm:
-    """Name, dates, source URL and licence."""
+    """Name, dates, source URL, licence and currency."""
     c1, c2, c3 = st.columns(3, gap="medium")
     name = c1.text_input("Mapping name", form.name, key=f"mc_name_{v}", help="Letters, digits, _ and -.")
     as_of = c2.text_input("as_of (snapshot date) *", form.as_of, key=f"mc_asof_{v}", placeholder="2018-11-15",
@@ -215,14 +215,17 @@ def _text_inputs(form: ingest.MappingForm, v: int) -> ingest.MappingForm:
     test_from = c3.text_input("test_from (train/test boundary) *", form.test_from, key=f"mc_testfrom_{v}",
                               placeholder="2018-03-01", help="Leads created on or after it are the test set; "
                               "frozen for this dataset once saved.")
-    c4, c5, c6 = st.columns(3, gap="medium")
+    c4, c5, c7, c6 = st.columns([3, 3, 1.4, 2.6], gap="medium")
     url = c4.text_input("Source URL", form.source_url, key=f"mc_url_{v}")
     licence = c5.text_input("Licence", form.licence, key=f"mc_licence_{v}")
+    currency = c7.text_input("Currency", form.currency, key=f"mc_currency_{v}", placeholder="BRL", max_chars=3,
+                             help="ISO 4217 code of the amounts (deal value), e.g. BRL, EUR, USD. Leave blank if "
+                                  "unknown: amounts are then shown as plain numbers, not as £.")
     with c6:
         drop = st.checkbox("Drop rows without created_at", form.drop_rows_without_created_at, key=f"mc_drop_{v}",
                            help="Otherwise a blank created_at refuses the conversion.")
     return replace(form, name=name.strip(), as_of=as_of.strip(), test_from=test_from.strip(), source_url=url.strip(),
-                   licence=licence.strip(), drop_rows_without_created_at=drop)
+                   licence=licence.strip(), currency=currency.strip().upper(), drop_rows_without_created_at=drop)
 
 
 def _pick(label: str, options: list[str], current: str, key: str, help_text: str | None = None) -> str:

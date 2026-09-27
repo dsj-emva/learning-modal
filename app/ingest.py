@@ -102,6 +102,7 @@ class MappingForm:
     test_from: str = ""
     source_url: str = ""
     licence: str = ""
+    currency: str = ""
     drop_rows_without_created_at: bool = False
     review: Mapping[str, Review] = field(default_factory=dict)
     origin: str = ""
@@ -193,7 +194,7 @@ def form_from_mapping(m: DatasetMapping, frames: Mapping[str, pd.DataFrame] | No
     return MappingForm(name=m.name, sources=m.sources, lead={r: getattr(m.lead, r) for r in LEAD_ROLES},
                        outcome_kind=o.kind, outcome_column=o.column, outcome_values=values,
                        lost_without_close=o.lost_without_close, fields=tuple(rows), as_of=m.as_of,
-                       test_from=m.test_from, source_url=m.source_url, licence=m.licence,
+                       test_from=m.test_from, source_url=m.source_url, licence=m.licence, currency=m.currency,
                        drop_rows_without_created_at=m.drop_rows_without_created_at, review=dict(m.review),
                        origin=origin, features=m.features)
 
@@ -228,6 +229,7 @@ def mapping_from_form(f: MappingForm) -> DatasetMapping:
     lead = LeadColumns(**{r: e for r, e in f.lead.items() if e is not None})
     return DatasetMapping(name=f.name, sources=f.sources, lead=lead, outcome=outcome, as_of=f.as_of,
                           test_from=f.test_from, fields=f.fields, source_url=f.source_url, licence=f.licence,
+                          currency=f.currency,
                           outcome_confirmed=False, drop_rows_without_created_at=f.drop_rows_without_created_at,
                           review={k: v for k, v in f.review.items()}, features=f.features,
                           features_confirmed=False)

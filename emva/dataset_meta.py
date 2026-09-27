@@ -8,6 +8,10 @@ its mapping) in ``dataset.json``. data/v1, data/v2 and every dataset in the v1 f
 ``dataset.json`` is written by ``emva.ingest.convert`` (with ``"emva_dataset_format": 1``, its dates and a coverage
 table). The name is reserved for it: a ``dataset.json`` without ``as_of`` / ``test_from`` is refused, never read as
 "no dates" (before Phase 9 the app kept its own dataset record under that name; the app now uses another file).
+
+Amounts: ``dataset_currency`` gives the ISO 4217 code of a dataset's amounts (``deal_value``): ``GBP`` for a dataset
+without ``dataset.json`` (the synthetic data and the v1 format are in GBP), else the ``currency`` its mapping declared
+(None when unknown, or for a ``dataset.json`` written before the key existed).
 """
 from __future__ import annotations
 
@@ -23,6 +27,9 @@ from emva.constants import AS_OF, TEST_FROM
 DATASET_META_FILE: str = "dataset.json"
 FORMAT_KEY: str = "emva_dataset_format"
 FORMAT_VERSION: int = 1
+# The currency of a dataset in the v1 format (no dataset.json): the synthetic data's amounts are GBP.
+V1_CURRENCY: str = "GBP"
+_CURRENCY = re.compile(r"^[A-Z]{3}$")
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 # An as_of: a YYYY-MM-DD date, optionally with a time (T or space; minutes, seconds, fraction) and a Z or +hh:mm offset.
 _DATETIME = re.compile(r"^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$")
@@ -53,8 +60,9 @@ def parse_dataset_meta(text: str, where: str = DATASET_META_FILE) -> dict:
     """The converter's metadata from the text of a ``dataset.json`` (``where`` names it in errors) as a dict.
 
     Raises ``ValueError`` naming ``where`` when the text is not a JSON object, lacks ``as_of`` or ``test_from``,
-    carries another ``FORMAT_KEY`` version, has a malformed date (``parse_as_of``, ``check_test_from``) or a
-    ``test_from`` after ``as_of``.
+    carries another ``FORMAT_KEY`` version, has a malformed date (``parse_as_of``, ``check_test_from``), a
+    ``test_from`` after ``as_of``, or a ``currency`` that is neither null nor three upper-case letters (the key itself
+    is optional: files written before it existed have none).
     """
     try:
         meta = json.loads(text)
@@ -71,6 +79,9 @@ def parse_dataset_meta(text: str, where: str = DATASET_META_FILE) -> dict:
         raise ValueError(f"{where}: {e}") from e
     if pd.Timestamp(test_from, tz="UTC") > as_of:
         raise ValueError(f"{where}: test_from {test_from} is after as_of {as_of.isoformat()}")
+    currency = meta.get("currency")
+    if currency is not None and not (isinstance(currency, str) and _CURRENCY.match(currency)):
+        raise ValueError(f"{where}: currency {currency!r} must be null or an ISO 4217 code such as BRL")
     return meta
 
 
@@ -95,10 +106,18 @@ def dataset_dates(data: str | Path) -> tuple[pd.Timestamp, str]:
     return parse_as_of(meta["as_of"]), meta["test_from"]
 
 
+def dataset_currency(data: str | Path) -> str | None:
+    """The ISO 4217 code of the amounts of the dataset directory ``data``: ``V1_CURRENCY`` without ``dataset.json``,
+    else its ``currency`` (None when the mapping left it unknown or the file predates the key). Raises ``ValueError``
+    for a malformed file (``read_dataset_meta``)."""
+    meta = read_dataset_meta(data)
+    return V1_CURRENCY if meta is None else meta.get("currency")
+
+
 def has_dataset_meta(data: str | Path) -> bool:
     """True when ``data`` carries the converter's ``dataset.json`` (its dates are its own, not the constants)."""
     return read_dataset_meta(data) is not None
 
 
-__all__ = ["DATASET_META_FILE", "FORMAT_KEY", "FORMAT_VERSION", "check_test_from", "dataset_dates",
-           "has_dataset_meta", "parse_as_of", "parse_dataset_meta", "read_dataset_meta"]
+__all__ = ["DATASET_META_FILE", "FORMAT_KEY", "FORMAT_VERSION", "V1_CURRENCY", "check_test_from", "dataset_currency",
+           "dataset_dates", "has_dataset_meta", "parse_as_of", "parse_dataset_meta", "read_dataset_meta"]

@@ -34,12 +34,16 @@
 # Dates: first_contact_date 2017-06-14 .. 2018-05-31, won_date to 2018-11-14 18:04. as_of = 2018-11-15 (the day after
 # the last deal). Every MQL is mature at H = 120. test_from = 2018-03-01: the last ~22% of the MQL date span (March to
 # May 2018; MQL volume grows in 2018, so this is ~48% of the leads). Frozen here (ground rule 4).
+#
+# Currency: BRL. The Kaggle description (read 2026-09-27) says Olist "connects small businesses from all over Brazil";
+# it names no currency, so declared_monthly_revenue is taken as Brazilian reais (orchestrator ruling, Keel fix round).
 
 name = "olist_funnel"
 as_of = "2018-11-15"
 test_from = "2018-03-01"
 source_url = "https://www.kaggle.com/datasets/olistbr/marketing-funnel-olist"
 licence = "CC BY-NC-SA 4.0"
+currency = "BRL"
 outcome_confirmed = true
 drop_rows_without_created_at = false
 features_confirmed = true
