@@ -71,7 +71,7 @@ def _result(res: scoring.LeadScore, base: float, run: storage.Run, bundle: Model
     else:
         flags.append(C.pill("Scored alone: duplicates are checked in batches", "info"))
     ui.html(C.result_card(res.p, base, res.deal_value, res.value_at_submit, res.value_formula,
-                          scoring.describe_transform(bundle, cur), "".join(flags), cur))
+                          scoring.describe_transform(bundle, cur), "".join(flags), cur, res.assumes))
     if C.currency_note(cur):
         st.caption(C.currency_note(cur))
     if res.blank_session:

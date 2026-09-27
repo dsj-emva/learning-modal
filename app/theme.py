@@ -129,6 +129,7 @@ hr {{ border-color:var(--hairline) !important; }}
 .k-result .big {{ font-family:var(--mono); font-size:64px; font-weight:500; letter-spacing:-.04em; line-height:1;
   color:var(--ink); margin:12px 0 8px; }}
 .k-result .context {{ color:var(--muted); font-size:14px; line-height:1.5; }}
+.k-result .assumes {{ color:var(--warn); margin-top:4px; }}
 .k-result .grid {{ display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:20px; padding-top:20px;
   border-top:1px solid var(--hairline); }}
 .k-result .grid .label {{ font-size:12px; color:var(--muted); }}

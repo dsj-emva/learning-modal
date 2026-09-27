@@ -28,14 +28,15 @@ levels (``ModelBundle.extras``: kept levels, then ``other`` for any other value)
 one (``number_text`` writes it as the text a CSV cell would hold). The EMVA form has no inputs for extras: a form
 lead has every extra ``missing`` (``extra_names`` lets the page say so). An extra that no training lead had missing
 has a zero weight on ``missing``, so a blank scores as its reference level (``missing_unseen``; ``blank_unseen`` for
-source-format leads with a blank extra): the page warns per extra. A categorical extra's value that is not a kept
+source-format leads with a blank extra): the page warns per extra, and the result card says what the score assumes
+(``LeadScore.assumes``, Keel QA m6). A categorical extra's value that is not a kept
 training level scores as ``other`` (ADR 0024); ``other_extra_values`` names those leads and values for the page.
 """
 from __future__ import annotations
 
 import json
 from collections.abc import Collection
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pandas as pd
@@ -262,7 +263,9 @@ class LeadScore:
     """One scored lead: ``p`` (P(close)), ``deal_value`` (expected deal value if won), ``value_formula``
     (p × deal value × margin), ``value_at_submit`` (after the run's value transform; NaN for legacy labels),
     ``is_bot`` / ``is_duplicate``, ``points`` (the intercept row then active features, with plain labels) and
-    ``blank_session`` (session fields left blank, each of which makes the model treat the session as missing)."""
+    ``blank_session`` (session fields left blank, each of which makes the model treat the session as missing) and
+    ``assumed`` (extra name -> reference level of each extra blank on this lead that no training lead had missing, so
+    the score assumes the reference level: ``missing_unseen``; Keel QA m6)."""
 
     p: float
     deal_value: float
@@ -272,6 +275,17 @@ class LeadScore:
     is_duplicate: bool
     points: pd.DataFrame
     blank_session: tuple[str, ...]
+    assumed: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def assumes(self) -> str:
+        """The result card's line on ``assumed``, e.g. "Assumes landing_page = lp-1 (blank; no training lead had it
+        missing)"; "" when nothing is assumed."""
+        if not self.assumed:
+            return ""
+        one = len(self.assumed) == 1
+        return (f"Assumes {', '.join(f'{n} = {ref}' for n, ref in self.assumed.items())} (blank; no training lead had "
+                f"{'it' if one else 'them'} missing)")
 
 
 def score_form(bundle: ModelBundle, values: dict[str, object], data: str | Path) -> LeadScore:
@@ -291,9 +305,12 @@ def _lead_score(bundle: ModelBundle, lead: pd.DataFrame, s: pd.Series, data: str
     """A ``LeadScore`` from one lead's row of ``score_leads`` and its ``points_breakdown``."""
     pts = points_breakdown(bundle, lead, data)
     pts = pts.assign(label=pts.feature.map(feature_label))
+    unseen = missing_unseen(bundle)
+    levels = bundle.extras.levels(lead).iloc[0] if unseen else None
+    assumed = {n: ref for n, ref in unseen.items() if levels[f"{EXTRA_PREFIX}{n}"] == MISSING}
     return LeadScore(p=float(s.p_formula), deal_value=float(s.deal_value_hat), value_formula=float(s.value_formula),
                      value_at_submit=float(s.value_at_submit), is_bot=bool(s.is_bot),
-                     is_duplicate=bool(s.is_duplicate), points=pts, blank_session=blank)
+                     is_duplicate=bool(s.is_duplicate), points=pts, blank_session=blank, assumed=assumed)
 
 
 @dataclass(frozen=True)

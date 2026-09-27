@@ -433,6 +433,11 @@ def test_generic_run_score_page_offers_the_extras(monkeypatch: pytest.MonkeyPatc
     assert "reference level wherever the model never saw a missing value" in _text(at)
     unseen = scoring.missing_unseen(load_bundle(Path(run.out_dir) / "model.joblib"))
     assert all(f"Blank {name} scores as {ref}." in _text(at) for name, ref in unseen.items())
+    next(b for b in at.button if b.label == "Score this lead").click()
+    at.run()
+    card = next(m.value for m in at.markdown if m.value.startswith("<div class=\"k-result\""))
+    assert all(f"{name} = {ref}" in card for name, ref in unseen.items())  # the card says what it assumes (m6)
+    assert ("Assumes " in card) == bool(unseen)
     at.segmented_control(key=f"score_mode_{run.run_id}").set_value("source").run()
     assert not at.exception, at.exception
     page = next(s for s in at.selectbox if s.key.endswith(":landing_page_id"))

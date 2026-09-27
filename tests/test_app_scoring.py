@@ -426,6 +426,33 @@ def test_emva_form_on_a_generic_run_scores_extras_as_missing(generic) -> None:
     assert 0 < got.p < 1 and (x.level == "missing").all() and (ref == "missing" or len(x) == 1)
 
 
+def test_result_card_says_which_blank_extras_score_as_their_reference(generic) -> None:
+    """Keel QA m6: a lead with a blank extra that no training lead had missing is scored as if it had the reference
+    level; ``LeadScore.assumed`` / ``assumes`` say so for the result card (EMVA form: every extra is blank; source
+    format: only when blank on that lead). Scoring is unchanged."""
+    from dataclasses import replace
+
+    from app import components as C
+
+    bundle, data, mapping, _ = generic
+    unseen = scoring.missing_unseen(bundle)
+    assert unseen  # the Olist-shaped fixture has landing_page on every training lead, as the QA run did
+    form = scoring.score_form(bundle, scoring.defaults_for(data), data)
+    assert form.assumed == unseen
+    raw = pd.read_csv(io.BytesIO(_mql_csv()), dtype=str).head(2)
+    res = scoring.score_source(bundle, mapping, scoring.frames_from_source_uploads(
+        mapping, {"x.csv": raw.assign(landing_page_id=[raw.landing_page_id.iloc[0], ""]).to_csv(index=False)
+                  .encode()}), data)
+    filled, blank = (scoring.source_lead_score(bundle, res, i, data) for i in raw.mql_id)
+    assert filled.assumed == {} and filled.assumes == "" and blank.assumed == unseen
+    one = replace(form, assumed={"landing_page": "lp-1"})
+    assert one.assumes == "Assumes landing_page = lp-1 (blank; no training lead had it missing)"
+    two = replace(form, assumed={"a": "x", "b": "y"})
+    assert two.assumes == "Assumes a = x, b = y (blank; no training lead had them missing)"
+    card = C.result_card(0.2, 0.1, 100.0, 20.0, 20.0, "t", "", "BRL", one.assumes)
+    assert "Assumes landing_page = lp-1" in card and "assumes" not in C.result_card(0.2, 0.1, 1.0, 1.0, 1.0, "t", "")
+
+
 def test_extras_never_missing_in_training_are_warned_about(generic) -> None:
     """A blank extra that no training lead had missing has a zero weight on ``missing``: it scores as the reference
     level, and the page warns per extra (EMVA form: always; source format: when the extra is blank on a lead)."""
