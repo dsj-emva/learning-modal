@@ -15,7 +15,10 @@ from emva.generic import GenericEncoder
 from emva.labels import LabelMode
 from emva.persist import BUNDLE_FILE
 
-TEST_SET_LABELS = {"mature": "Mature leads (horizon labels)", "legacy": "Legacy labels (frozen POC)"}
+# Short enough for both segments to fit a 390 px screen; TEST_SET_HELP says what each one is.
+TEST_SET_LABELS = {"mature": "Mature leads", "legacy": "Legacy (frozen POC)"}
+TEST_SET_HELP = ("Mature leads: horizon labels on the leads old enough to know how they ended (the headline). Legacy: "
+                 "the frozen proof of concept's labels, on the labelled leads created from the test date on.")
 # A generic run's scorecard can hold hundreds of x_ columns: the chart and table show the strongest this many.
 SCORECARD_TOP = 25
 
@@ -197,7 +200,8 @@ def render() -> None:
     default_test = "legacy" if run.args.get("label_mode") == "legacy" else "mature"
     with top[1]:
         test_set = st.segmented_control("Test set", list(TEST_SET_LABELS), default=default_test, required=True,
-                                        format_func=TEST_SET_LABELS.get, key=f"test_set_{run.run_id}")
+                                        format_func=TEST_SET_LABELS.get, help=TEST_SET_HELP,
+                                        key=f"test_set_{run.run_id}")
     ui.html(C.run_header(run.status, run.run_id, f"dataset {run.dataset} · {run.args.get('label_mode')} labels · "
                                                  f"{run.args.get('feature_set')} features"))
     note = results.data_note(run.dataset, run.dataset_path)

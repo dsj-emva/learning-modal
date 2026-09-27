@@ -439,3 +439,17 @@ def test_generic_run_score_page_offers_the_extras(monkeypatch: pytest.MonkeyPatc
     at.run()
     assert not at.exception, at.exception
     assert "Chance this lead closes" in _text(at)
+
+
+def test_points_chart_fits_a_phone() -> None:
+    """Long signal labels are cut (distinct, full label on hover) and the axis title is short (c2)."""
+    from app import charts
+
+    long_a, long_b = "Extra · landing_page · " + "a" * 32, "Extra · landing_page · " + "a" * 31 + "b"
+    labels = ["Channel · meta", long_a, "Extra · landing_page · 40dec9f3d5259a3d2dbcdab2114fae47"]
+    cut = charts.short_labels(labels)
+    assert cut[0] == labels[0] and all(len(c) <= charts.POINTS_LABEL_MAX for c in cut) and cut[2].endswith("…")
+    assert charts.short_labels([long_a, long_b]) == [long_a, long_b]  # same cut form: both stay whole
+    fig = charts.points_chart(labels, [3.0, -2.0, 1.0])
+    assert list(fig.data[0].y) == cut and list(fig.data[0].customdata) == labels
+    assert fig.layout.xaxis.title.text == charts.POINTS_AXIS_TITLE and len(charts.POINTS_AXIS_TITLE) <= 24

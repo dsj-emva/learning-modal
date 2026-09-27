@@ -84,20 +84,36 @@ def auc_month_chart(month: pd.DataFrame) -> go.Figure:
     return fig
 
 
+# Points bars: longer labels are cut to this many characters (full label on hover), so the label column leaves the bars
+# room on a phone; the x-axis title is short enough for a 390 px screen or a narrow column.
+POINTS_LABEL_MAX: int = 32
+POINTS_AXIS_TITLE: str = "Points (+20 = 2× odds)"
+
+
+def short_labels(labels: list[str], limit: int = POINTS_LABEL_MAX) -> list[str]:
+    """``labels`` cut to ``limit`` characters with an ellipsis; a label whose cut form would be shared by another
+    stays whole (bars on a category axis must keep distinct labels)."""
+    cut = [lbl if len(lbl) <= limit else lbl[:limit - 1].rstrip() + "…" for lbl in labels]
+    shared = {c for c in cut if cut.count(c) > 1}
+    return [lbl if c in shared else c for lbl, c in zip(labels, cut)]
+
+
 def points_chart(labels: list[str], values: list[float], height_per_bar: int = 26) -> go.Figure:
-    """Signed horizontal bars (points), first label at the top; positive accent, negative warm red."""
+    """Signed horizontal bars (points), first label at the top; positive accent, negative warm red. Long labels are cut
+    (``short_labels``); the hover shows each in full."""
     p = PALETTE
     colors = [p["accent"] if v >= 0 else p["negative"] for v in values]
     text = [f"+{v:.0f}" if v > 0 else f"−{abs(v):.0f}" if v < 0 else "0" for v in values]
     fig = _fig(max(160, 40 + height_per_bar * len(values)))
-    fig.add_trace(go.Bar(x=values, y=labels, orientation="h", marker=dict(color=colors), text=text,
+    fig.add_trace(go.Bar(x=values, y=short_labels(labels), orientation="h", marker=dict(color=colors), text=text,
                          textposition="outside", textfont=dict(family=FONT_MONO, size=11, color=p["muted"]),
-                         cliponaxis=False, hovertemplate="%{y}: %{x:+.0f} points<extra></extra>"))
+                         cliponaxis=False, customdata=labels,
+                         hovertemplate="%{customdata}: %{x:+.0f} points<extra></extra>"))
     span = max((abs(v) for v in values), default=1) * 1.45
     fig.update_yaxes(autorange="reversed", showgrid=False, showline=False, ticks="",
                      tickfont=dict(family=FONT_UI, size=12, color=p["ink"]))
     fig.update_xaxes(range=[-span, span], showgrid=True, gridcolor="#EFEBE3", zeroline=True, zerolinecolor=p["muted"],
-                     zerolinewidth=1, title="Points (+20 doubles the odds of closing)")
+                     zerolinewidth=1, title=POINTS_AXIS_TITLE)
     fig.update_layout(bargap=0.35)
     return fig
 
@@ -138,5 +154,6 @@ def stage_chart(counts: dict[str, int]) -> go.Figure:
     return fig
 
 
-__all__ = ["CONFIG", "auc_month_chart", "calibration_chart", "points_chart", "stage_chart", "template",
+__all__ = ["CONFIG", "POINTS_AXIS_TITLE", "POINTS_LABEL_MAX", "auc_month_chart", "calibration_chart", "points_chart",
+           "short_labels", "stage_chart", "template",
            "value_histogram"]
